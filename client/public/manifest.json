@@ -1,0 +1,138 @@
+{
+  "name": "السائح - Tourist App",
+  "short_name": "السائح",
+  "description": "دليلك الذكي لاكتشاف أجمل الوجهات السياحية في المملكة العربية السعودية",
+  "lang": "ar",
+  "dir": "rtl",
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#10b981",
+  "background_color": "#ffffff",
+  "orientation": "portrait-primary",
+  "categories": ["travel", "navigation", "maps", "tourism"],
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    },
+    {
+      "src": "/android-chrome-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/android-chrome-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/maskable-icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/screenshots/home-ar.png",
+      "sizes": "1080x1920",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "الصفحة الرئيسية بالعربية"
+    },
+    {
+      "src": "/screenshots/map-ar.png",
+      "sizes": "1080x1920",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "الخريطة التفاعلية"
+    },
+    {
+      "src": "/screenshots/guides-ar.png",
+      "sizes": "1080x1920",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "دليل المرشدين"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "استكشاف الخريطة",
+      "short_name": "الخريطة",
+      "description": "استكشف المواقع السياحية على الخريطة",
+      "url": "/map",
+      "icons": [{ "src": "/shortcuts/map.png", "sizes": "96x96" }]
+    },
+    {
+      "name": "البحث عن مرشد",
+      "short_name": "المرشدين",
+      "description": "ابحث عن مرشد سياحي معتمد",
+      "url": "/guides",
+      "icons": [{ "src": "/shortcuts/guide.png", "sizes": "96x96" }]
+    },
+    {
+      "name": "صفحتي الشخصية",
+      "short_name": "صفحتي",
+      "description": "إدارة حسابك وتفضيلاتك",
+      "url": "/profile",
+      "icons": [{ "src": "/shortcuts/profile.png", "sizes": "96x96" }]
+    }
+  ],
+  "related_applications": [
+    {
+      "platform": "play",
+      "url": "https://play.google.com/store/apps/details?id=sa.tourist.app",
+      "id": "sa.tourist.app"
+    },
+    {
+      "platform": "itunes",
+      "url": "https://apps.apple.com/sa/app/السائح/id123456789"
+    }
+  ],
+  "prefer_related_applications": false,
+  "scope": "/",
+  "id": "/",
+  "launch_handler": {
+    "client_mode": "focus-existing"
+  },
+  "edge_side_panel": {
+    "preferred_width": 440
+  },
+  "protocol_handlers": [
+    {
+      "protocol": "web+tourist",
+      "url": "/tourist?uri=%s"
+    }
+  ],
+  "share_target": {
+    "action": "/share",
+    "method": "GET",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url"
+    }
+  },
+  "file_handlers": [
+    {
+      "action": "/upload",
+      "accept": {
+        "image/*": [".png", ".jpg", ".jpeg", ".webp"]
+      }
+    }
+  ],
+  "permissions": [
+    "geolocation",
+    "notifications",
+    "clipboard-write"
+  ]
+}

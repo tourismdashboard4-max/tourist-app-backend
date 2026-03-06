@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  
+  <!-- معلومات أساسية -->
+  <title>Tourist App - السائح | دليلك الذكي لاكتشاف السعودية</title>
+  <meta name="description" content="منصة سياحية شاملة لاكتشاف أجمل الوجهات السياحية في المملكة العربية السعودية">
+  <meta name="author" content="Tourist App Team">
+  <meta name="keywords" content="سياحة, السعودية, مرشدين سياحيين, خرائط, رحلات, اماكن سياحية">
+  
+  <!-- Favicon -->
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+  
+  <!-- Mapbox CSS -->
+  <link href='https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css' rel='stylesheet' />
+  
+  <!-- Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Naskh+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- PWA Manifest -->
+  <link rel="manifest" href="/manifest.json">
+  
+  <!-- iOS Meta Tags -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="السائح">
+  
+  <!-- Windows Meta Tags -->
+  <meta name="msapplication-TileColor" content="#10b981">
+  <meta name="theme-color" content="#10b981">
+  
+  <!-- Open Graph Meta Tags -->
+  <meta property="og:title" content="Tourist App - السائح">
+  <meta property="og:description" content="دليلك الذكي لاكتشاف أجمل الوجهات السياحية في السعودية">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="/social-preview.png">
+  <meta property="og:url" content="https://tourist-app.sa">
+  
+  <!-- Twitter Meta Tags -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Tourist App - السائح">
+  <meta name="twitter:description" content="منصة السياحة الأولى في السعودية">
+  
+  <!-- Styles -->
+  <style>
+    /* CSS Reset وتحسين الأداء */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    
+    :root {
+      --primary-color: #10b981;
+      --secondary-color: #3b82f6;
+      --dark-color: #1f2937;
+      --light-color: #f9fafb;
+    }
+    
+    html {
+      scroll-behavior: smooth;
+    }
+    
+    body {
+      font-family: 'Cairo', 'Noto Naskh Arabic', sans-serif;
+      direction: rtl;
+      text-align: right;
+      background-color: var(--light-color);
+      color: var(--dark-color);
+      overflow-x: hidden;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    
+    /* تحسينات للشاشات الصغيرة */
+    @media (max-width: 768px) {
+      body {
+        font-size: 14px;
+      }
+    }
+    
+    /* إخفاء شاشة التحميل بعد تحميل React */
+    #loading-screen {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(135deg, #10b981 0%, #3b82f6 100%);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      z-index: 9999;
+      transition: opacity 0.5s ease;
+    }
+    
+    .loading-spinner {
+      width: 60px;
+      height: 60px;
+      border: 5px solid rgba(255, 255, 255, 0.3);
+      border-radius: 50%;
+      border-top-color: white;
+      animation: spin 1s ease-in-out infinite;
+      margin-bottom: 20px;
+    }
+    
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    
+    .loading-text {
+      color: white;
+      font-size: 1.2rem;
+      font-weight: 600;
+      text-align: center;
+    }
+    
+    /* تحسينات Mapbox */
+    .mapboxgl-canvas {
+      outline: none;
+    }
+    
+    .mapboxgl-popup {
+      max-width: 300px !important;
+      z-index: 1000;
+    }
+    
+    .mapboxgl-popup-content {
+      border-radius: 12px !important;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15) !important;
+      font-family: 'Cairo', sans-serif !important;
+    }
+    
+    /* إخفاء شريط تمرير بعض المتصفحات */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    
+    ::-webkit-scrollbar-track {
+      background: #f1f1f1;
+      border-radius: 10px;
+    }
+    
+    ::-webkit-scrollbar-thumb {
+      background: var(--primary-color);
+      border-radius: 10px;
+    }
+    
+    ::-webkit-scrollbar-thumb:hover {
+      background: #0da271;
+    }
+    
+    /* تحسينات النصوص العربية */
+    .arabic-text {
+      font-family: 'Cairo', 'Noto Naskh Arabic', sans-serif;
+      line-height: 1.8;
+      letter-spacing: 0;
+    }
+    
+    /* Utility Classes */
+    .rtl {
+      direction: rtl;
+      text-align: right;
+    }
+    
+    .ltr {
+      direction: ltr;
+      text-align: left;
+    }
+    
+    .text-shadow {
+      text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+    
+    .transition-all {
+      transition: all 0.3s ease;
+    }
+  </style>
+</head>
+<body>
+  <!-- شاشة التحميل -->
+  <div id="loading-screen">
+    <div class="loading-spinner"></div>
+    <div class="loading-text">
+      جاري تحميل تطبيق السائح...
+    </div>
+  </div>
+  
+  <!-- جذر React -->
+  <div id="root"></div>
+  
+  <!-- Scripts -->
+  <script>
+    // إخفاء شاشة التحميل بعد تحميل React
+    window.addEventListener('load', function() {
+      setTimeout(function() {
+        const loadingScreen = document.getElementById('loading-screen');
+        if (loadingScreen) {
+          loadingScreen.style.opacity = '0';
+          setTimeout(function() {
+            loadingScreen.style.display = 'none';
+          }, 500);
+        }
+      }, 1000);
+    });
+    
+    // دعم RTL للمتصفحات القديمة
+    if (document.documentElement.getAttribute('dir') !== 'rtl') {
+      document.documentElement.setAttribute('dir', 'rtl');
+    }
+    
+    // تحسين أداء Mapbox
+    if ('serviceWorker' in navigator && window.location.hostname !== 'localhost') {
+      window.addEventListener('load', function() {
+        navigator.serviceWorker.register('/sw.js').then(
+          function(registration) {
+            console.log('ServiceWorker registration successful');
+          },
+          function(err) {
+            console.log('ServiceWorker registration failed: ', err);
+          }
+        );
+      });
+    }
+    
+    // إضافة متغيرات CSS للوضع الداكن
+    const prefersDarkScheme = window.matchMedia('(prefers-color-scheme: dark)');
+    if (prefersDarkScheme.matches) {
+      document.documentElement.classList.add('dark');
+    }
+  </script>
+  
+  <!-- Vite Entry Point -->
+  <script type="module" src="/src/main.jsx"></script>
+</body>
+</html>

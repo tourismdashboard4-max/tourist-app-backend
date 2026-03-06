@@ -1,0 +1,256 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  html, body, #root {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    position: fixed;
+    font-family: 'Cairo', sans-serif;
+  }
+
+  body {
+    background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%);
+  }
+
+  /* RTL Support */
+  [dir="rtl"] {
+    text-align: right;
+  }
+
+  [dir="ltr"] {
+    text-align: left;
+  }
+}
+
+@layer components {
+  /* Modern Glass Effect */
+  .glass-effect {
+    @apply bg-white/80 dark:bg-gray-900/80 backdrop-blur-xl backdrop-saturate-150;
+  }
+
+  .glass-card {
+    @apply glass-effect border border-white/20 dark:border-gray-700/30 shadow-xl;
+  }
+
+  /* Modern Buttons */
+  .btn-primary {
+    @apply bg-gradient-to-r from-green-600 to-emerald-600 text-white font-semibold 
+           px-6 py-3 rounded-2xl shadow-lg shadow-green-500/30
+           hover:from-green-700 hover:to-emerald-700 hover:shadow-xl hover:shadow-green-500/40
+           active:scale-[0.98] transition-all duration-200
+           disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100;
+  }
+
+  .btn-outline {
+    @apply border-2 border-green-600 text-green-600 font-semibold
+           px-6 py-3 rounded-2xl bg-transparent
+           hover:bg-green-50 dark:hover:bg-green-900/20
+           active:scale-[0.98] transition-all duration-200;
+  }
+
+  /* Modern Inputs */
+  .input-modern {
+    @apply w-full px-4 py-3 bg-white dark:bg-gray-800 
+           border-2 border-gray-200 dark:border-gray-700 
+           rounded-2xl focus:border-green-500 focus:ring-4 focus:ring-green-500/20
+           outline-none transition-all duration-200
+           placeholder:text-gray-400 dark:placeholder:text-gray-500;
+  }
+
+  /* Cards */
+  .card-modern {
+    @apply bg-white dark:bg-gray-800 rounded-3xl shadow-lg 
+           border border-gray-100 dark:border-gray-700
+           hover:shadow-xl transition-all duration-300;
+  }
+
+  /* Map Container */
+  .map-container {
+    width: 100%;
+    height: 100%;
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+  }
+
+  .map-overlay {
+    @apply absolute z-10 p-4 pointer-events-none;
+  }
+
+  .map-overlay > * {
+    @apply pointer-events-auto;
+  }
+
+  /* Bottom Navigation */
+  .bottom-nav {
+    @apply fixed bottom-0 left-0 right-0 glass-effect
+           border-t border-gray-200/50 dark:border-gray-700/50
+           px-2 py-2 flex justify-around items-center
+           backdrop-blur-xl z-50;
+  }
+
+  .nav-item {
+    @apply flex flex-col items-center justify-center
+           px-3 py-2 rounded-2xl transition-all duration-200
+           text-gray-500 dark:text-gray-400
+           hover:text-green-600 dark:hover:text-green-400;
+  }
+
+  .nav-item.active {
+    @apply text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/30;
+  }
+
+  /* Loading Screen */
+  .loading-screen {
+    @apply fixed inset-0 bg-gradient-to-br from-green-600 to-emerald-700
+           flex flex-col items-center justify-center z-[9999]
+           transition-opacity duration-500;
+  }
+
+  /* Animations */
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease-out;
+  }
+
+  @keyframes slideIn {
+    from { transform: translateX(100%); }
+    to { transform: translateX(0); }
+  }
+
+  .animate-slide-in {
+    animation: slideIn 0.3s ease-out;
+  }
+
+  /* Scrollbar Styling */
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: #10b981 #f3f4f6;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    @apply bg-gray-100 dark:bg-gray-800 rounded-full;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    @apply bg-green-500 dark:bg-green-600 rounded-full;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    @apply bg-green-600 dark:bg-green-700;
+  }
+}
+
+@layer utilities {
+  /* Safe Area Insets */
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 1rem);
+  }
+
+  .pt-safe {
+    padding-top: env(safe-area-inset-top, 1rem);
+  }
+
+  /* Text Gradients */
+  .text-gradient {
+    @apply bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent;
+  }
+
+  /* Shadows */
+  .shadow-soft {
+    box-shadow: 0 10px 40px -15px rgba(0,0,0,0.1);
+  }
+
+  .shadow-hover {
+    transition: box-shadow 0.3s ease;
+  }
+
+  .shadow-hover:hover {
+    box-shadow: 0 20px 50px -15px rgba(16,185,129,0.2);
+  }
+}
+
+/* Mapbox Customization */
+.mapboxgl-map {
+  font-family: 'Cairo', sans-serif !important;
+}
+
+.mapboxgl-ctrl-group {
+  @apply bg-white/90 dark:bg-gray-800/90 backdrop-blur-xl
+         border border-gray-200/50 dark:border-gray-700/50
+         rounded-2xl !important;
+}
+
+.mapboxgl-ctrl button {
+  @apply hover:bg-gray-100 dark:hover:bg-gray-700
+         transition-colors duration-200 !important;
+}
+
+.mapboxgl-popup-content {
+  @apply bg-white dark:bg-gray-800 rounded-2xl
+         border border-gray-200 dark:border-gray-700
+         shadow-xl !important;
+}
+
+.mapboxgl-popup-tip {
+  @apply border-t-white dark:border-t-gray-800 !important;
+}
+
+/* Dark Mode Support */
+.dark {
+  color-scheme: dark;
+}
+
+.dark body {
+  background: linear-gradient(135deg, #111827 0%, #1f2937 100%);
+}
+
+/* Loading Spinner */
+.spinner {
+  @apply w-8 h-8 border-4 border-white/20 
+         border-t-white rounded-full animate-spin;
+}
+
+/* Responsive Design */
+@media (max-width: 640px) {
+  html {
+    font-size: 14px;
+  }
+
+  .container {
+    @apply px-4;
+  }
+}
+
+@media (min-width: 1024px) {
+  .container {
+    @apply max-w-7xl mx-auto;
+  }
+}

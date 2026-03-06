@@ -1,0 +1,104 @@
+/* client/src/components/Notifications/NotificationList.css */
+.notifications-list {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.notification-group {
+  margin-bottom: 24px;
+}
+
+.notification-group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 16px;
+  margin-bottom: 8px;
+  background-color: #f9fafb;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.group-date {
+  font-weight: 600;
+  color: #4b5563;
+}
+
+.group-count {
+  color: #6b7280;
+  font-size: 12px;
+  background-color: #e5e7eb;
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+
+.notification-group-items {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.notifications-empty {
+  text-align: center;
+  padding: 60px 20px;
+  background-color: #f9fafb;
+  border-radius: 12px;
+  margin: 20px 0;
+}
+
+.empty-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+  opacity: 0.5;
+}
+
+.notifications-empty p {
+  color: #6b7280;
+  font-size: 16px;
+  margin: 4px 0;
+}
+
+.empty-sub {
+  font-size: 14px !important;
+  opacity: 0.7;
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+  .notification-group-header {
+    padding: 6px 12px;
+    font-size: 13px;
+  }
+
+  .notifications-empty {
+    padding: 40px 16px;
+  }
+
+  .empty-icon {
+    font-size: 40px;
+  }
+}
+
+/* Dark mode */
+@media (prefers-color-scheme: dark) {
+  .notification-group-header {
+    background-color: #374151;
+  }
+
+  .group-date {
+    color: #e5e7eb;
+  }
+
+  .group-count {
+    background-color: #4b5563;
+    color: #d1d5db;
+  }
+
+  .notifications-empty {
+    background-color: #1f2937;
+  }
+
+  .notifications-empty p {
+    color: #9ca3af;
+  }
+}

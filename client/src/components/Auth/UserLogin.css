@@ -1,0 +1,182 @@
+/* src/components/Auth/UserLogin.css */
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.form-options {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 0.5rem 0;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: #4b5563;
+  user-select: none;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: #4f46e5;
+  cursor: pointer;
+}
+
+.checkbox-label span {
+  transition: color 0.2s;
+}
+
+.checkbox-label:hover span {
+  color: #374151;
+}
+
+.forgot-password-btn {
+  background: none;
+  border: none;
+  color: #4f46e5;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  transition: all 0.2s;
+}
+
+.forgot-password-btn:hover:not(:disabled) {
+  text-decoration: underline;
+  background-color: #f3f4f6;
+}
+
+.forgot-password-btn:disabled {
+  color: #9ca3af;
+  cursor: not-allowed;
+}
+
+.login-btn {
+  margin-top: 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin: 1rem 0;
+  color: #9ca3af;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background-color: #e5e7eb;
+}
+
+.divider-text {
+  font-size: 0.85rem;
+  padding: 0 0.5rem;
+  background-color: white;
+}
+
+.social-login {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.social-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 0.875rem 1rem;
+}
+
+.social-icon {
+  font-weight: bold;
+  font-size: 1.1rem;
+  width: 1.5rem;
+  height: 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.social-btn.google .social-icon {
+  background-color: #db4437;
+  color: white;
+  border-radius: 50%;
+}
+
+.social-btn.facebook .social-icon {
+  background-color: #4267B2;
+  color: white;
+  border-radius: 50%;
+}
+
+.auth-switch {
+  text-align: center;
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid #e5e7eb;
+}
+
+.switch-text {
+  margin-bottom: 0.75rem;
+  color: #6b7280;
+  font-size: 0.95rem;
+}
+
+.switch-link {
+  color: #4f46e5;
+  font-weight: 600;
+  text-decoration: none;
+  margin: 0 0.25rem;
+  transition: color 0.2s;
+}
+
+.switch-link:hover {
+  color: #4338ca;
+  text-decoration: underline;
+}
+
+.guide-link {
+  display: inline-block;
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+  color: #059669;
+}
+
+.guide-link:hover {
+  color: #047857;
+}
+
+/* تحسينات للجوال */
+@media (max-width: 480px) {
+  .form-options {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+  
+  .social-btn {
+    font-size: 0.9rem;
+  }
+  
+  .social-btn .social-icon {
+    width: 1.3rem;
+    height: 1.3rem;
+    font-size: 0.9rem;
+  }
+}

@@ -1,0 +1,349 @@
+/* src/components/Auth/RegisterForm.css */
+.register-form {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.form-section {
+  border-bottom: 1px solid #e5e7eb;
+  padding-bottom: 1.5rem;
+}
+
+.form-section:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.section-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 1.25rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.section-title::before {
+  content: '';
+  width: 4px;
+  height: 1.2rem;
+  background-color: #4f46e5;
+  border-radius: 2px;
+}
+
+/* مؤشر قوة كلمة المرور */
+.password-strength {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin: 0.75rem 0 1.5rem;
+}
+
+.strength-bar {
+  flex: 1;
+  height: 6px;
+  background-color: #e5e7eb;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.strength-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease, background-color 0.3s ease;
+}
+
+.strength-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  min-width: 80px;
+  text-align: left;
+}
+
+/* متطلبات كلمة المرور */
+.password-requirements {
+  background-color: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  margin: 1rem 0 1.5rem;
+}
+
+.requirements-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 0.75rem;
+}
+
+.requirements-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.5rem;
+}
+
+.requirements-list li {
+  font-size: 0.8rem;
+  color: #6b7280;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.requirements-list li::before {
+  content: '○';
+  font-size: 0.9rem;
+}
+
+.requirements-list li.valid {
+  color: #059669;
+}
+
+.requirements-list li.valid::before {
+  content: '✓';
+  color: #059669;
+}
+
+/* مجموعة Checkbox */
+.checkbox-group {
+  margin-bottom: 1rem;
+}
+
+.checkbox-group:last-child {
+  margin-bottom: 0;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  cursor: pointer;
+  font-size: 0.95rem;
+  color: #374151;
+  user-select: none;
+  line-height: 1.5;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: 1.2rem;
+  height: 1.2rem;
+  accent-color: #4f46e5;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-top: 0.2rem;
+}
+
+.checkbox-label a {
+  color: #4f46e5;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.checkbox-label a:hover {
+  text-decoration: underline;
+}
+
+.checkbox-label.error {
+  color: #dc2626;
+}
+
+.checkbox-label.error input[type="checkbox"] {
+  accent-color: #dc2626;
+}
+
+.checkbox-error {
+  color: #dc2626;
+  font-size: 0.85rem;
+  margin: 0.5rem 0 0 1.95rem;
+}
+
+/* CAPTCHA */
+.captcha-container {
+  background-color: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  text-align: center;
+}
+
+.captcha-container p {
+  margin: 0 0 0.75rem 0;
+  color: #374151;
+  font-weight: 500;
+}
+
+.captcha-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: #374151;
+}
+
+.captcha-checkbox input[type="checkbox"] {
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: #4f46e5;
+}
+
+/* زر التسجيل */
+.register-btn {
+  margin-top: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 1rem;
+  font-size: 1.1rem;
+}
+
+/* روابط التنقل */
+.auth-switch {
+  text-align: center;
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid #e5e7eb;
+}
+
+.switch-text {
+  margin-bottom: 0.75rem;
+  color: #6b7280;
+  font-size: 0.95rem;
+}
+
+.switch-link {
+  color: #4f46e5;
+  font-weight: 600;
+  text-decoration: none;
+  margin: 0 0.25rem;
+  transition: color 0.2s;
+}
+
+.switch-link:hover {
+  color: #4338ca;
+  text-decoration: underline;
+}
+
+.guide-link {
+  display: inline-block;
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+  color: #059669;
+}
+
+.guide-link:hover {
+  color: #047857;
+}
+
+.user-link {
+  display: inline-block;
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+  color: #4f46e5;
+}
+
+.user-link:hover {
+  color: #4338ca;
+}
+
+/* نافذة النجاح */
+.success-modal {
+  text-align: center;
+  padding: 0.5rem;
+}
+
+.success-icon {
+  font-size: 4rem;
+  margin-bottom: 1.5rem;
+}
+
+.success-message {
+  font-size: 1.1rem;
+  color: #374151;
+  line-height: 1.6;
+  margin-bottom: 2rem;
+}
+
+.next-steps {
+  text-align: right;
+  margin-bottom: 2rem;
+  padding: 1.25rem;
+  background-color: #f0f9ff;
+  border-radius: 0.75rem;
+  border: 1px solid #bae6fd;
+}
+
+.next-steps h4 {
+  color: #0369a1;
+  margin: 0 0 1rem 0;
+  font-size: 1rem;
+}
+
+.next-steps ol {
+  margin: 0;
+  padding-right: 1.5rem;
+  text-align: right;
+}
+
+.next-steps li {
+  margin-bottom: 0.5rem;
+  color: #0c4a6e;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.next-steps li:last-child {
+  margin-bottom: 0;
+}
+
+.modal-actions {
+  margin-top: 1.5rem;
+}
+
+/* تصميم متجاوب */
+@media (max-width: 768px) {
+  .form-section {
+    padding-bottom: 1.25rem;
+  }
+  
+  .requirements-list {
+    grid-template-columns: 1fr;
+  }
+  
+  .register-btn {
+    padding: 0.875rem;
+    font-size: 1rem;
+  }
+  
+  .success-icon {
+    font-size: 3rem;
+  }
+  
+  .success-message {
+    font-size: 1rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .register-form {
+    gap: 1.5rem;
+  }
+  
+  .section-title {
+    font-size: 1rem;
+  }
+  
+  .checkbox-label {
+    font-size: 0.9rem;
+  }
+  
+  .switch-text {
+    font-size: 0.9rem;
+  }
+}

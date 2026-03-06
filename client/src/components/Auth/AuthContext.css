@@ -1,0 +1,96 @@
+/* src/components/Auth/AuthContext.css */
+.auth-loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 300px;
+  gap: 1rem;
+}
+
+.auth-spinner {
+  font-size: 3rem;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* فئات للمستخدمين بأنواعهم */
+.user-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.75rem;
+  border-radius: 1rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.user-badge.user {
+  background-color: #e0e7ff;
+  color: #4f46e5;
+}
+
+.user-badge.guide {
+  background-color: #d1fae5;
+  color: #059669;
+}
+
+.user-badge.admin {
+  background-color: #fee2e2;
+  color: #dc2626;
+}
+
+/* أزرار المصادقة */
+.auth-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+  font-size: 0.95rem;
+}
+
+.auth-button.login {
+  background-color: #4f46e5;
+  color: white;
+}
+
+.auth-button.login:hover {
+  background-color: #4338ca;
+}
+
+.auth-button.logout {
+  background-color: #f3f4f6;
+  color: #374151;
+}
+
+.auth-button.logout:hover {
+  background-color: #e5e7eb;
+}
+
+/* صورة المستخدم */
+.user-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid #e5e7eb;
+}
+
+.user-avatar.small {
+  width: 30px;
+  height: 30px;
+}
+
+.user-avatar.large {
+  width: 60px;
+  height: 60px;
+}

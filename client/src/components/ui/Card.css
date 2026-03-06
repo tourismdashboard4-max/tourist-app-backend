@@ -1,0 +1,143 @@
+/* src/components/ui/Card.css */
+.card {
+  background-color: white;
+  border-radius: 1rem;
+  overflow: hidden;
+  transition: all 0.3s ease;
+  display: flex;
+  flex-direction: column;
+}
+
+.card-elevated {
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+  border: 1px solid #f0f0f0;
+}
+
+.card-hoverable {
+  cursor: pointer;
+}
+
+.card-hoverable:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15);
+  border-color: #e0e0e0;
+}
+
+/* أحجام padding */
+.card-padding-none {
+  padding: 0;
+}
+
+.card-padding-sm {
+  padding: 1rem;
+}
+
+.card-padding-md {
+  padding: 1.5rem;
+}
+
+.card-padding-lg {
+  padding: 2rem;
+}
+
+/* الصورة */
+.card-image {
+  width: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+.card-image img {
+  width: 100%;
+  height: auto;
+  display: block;
+  transition: transform 0.5s ease;
+}
+
+.card-hoverable:hover .card-image img {
+  transform: scale(1.05);
+}
+
+/* الهيدر */
+.card-header-custom,
+.card-header {
+  padding: 0 1.5rem;
+  margin-bottom: 1.25rem;
+}
+
+.card-padding-none .card-header-custom,
+.card-padding-none .card-header {
+  padding: 1.5rem;
+  margin-bottom: 0;
+}
+
+.card-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #111827;
+  margin: 0 0 0.5rem 0;
+  line-height: 1.3;
+}
+
+.card-subtitle {
+  font-size: 0.875rem;
+  color: #6b7280;
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* المحتوى */
+.card-content {
+  flex: 1;
+  color: #374151;
+  line-height: 1.6;
+}
+
+.card-padding-none .card-content {
+  padding: 0 1.5rem;
+}
+
+/* الفوتر */
+.card-footer {
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid #e5e7eb;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.card-padding-none .card-footer {
+  padding: 1.5rem;
+  margin-top: 0;
+}
+
+/* تأثيرات التركيز للوصول */
+.card:focus-within {
+  outline: 3px solid rgba(79, 70, 229, 0.3);
+  outline-offset: 2px;
+}
+
+/* تصميم متجاوب */
+@media (max-width: 768px) {
+  .card-padding-lg {
+    padding: 1.5rem;
+  }
+  
+  .card-padding-md {
+    padding: 1.25rem;
+  }
+  
+  .card-title {
+    font-size: 1.125rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .card-footer {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+}

@@ -1,0 +1,112 @@
+/* src/components/ui/Spinner.css */
+.spinner {
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  display: inline-block;
+  box-sizing: border-box;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.spinner-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.spinner-fullscreen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+.spinner-with-label {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.spinner-label,
+.spinner-text {
+  font-size: 0.875rem;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+/* أنماط ألوان إضافية */
+.spinner.border-blue-600 {
+  border-color: #2563eb;
+  border-top-color: transparent;
+}
+
+.spinner.border-gray-600 {
+  border-color: #4b5563;
+  border-top-color: transparent;
+}
+
+.spinner.border-white {
+  border-color: white;
+  border-top-color: transparent;
+}
+
+.spinner.border-green-600 {
+  border-color: #059669;
+  border-top-color: transparent;
+}
+
+.spinner.border-red-600 {
+  border-color: #dc2626;
+  border-top-color: transparent;
+}
+
+.spinner.border-yellow-600 {
+  border-color: #d97706;
+  border-top-color: transparent;
+}
+
+/* أحجام إضافية */
+.spinner.w-4.h-4 {
+  width: 1rem;
+  height: 1rem;
+}
+
+.spinner.w-6.h-6 {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+.spinner.w-8.h-8 {
+  width: 2rem;
+  height: 2rem;
+}
+
+.spinner.w-12.h-12 {
+  width: 3rem;
+  height: 3rem;
+}
+
+.spinner.w-16.h-16 {
+  width: 4rem;
+  height: 4rem;
+}
+
+/* تصميم داكن */
+@media (prefers-color-scheme: dark) {
+  .spinner-overlay {
+    background-color: rgba(0, 0, 0, 0.7);
+  }
+  
+  .spinner-label,
+  .spinner-text {
+    color: #d1d5db;
+  }
+}
