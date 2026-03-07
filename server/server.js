@@ -26,7 +26,7 @@ const PORT = process.env.PORT || 5002;
 // ===================== إعداد WebSocket =====================
 const io = new Server(server, {
   cors: {
-    origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175'],
+    origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', 'https://tourist-app-api.onrender.com'],
     credentials: true
   }
 });
@@ -108,7 +108,7 @@ app.use(helmet({
 }));
 
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175'],
+  origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', 'https://tourist-app-api.onrender.com'],
   credentials: true
 }));
 
@@ -116,7 +116,25 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));
 
-// ===================== Routes =====================
+// ===================== Routes الرئيسية =====================
+app.get('/', (req, res) => {
+  res.json({ 
+    success: true, 
+    message: 'Tourist App API is running',
+    docs: '/api/test',
+    health: '/health',
+    endpoints: {
+      auth: '/api/auth',
+      guides: '/api/guides',
+      programs: '/api/programs',
+      wallet: '/api/wallet',
+      bookings: '/api/bookings',
+      chats: '/api/chats',
+      notifications: '/api/notifications'
+    }
+  });
+});
+
 app.use('/api/auth', authRoutes);
 app.use('/api/guides', guideRoutes);
 app.use('/api/programs', programRoutes);
@@ -190,7 +208,7 @@ const startServer = async () => {
     process.exit(1);
   }
 
-  server.listen(PORT, () => {
+  server.listen(PORT, '0.0.0.0', () => {
     console.log(`
   ╔══════════════════════════════════════════════╗
   ║         🚀 TOURIST APP SERVER               ║
@@ -198,8 +216,8 @@ const startServer = async () => {
   ║  ▶ Port:        ${PORT}
   ║  ▶ Database:    ✅ PostgreSQL
   ║  ▶ WebSocket:   ✅ Enabled
-  ║  ▶ Test API:    http://localhost:${PORT}/api/test
-  ║  ▶ Health:      http://localhost:${PORT}/health
+  ║  ▶ Test API:    /api/test
+  ║  ▶ Health:      /health
   ╚══════════════════════════════════════════════╝
     `);
   });
