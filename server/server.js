@@ -6,7 +6,7 @@ import morgan from 'morgan';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import pkg from 'pg';
-const { Pool } = pkg;
+const { Pool } = pkg; // تعريف Pool مرة واحدة فقط هنا
 
 // استيراد المسارات
 import authRoutes from './src/routes/authRoutes.js';
@@ -77,27 +77,49 @@ io.on('connection', (socket) => {
 });
 
 // ===================== إعداد PostgreSQL =====================
-const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 5432,
-  user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD || '123456',
-  database: process.env.DB_NAME || 'touristapp',
-  max: 20,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
-});
+let pool;
+let poolConfig;
+
+if (process.env.DATABASE_URL) {
+  // ✅ استخدام DATABASE_URL إذا كان موجوداً (في Render)
+  console.log('📦 Using DATABASE_URL for connection');
+  poolConfig = {
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  };
+} else {
+  // ✅ استخدام المتغيرات المنفصلة كخطة احتياطية (للتطوير المحلي)
+  console.log('📦 Using individual DB variables for connection');
+  poolConfig = {
+    host: process.env.DB_HOST || 'localhost',
+    port: parseInt(process.env.DB_PORT || '5432'),
+    user: process.env.DB_USER || 'postgres',
+    password: process.env.DB_PASSWORD || '123456',
+    database: process.env.DB_NAME || 'touristapp',
+    max: 20,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 2000,
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  };
+}
+
+pool = new Pool(poolConfig);
 
 // اختبار الاتصال بقاعدة البيانات
 const connectDB = async () => {
   try {
     const client = await pool.connect();
     console.log('✅ Connected to PostgreSQL successfully');
-    console.log(`📦 Database: ${pool.options.database}`);
+    console.log(`📦 Database: ${pool.options?.database || 'postgres'}`);
     client.release();
     return true;
   } catch (error) {
     console.error('❌ PostgreSQL connection error:', error.message);
+    if (process.env.DATABASE_URL) {
+      console.error('   Please check that DATABASE_URL is correct');
+    } else {
+      console.error('   Please check DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME');
+    }
     return false;
   }
 };
