@@ -6,7 +6,7 @@ import morgan from 'morgan';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import pkg from 'pg';
-const { Pool } = pkg; // تعريف Pool مرة واحدة فقط هنا
+const { Pool } = pkg;
 
 // استيراد المسارات
 import authRoutes from './src/routes/authRoutes.js';
@@ -221,7 +221,7 @@ app.get('/health', async (req, res) => {
   });
 });
 
-// ===================== Database connection and server start =====================
+// ===================== Database connection and server start (مع إضافة التأخير) =====================
 const startServer = async () => {
   const dbConnected = await connectDB();
   
@@ -231,7 +231,9 @@ const startServer = async () => {
   }
 
   server.listen(PORT, '0.0.0.0', () => {
-    console.log(`
+    // إضافة تأخير بسيط قبل طباعة الرسالة (100 مللي ثانية)
+    setTimeout(() => {
+      console.log(`
   ╔══════════════════════════════════════════════╗
   ║         🚀 TOURIST APP SERVER               ║
   ╠══════════════════════════════════════════════╣
@@ -241,7 +243,8 @@ const startServer = async () => {
   ║  ▶ Test API:    /api/test
   ║  ▶ Health:      /health
   ╚══════════════════════════════════════════════╝
-    `);
+      `);
+    }, 100); // تأخير 100 مللي ثانية
   });
 };
 
