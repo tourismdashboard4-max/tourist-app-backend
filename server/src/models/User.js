@@ -1,7 +1,7 @@
 // ============================================
 // User Model - المستخدم العادي (PostgreSQL Version)
 // ============================================
-import { pool } from '../config/database.js';
+import { pool } from '../../server.js';
 import bcrypt from 'bcrypt';
 
 const User = {
