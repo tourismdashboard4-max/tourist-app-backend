@@ -193,7 +193,7 @@ class AuthController {
   // ============================================
 
   /**
-   * إرسال رمز التحقق (OTP) - نسخة محسنة
+   * إرسال رمز التحقق (OTP) - نسخة محسنة مع Resend
    */
   async sendOTP(req, res) {
     try {
@@ -208,12 +208,35 @@ class AuthController {
 
       console.log(`📧 Received OTP request for: ${email}`);
 
-      // توليد رمز عشوائي من 6 أرقام
-      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+      // محاولة إرسال البريد الإلكتروني عبر Resend API
+      let emailSent = false;
+      let otpCode = null;
       
-      // حفظ الرمز في الذاكرة المؤقتة
+      try {
+        // استخدام خدمة Resend الجديدة - ترسل البريد وتعيد الرمز
+        const result = await emailService.sendOTPEmail(email);
+        
+        if (result.success) {
+          otpCode = result.code;
+          emailSent = true;
+          console.log(`✅ OTP email sent successfully via Resend to: ${email}`);
+          console.log(`🔐 OTP code: ${otpCode}`);
+        } else {
+          console.error(`❌ Failed to send OTP email: ${result.error}`);
+        }
+      } catch (emailError) {
+        console.error(`❌ Error in sendOTPEmail: ${emailError.message}`);
+      }
+
+      // إذا فشل الإرسال، نستخدم الطريقة القديمة (توليد رمز محلياً)
+      if (!otpCode) {
+        otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+        console.log(`⚠️ Using fallback OTP generation: ${otpCode}`);
+      }
+
+      // حفظ الرمز في الذاكرة المؤقتة (للتحقق لاحقاً)
       otpStore.set(email, {
-        code: otp,
+        code: otpCode,
         createdAt: Date.now(),
         attempts: 0
       });
@@ -223,47 +246,26 @@ class AuthController {
         otpStore.delete(email);
       }, 10 * 60 * 1000);
 
-      // محاولة إرسال البريد الإلكتروني باستخدام الخدمة المحسنة
-      let emailSent = false;
-      try {
-        // استخدام خدمة البريد الإلكتروني الجديدة
-        await emailService.sendOTPEmail(email, otp);
-        emailSent = true;
-        console.log(`✅ OTP email sent successfully to: ${email}`);
-      } catch (emailError) {
-        console.error(`❌ Failed to send OTP email: ${emailError.message}`);
-        
-        // في وضع التطوير، نعرض الرمز في Console
-        if (process.env.NODE_ENV !== 'production') {
-          console.log('\n' + '📧'.repeat(25));
-          console.log('📧         رمز التحقق (وضع التطوير)');
-          console.log('📧'.repeat(25));
-          console.log(`📧 البريد: ${email}`);
-          console.log(`🔢 الرمز: ${otp}`);
-          console.log('📧'.repeat(25));
-          console.log('⏰ صالح لمدة 10 دقائق');
-          console.log('📧'.repeat(25) + '\n');
-        }
-      }
+      // عرض الرمز في Console للتطوير
+      console.log('\n' + '📧'.repeat(25));
+      console.log('📧         رمز التحقق للبريد الإلكتروني');
+      console.log('📧'.repeat(25));
+      console.log(`📧 البريد: ${email}`);
+      console.log(`🔢 الرمز: ${otpCode}`);
+      console.log('📧'.repeat(25));
+      console.log('⏰ صالح لمدة 10 دقائق');
+      console.log('📧'.repeat(25) + '\n');
 
-      // التحقق من إعدادات البريد الإلكتروني
-      const emailConfigured = process.env.EMAIL_USER && process.env.EMAIL_PASSWORD;
-      if (!emailConfigured) {
-        console.warn('⚠️ Email credentials not configured in environment variables');
-      }
-
-      // إرسال الرد مع معلومات مفيدة
+      // إرسال الرد
       res.json({
         success: true,
         message: emailSent 
           ? 'تم إرسال رمز التحقق إلى بريدك الإلكتروني'
           : 'تم إنشاء رمز التحقق (راجع سجلات Console)',
-        // في وضع التطوير فقط، نرسل الرمز في الرد
-        ...(process.env.NODE_ENV !== 'production' && { devCode: otp }),
-        // معلومات مفيدة للتصحيح
+        ...(process.env.NODE_ENV !== 'production' && { devCode: otpCode }),
         _debug: {
           emailSent,
-          emailConfigured,
+          method: emailSent ? 'resend' : 'fallback',
           timestamp: new Date().toISOString()
         }
       });
