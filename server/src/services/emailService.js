@@ -56,7 +56,7 @@ const sendEmail = async (to, subject, html) => {
     console.log(`📧 Subject: ${subject}`);
 
     const { data, error } = await resend.emails.send({
-      from: 'تطبيق السياحة <onboarding@resend.dev>', // يمكن تغييره لاحقاً بعد إضافة النطاق
+      from: 'تطبيق السياحة <onboarding@resend.dev>',
       to: [to],
       subject: subject,
       html: html,
@@ -256,10 +256,22 @@ const sendNotificationEmail = async (to, subject, message) => {
   return await sendEmail(to, subject, html);
 };
 
+/**
+ * إرسال بريد إعادة تعيين كلمة المرور
+ * @param {string} to - البريد الإلكتروني للمستلم
+ * @param {string} resetCode - رمز إعادة التعيين
+ * @returns {Promise<{success: boolean, code?: string, error?: string}>}
+ */
+const sendPasswordResetEmail = async (to, resetCode) => {
+  console.log(`📧 Sending password reset email to ${to}`);
+  // إعادة استخدام دالة sendOTPEmail مع تمرير البريد فقط
+  // هذه الدالة ستقوم بتوليد رمز جديد وإرساله
+  return sendOTPEmail(to);
+};
+
 // التحقق من صحة الاتصال عند بدء التشغيل (اختياري)
 const verifyConnection = async () => {
   try {
-    // إرسال بريد اختبار إلى نفسك للتأكد من أن المفتاح يعمل
     const testResult = await sendEmail(
       process.env.EMAIL_USER || 'test@example.com',
       '✅ اختبار اتصال Resend',
@@ -276,11 +288,15 @@ const verifyConnection = async () => {
   }
 };
 
+// ============================================
 // تصدير الدوال
+// ============================================
+
 export {
   sendOTPEmail,
   sendWelcomeEmailWithWallet,
   sendNotificationEmail,
+  sendPasswordResetEmail,
   verifyConnection,
   generateOTP,
   generateWalletNumber,
@@ -292,6 +308,7 @@ export default {
   sendOTPEmail,
   sendWelcomeEmailWithWallet,
   sendNotificationEmail,
+  sendPasswordResetEmail,
   verifyConnection,
   generateOTP,
   generateWalletNumber,
