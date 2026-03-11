@@ -1,53 +1,99 @@
 // ============================================
-// Email Service using Resend API (Production Ready)
+// Email Service using Gmail OAuth2 (Production Ready)
 // ============================================
-import { Resend } from 'resend';
+import nodemailer from 'nodemailer';
+import { google } from 'googleapis';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
 
 dotenv.config();
 
-// التحقق من وجود مفتاح API
-if (!process.env.RESEND_API_KEY) {
-  console.error('❌ RESEND_API_KEY is not defined in environment variables');
+const OAuth2 = google.auth.OAuth2;
+
+// التحقق من وجود متغيرات البيئة
+const requiredEnvVars = [
+  'GOOGLE_CLIENT_ID',
+  'GOOGLE_CLIENT_SECRET',
+  'GOOGLE_REFRESH_TOKEN',
+  'EMAIL_USER'
+];
+
+for (const envVar of requiredEnvVars) {
+  if (!process.env[envVar]) {
+    console.error(`❌ Missing required environment variable: ${envVar}`);
+  }
 }
 
-// تهيئة Resend
-const resend = new Resend(process.env.RESEND_API_KEY);
+/**
+ * إنشاء ناقل بريد باستخدام OAuth2
+ */
+const createTransporter = async () => {
+  try {
+    console.log('🔑 Creating Gmail OAuth2 transporter...');
+    
+    const oauth2Client = new OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET,
+      'https://developers.google.com/oauthplayground' // Redirect URI
+    );
 
-// ============================================
-// أدوات مساعدة
-// ============================================
+    oauth2Client.setCredentials({
+      refresh_token: process.env.GOOGLE_REFRESH_TOKEN
+    });
+
+    const accessToken = await oauth2Client.getAccessToken();
+    
+    if (!accessToken.token) {
+      throw new Error('Failed to obtain access token');
+    }
+
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        type: 'OAuth2',
+        user: process.env.EMAIL_USER,
+        clientId: process.env.GOOGLE_CLIENT_ID,
+        clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+        refreshToken: process.env.GOOGLE_REFRESH_TOKEN,
+        accessToken: accessToken.token,
+      },
+    });
+
+    // مراقبة تجديد التوكن
+    transporter.on('token', (token) => {
+      console.log('🔄 OAuth2 token refreshed successfully');
+      console.log('   - Expires at:', new Date(token.expires));
+    });
+
+    transporter.on('error', (err) => {
+      console.error('❌ OAuth2 transporter error:', err);
+    });
+
+    console.log('✅ Gmail OAuth2 transporter created successfully');
+    return transporter;
+  } catch (error) {
+    console.error('❌ Failed to create OAuth2 transporter:', error);
+    throw error;
+  }
+};
+
+let transporter = null;
 
 /**
- * توليد رمز OTP عشوائي مكون من 6 أرقام
- * @returns {string} رمز مكون من 6 أرقام
+ * الحصول على ناقل البريد (مع التهيئة مرة واحدة)
  */
-const generateOTP = () => {
-  return Math.floor(100000 + crypto.randomInt(0, 900000)).toString();
+const getTransporter = async () => {
+  if (!transporter) {
+    transporter = await createTransporter();
+  }
+  return transporter;
 };
 
 /**
- * توليد رقم محفظة فريد للمستخدم
- * @param {string} userId - معرف المستخدم
- * @returns {string} رقم محفظة فريد
- */
-const generateWalletNumber = (userId) => {
-  const randomPart = crypto.randomBytes(4).toString('hex').toUpperCase();
-  const timestamp = Date.now().toString(36).toUpperCase();
-  return `WLT-${timestamp}-${userId}-${randomPart}`;
-};
-
-/**
- * إرسال بريد إلكتروني باستخدام Resend API
- * @param {string} to - البريد الإلكتروني للمستلم
- * @param {string} subject - عنوان الرسالة
- * @param {string} html - محتوى HTML للبريد
- * @returns {Promise<{success: boolean, messageId?: string, error?: string}>}
+ * إرسال بريد إلكتروني باستخدام OAuth2
  */
 const sendEmail = async (to, subject, html) => {
   try {
-    // التحقق من صحة البريد الإلكتروني
     if (!to || !to.includes('@')) {
       throw new Error('Invalid email address');
     }
@@ -55,24 +101,42 @@ const sendEmail = async (to, subject, html) => {
     console.log(`📧 Preparing to send email to: ${to}`);
     console.log(`📧 Subject: ${subject}`);
 
-    const { data, error } = await resend.emails.send({
-      from: 'تطبيق السياحة <onboarding@resend.dev>',
-      to: [to],
-      subject: subject,
-      html: html,
-    });
+    const mailOptions = {
+      from: `"تطبيق السياحة" <${process.env.EMAIL_USER}>`,
+      to,
+      subject,
+      html,
+    };
 
-    if (error) {
-      console.error('❌ Resend API error:', error);
-      return { success: false, error: error.message };
-    }
+    const currentTransporter = await getTransporter();
+    const info = await currentTransporter.sendMail(mailOptions);
 
-    console.log(`✅ Email sent successfully via Resend: ${data.id}`);
-    return { success: true, messageId: data.id };
+    console.log(`✅ Email sent successfully via Gmail OAuth2: ${info.messageId}`);
+    return { success: true, messageId: info.messageId };
   } catch (error) {
-    console.error('❌ Error sending email:', error);
+    console.error(`❌ Error sending email to ${to}:`, error);
     return { success: false, error: error.message };
   }
+};
+
+// ============================================
+// أدوات مساعدة
+// ============================================
+
+/**
+ * توليد رمز OTP عشوائي مكون من 6 أرقام
+ */
+const generateOTP = () => {
+  return Math.floor(100000 + crypto.randomInt(0, 900000)).toString();
+};
+
+/**
+ * توليد رقم محفظة فريد للمستخدم
+ */
+const generateWalletNumber = (userId) => {
+  const randomPart = crypto.randomBytes(4).toString('hex').toUpperCase();
+  const timestamp = Date.now().toString(36).toUpperCase();
+  return `WLT-${timestamp}-${userId}-${randomPart}`;
 };
 
 // ============================================
@@ -81,8 +145,6 @@ const sendEmail = async (to, subject, html) => {
 
 /**
  * إرسال رمز التحقق (OTP)
- * @param {string} to - البريد الإلكتروني للمستلم
- * @returns {Promise<{success: boolean, code?: string, error?: string}>}
  */
 const sendOTPEmail = async (to) => {
   try {
@@ -151,11 +213,15 @@ const sendOTPEmail = async (to) => {
 };
 
 /**
+ * إرسال بريد إعادة تعيين كلمة المرور
+ */
+const sendPasswordResetEmail = async (to) => {
+  console.log(`📧 Sending password reset email to ${to}`);
+  return sendOTPEmail(to);
+};
+
+/**
  * إرسال بريد ترحيبي مع رقم المحفظة
- * @param {string} to - البريد الإلكتروني للمستلم
- * @param {string} name - اسم المستخدم
- * @param {string} walletNumber - رقم المحفظة
- * @returns {Promise<{success: boolean, messageId?: string, error?: string}>}
  */
 const sendWelcomeEmailWithWallet = async (to, name, walletNumber) => {
   const subject = '🎉 مرحباً بك في تطبيق السياحة!';
@@ -173,18 +239,13 @@ const sendWelcomeEmailWithWallet = async (to, name, walletNumber) => {
         .wallet-card { background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%); color: white; padding: 25px; border-radius: 12px; margin: 30px 0; text-align: center; box-shadow: 0 4px 10px rgba(46, 204, 113, 0.3); }
         .wallet-number { font-size: 24px; letter-spacing: 2px; background: rgba(255,255,255,0.2); padding: 15px; border-radius: 8px; margin: 15px 0; font-weight: bold; }
         .features { background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin: 25px 0; }
-        .features ul { list-style: none; padding: 0; }
-        .features li { margin: 10px 0; padding-right: 25px; position: relative; }
-        .features li:before { content: "✓"; color: #27ae60; font-weight: bold; position: absolute; right: 0; }
+        .features li { margin: 10px 0; }
         .footer { margin-top: 30px; text-align: center; font-size: 13px; color: #666; border-top: 1px solid #eee; padding-top: 20px; }
       </style>
     </head>
     <body>
       <div class="container">
-        <div class="header">
-          <h1>🎉 مرحباً بك في تطبيق السياحة!</h1>
-        </div>
-        
+        <div class="header"><h1>🎉 مرحباً بك في تطبيق السياحة!</h1></div>
         <p style="font-size: 18px;">أهلاً <strong>${name}</strong>،</p>
         <p style="font-size: 16px;">نحن سعداء بانضمامك إلينا! تطبيق السياحة هو وجهتك المثالية لاكتشاف أجمل الوجهات السياحية.</p>
         
@@ -216,100 +277,23 @@ const sendWelcomeEmailWithWallet = async (to, name, walletNumber) => {
   return await sendEmail(to, subject, html);
 };
 
-/**
- * إرسال إشعارات عامة
- * @param {string} to - البريد الإلكتروني للمستلم
- * @param {string} subject - عنوان الرسالة
- * @param {string} message - نص الرسالة
- * @returns {Promise<{success: boolean, messageId?: string, error?: string}>}
- */
-const sendNotificationEmail = async (to, subject, message) => {
-  const html = `
-    <!DOCTYPE html>
-    <html dir="rtl" lang="ar">
-    <head>
-      <meta charset="UTF-8">
-      <style>
-        body { font-family: 'Segoe UI', sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
-        .container { background-color: #f9f9f9; border-radius: 10px; padding: 30px; }
-        .header { text-align: center; margin-bottom: 30px; }
-        .content { padding: 20px; background: white; border-radius: 8px; }
-        .footer { margin-top: 30px; text-align: center; font-size: 12px; color: #666; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="header">
-          <h1>تطبيق السياحة</h1>
-        </div>
-        <div class="content">
-          <p>${message}</p>
-        </div>
-        <div class="footer">
-          <p>© 2026 تطبيق السياحة. جميع الحقوق محفوظة.</p>
-        </div>
-      </div>
-    </body>
-    </html>
-  `;
-
-  return await sendEmail(to, subject, html);
-};
-
-/**
- * إرسال بريد إعادة تعيين كلمة المرور
- * @param {string} to - البريد الإلكتروني للمستلم
- * @param {string} resetCode - رمز إعادة التعيين
- * @returns {Promise<{success: boolean, code?: string, error?: string}>}
- */
-const sendPasswordResetEmail = async (to, resetCode) => {
-  console.log(`📧 Sending password reset email to ${to}`);
-  // إعادة استخدام دالة sendOTPEmail مع تمرير البريد فقط
-  // هذه الدالة ستقوم بتوليد رمز جديد وإرساله
-  return sendOTPEmail(to);
-};
-
-// التحقق من صحة الاتصال عند بدء التشغيل (اختياري)
-const verifyConnection = async () => {
-  try {
-    const testResult = await sendEmail(
-      process.env.EMAIL_USER || 'test@example.com',
-      '✅ اختبار اتصال Resend',
-      '<p>تم الاتصال بنجاح بخدمة Resend</p>'
-    );
-    
-    if (testResult.success) {
-      console.log('✅ Resend API connection verified successfully');
-    } else {
-      console.warn('⚠️ Could not verify Resend connection');
-    }
-  } catch (error) {
-    console.warn('⚠️ Resend verification skipped:', error.message);
-  }
-};
-
 // ============================================
 // تصدير الدوال
 // ============================================
 
 export {
   sendOTPEmail,
-  sendWelcomeEmailWithWallet,
-  sendNotificationEmail,
   sendPasswordResetEmail,
-  verifyConnection,
+  sendWelcomeEmailWithWallet,
   generateOTP,
   generateWalletNumber,
   sendEmail,
 };
 
-// تصدير افتراضي للتوافق مع الإصدارات السابقة
 export default {
   sendOTPEmail,
-  sendWelcomeEmailWithWallet,
-  sendNotificationEmail,
   sendPasswordResetEmail,
-  verifyConnection,
+  sendWelcomeEmailWithWallet,
   generateOTP,
   generateWalletNumber,
   sendEmail,
