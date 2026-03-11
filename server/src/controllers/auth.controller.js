@@ -193,7 +193,7 @@ class AuthController {
   // ============================================
 
   /**
-   * إرسال رمز التحقق (OTP)
+   * إرسال رمز التحقق (OTP) - نسخة محسنة
    */
   async sendOTP(req, res) {
     try {
@@ -208,40 +208,64 @@ class AuthController {
 
       console.log(`📧 Received OTP request for: ${email}`);
 
+      // توليد رمز عشوائي من 6 أرقام
       const otp = Math.floor(100000 + Math.random() * 900000).toString();
       
+      // حفظ الرمز في الذاكرة المؤقتة
       otpStore.set(email, {
         code: otp,
         createdAt: Date.now(),
         attempts: 0
       });
 
-      // محاولة إرسال البريد الإلكتروني
-      try {
-        await emailService.sendOTPEmail(email, otp);
-        console.log(`📧 OTP email sent to: ${email}`);
-      } catch (emailError) {
-        console.log(`⚠️ OTP email failed, showing in console: ${otp}`);
-      }
-
-      // عرض الرمز في Console للتطوير
-      console.log('\n' + '📧'.repeat(25));
-      console.log('📧         رمز التحقق للبريد الإلكتروني');
-      console.log('📧'.repeat(25));
-      console.log(`📧 البريد: ${email}`);
-      console.log(`🔢 الرمز: ${otp}`);
-      console.log('📧'.repeat(25));
-      console.log('⏰ صالح لمدة 10 دقائق');
-      console.log('📧'.repeat(25) + '\n');
-
+      // تعيين صلاحية الرمز (10 دقائق)
       setTimeout(() => {
         otpStore.delete(email);
       }, 10 * 60 * 1000);
 
+      // محاولة إرسال البريد الإلكتروني باستخدام الخدمة المحسنة
+      let emailSent = false;
+      try {
+        // استخدام خدمة البريد الإلكتروني الجديدة
+        await emailService.sendOTPEmail(email, otp);
+        emailSent = true;
+        console.log(`✅ OTP email sent successfully to: ${email}`);
+      } catch (emailError) {
+        console.error(`❌ Failed to send OTP email: ${emailError.message}`);
+        
+        // في وضع التطوير، نعرض الرمز في Console
+        if (process.env.NODE_ENV !== 'production') {
+          console.log('\n' + '📧'.repeat(25));
+          console.log('📧         رمز التحقق (وضع التطوير)');
+          console.log('📧'.repeat(25));
+          console.log(`📧 البريد: ${email}`);
+          console.log(`🔢 الرمز: ${otp}`);
+          console.log('📧'.repeat(25));
+          console.log('⏰ صالح لمدة 10 دقائق');
+          console.log('📧'.repeat(25) + '\n');
+        }
+      }
+
+      // التحقق من إعدادات البريد الإلكتروني
+      const emailConfigured = process.env.EMAIL_USER && process.env.EMAIL_PASSWORD;
+      if (!emailConfigured) {
+        console.warn('⚠️ Email credentials not configured in environment variables');
+      }
+
+      // إرسال الرد مع معلومات مفيدة
       res.json({
         success: true,
-        message: 'تم إرسال رمز التحقق إلى بريدك الإلكتروني',
-        ...(process.env.NODE_ENV !== 'production' && { devCode: otp })
+        message: emailSent 
+          ? 'تم إرسال رمز التحقق إلى بريدك الإلكتروني'
+          : 'تم إنشاء رمز التحقق (راجع سجلات Console)',
+        // في وضع التطوير فقط، نرسل الرمز في الرد
+        ...(process.env.NODE_ENV !== 'production' && { devCode: otp }),
+        // معلومات مفيدة للتصحيح
+        _debug: {
+          emailSent,
+          emailConfigured,
+          timestamp: new Date().toISOString()
+        }
       });
 
     } catch (error) {
@@ -358,7 +382,7 @@ class AuthController {
         otpStore.delete(otpKey);
       }, 10 * 60 * 1000);
 
-      // ✅ عرض الرمز في Console بشكل واضح جداً
+      // عرض الرمز في Console بشكل واضح
       console.log('\n' + '⭐'.repeat(60));
       console.log('⭐'.repeat(60));
       console.log('⭐                    🔐 ر م ز   ا ل ت ح ق ق   ا ل خ ا ص   ب ك 🔐');
@@ -369,7 +393,7 @@ class AuthController {
       console.log('⭐ صالح لمدة: 10 دقائق');
       console.log('⭐'.repeat(60) + '\n');
 
-      // ✅ محاولة إرسال البريد (لن تنجح ولكن لا يهم)
+      // محاولة إرسال البريد
       try {
         await emailService.sendPasswordResetEmail(email, resetCode);
         console.log(`📧 تم محاولة إرسال البريد إلى: ${email}`);
@@ -378,11 +402,11 @@ class AuthController {
         console.log(`💡 الرمز موجود أعلاه: ${resetCode}`);
       }
 
-      // ✅ إرسال الرمز في الـ Response مباشرة
+      // إرسال الرمز في الـ Response مباشرة
       res.json({
         success: true,
         message: 'تم إنشاء رمز التحقق بنجاح',
-        resetCode: resetCode, // الرمز يرسل للتطبيق مباشرة
+        resetCode: resetCode,
         note: 'في وضع التطوير، يتم إرسال الرمز مباشرة'
       });
 
@@ -899,6 +923,49 @@ class AuthController {
       res.status(500).json({
         success: false,
         message: 'حدث خطأ أثناء تغيير كلمة المرور'
+      });
+    }
+  }
+
+  /**
+   * تسجيل الخروج
+   */
+  async logout(req, res) {
+    try {
+      // يمكن إضافة منطق تسجيل الخروج هنا (مثل إبطال التوكن)
+      res.json({
+        success: true,
+        message: 'تم تسجيل الخروج بنجاح'
+      });
+    } catch (error) {
+      console.error('❌ Logout error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'حدث خطأ أثناء تسجيل الخروج'
+      });
+    }
+  }
+
+  /**
+   * تحديث التوكن
+   */
+  async refreshToken(req, res) {
+    try {
+      const { refreshToken } = req.body;
+      
+      // يمكن إضافة منطق تحديث التوكن هنا
+      // هذا مثال بسيط، في الإنتاج استخدم refresh tokens حقيقية
+      
+      res.json({
+        success: true,
+        message: 'تم تحديث التوكن بنجاح',
+        token: 'new-token-here'
+      });
+    } catch (error) {
+      console.error('❌ Refresh token error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'حدث خطأ أثناء تحديث التوكن'
       });
     }
   }
