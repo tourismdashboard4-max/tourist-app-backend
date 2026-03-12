@@ -4,6 +4,41 @@ const authController = require('../controllers/auth.controller');
 const { authenticate } = require('../middleware/auth.middleware');
 const { validate } = require('../middleware/validation.middleware');
 const { body } = require('express-validator');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+
+// ===================== إعداد multer لرفع الصور =====================
+// التأكد من وجود مجلد uploads
+const uploadDir = path.join(__dirname, '../../uploads/avatars');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+// إعداد multer لتخزين الصور
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = path.extname(file.originalname);
+    cb(null, `avatar-${req.user.id}-${uniqueSuffix}${ext}`);
+  }
+});
+
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 2 * 1024 * 1024 }, // 2MB
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif'];
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('الرجاء اختيار صورة بصيغة JPG أو PNG أو GIF'));
+    }
+  }
+});
 
 // قواعد التحقق من صحة البيانات
 const registerValidation = [
@@ -22,6 +57,44 @@ const otpValidation = [
   body('email').isEmail().withMessage('البريد الإلكتروني غير صحيح'),
   body('otp').isLength({ min: 6, max: 6 }).withMessage('رمز التحقق يجب أن يكون 6 أرقام')
 ];
+
+// ===================== مسارات التحقق من الجوال =====================
+const phoneValidation = [
+  body('phoneNumber').matches(/^(05|5)[0-9]{8}$|^\+9665[0-9]{8}$/).withMessage('رقم الجوال غير صحيح')
+];
+
+const phoneVerifyValidation = [
+  body('phoneNumber').matches(/^(05|5)[0-9]{8}$|^\+9665[0-9]{8}$/).withMessage('رقم الجوال غير صحيح'),
+  body('code').isLength({ min: 6, max: 6 }).withMessage('رمز التحقق يجب أن يكون 6 أرقام')
+];
+
+/**
+ * @route   POST /api/auth/verify-phone/send
+ * @desc    إرسال رمز التحقق للجوال
+ * @access  Private
+ */
+router.post('/verify-phone/send', authenticate, phoneValidation, validate, authController.sendPhoneOTP);
+
+/**
+ * @route   POST /api/auth/verify-phone/verify
+ * @desc    التحقق من رمز الجوال
+ * @access  Private
+ */
+router.post('/verify-phone/verify', authenticate, phoneVerifyValidation, validate, authController.verifyPhoneOTP);
+
+/**
+ * @route   POST /api/auth/verify-phone/resend
+ * @desc    إعادة إرسال رمز التحقق للجوال
+ * @access  Private
+ */
+router.post('/verify-phone/resend', authenticate, phoneValidation, validate, authController.resendPhoneOTP);
+
+/**
+ * @route   PUT /api/users/:userId/phone
+ * @desc    تحديث رقم الجوال بعد التحقق
+ * @access  Private
+ */
+router.put('/users/:userId/phone', authenticate, authController.updateUserPhone);
 
 // ===================== المسارات العامة =====================
 
@@ -88,7 +161,14 @@ router.put('/change-password', authenticate, authController.changePassword);
  * @desc    تحديث الصورة الشخصية
  * @access  Private
  */
-router.post('/avatar', authenticate, authController.updateAvatar);
+router.post('/avatar', authenticate, upload.single('avatar'), authController.updateAvatar);
+
+/**
+ * @route   POST /api/auth/profile/:userId/avatar
+ * @desc    رفع الصورة الشخصية (مسار بديل)
+ * @access  Private
+ */
+router.post('/profile/:userId/avatar', authenticate, upload.single('avatar'), authController.updateAvatar);
 
 /**
  * @route   POST /api/auth/logout
