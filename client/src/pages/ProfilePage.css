@@ -1,29 +1,31 @@
-/* ملف: client/src/pages/ProfilePage.css */
+/* client/src/pages/ProfilePage.css */
 
+/* ===== التنسيقات الأساسية ===== */
 .profile-container {
-  max-width: 900px;
+  max-width: 800px;
   margin: 0 auto;
   padding: 20px;
-  font-family: 'Cairo', sans-serif;
+  background: #3066b8;
+  min-height: 100vh;
+  direction: rtl;
 }
 
-/* ===== تحميل ===== */
 .profile-loading {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 300px;
+  height: 100vh;
+  gap: 20px;
 }
 
 .spinner {
   width: 50px;
   height: 50px;
-  border: 5px solid #f3f3f3;
-  border-top: 5px solid #3b82f6;
+  border: 3px solid #f3f3f3;
+  border-top: 3px solid #667eea;
   border-radius: 50%;
   animation: spin 1s linear infinite;
-  margin-bottom: 15px;
 }
 
 @keyframes spin {
@@ -33,33 +35,40 @@
 
 /* ===== رأس الصفحة ===== */
 .profile-header {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 20px;
+  padding: 25px;
+  margin-bottom: 25px;
+  color: white;
   display: flex;
   align-items: center;
-  gap: 30px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  padding: 30px;
-  border-radius: 15px;
-  margin-bottom: 20px;
-  box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+  gap: 20px;
+  box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3);
+}
+
+.profile-avatar {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  border: 4px solid rgba(255, 255, 255, 0.3);
+  overflow: hidden;
 }
 
 .profile-avatar img {
-  width: 100px;
-  height: 100px;
-  border-radius: 50%;
-  border: 4px solid white;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .profile-title h1 {
   margin: 0 0 5px 0;
-  font-size: 28px;
+  font-size: 24px;
 }
 
 .profile-email {
   margin: 0 0 10px 0;
   opacity: 0.9;
+  font-size: 14px;
 }
 
 .profile-badges {
@@ -68,392 +77,574 @@
 }
 
 .profile-badge {
-  padding: 5px 12px;
+  padding: 4px 12px;
   border-radius: 20px;
-  font-size: 14px;
-  background: rgba(255,255,255,0.2);
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.2);
 }
 
-.profile-badge.role {
-  background: #10b981;
+/* ===== رسالة عدم وجود محفظة ===== */
+.no-wallet-message {
+  background: white;
+  border-radius: 15px;
+  padding: 40px 20px;
+  margin-bottom: 20px;
+  text-align: center;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+  border: 1px solid #e5e7eb;
 }
 
-.profile-badge.id {
-  background: #f59e0b;
-}
-
-/* ===== بطاقة المحفظة المميزة ===== */
-.wallet-highlight-card {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-  color: white;
-  padding: 20px 25px;
-  border-radius: 12px;
-  margin-bottom: 25px;
-  box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);
-}
-
-.wallet-highlight-icon {
+.no-wallet-message .wallet-icon {
   font-size: 48px;
-  background: rgba(255,255,255,0.2);
-  width: 70px;
-  height: 70px;
+  margin-bottom: 15px;
+}
+
+.no-wallet-message h3 {
+  margin: 0 0 10px 0;
+  color: #1f2937;
+  font-size: 18px;
+}
+
+.no-wallet-message p {
+  margin: 0 0 20px 0;
+  color: #6b7280;
+  font-size: 14px;
+}
+
+/* ===== بطاقة المحفظة ===== */
+.wallet-premium-card {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 20px;
+  padding: 25px;
+  margin-bottom: 25px;
+  color: white;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3);
+}
+
+.wallet-card-bg {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 0;
+}
+
+.wallet-bg-pattern {
+  position: absolute;
+  top: -50%;
+  right: -50%;
+  width: 200%;
+  height: 200%;
+  background-image: radial-gradient(circle, rgba(255,255,255,0.1) 1px, transparent 1px);
+  background-size: 20px 20px;
+  animation: patternMove 20s linear infinite;
+}
+
+@keyframes patternMove {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.wallet-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  position: relative;
+  z-index: 1;
+}
+
+.wallet-title {
   display: flex;
   align-items: center;
-  justify-content: center;
-  border-radius: 50%;
+  gap: 10px;
 }
 
-.wallet-highlight-info {
-  flex: 1;
+.wallet-icon {
+  font-size: 24px;
 }
 
-.wallet-highlight-label {
-  font-size: 14px;
-  opacity: 0.9;
+.wallet-title h3 {
+  margin: 0;
+  font-size: 18px;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.wallet-status-badge {
+  padding: 5px 12px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 20px;
+  font-size: 12px;
+}
+
+.wallet-balance-section {
+  margin-bottom: 20px;
+  position: relative;
+  z-index: 1;
+}
+
+.wallet-balance-label {
+  display: block;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
   margin-bottom: 5px;
 }
 
-.wallet-highlight-balance {
+.wallet-balance-main {
   display: flex;
   align-items: baseline;
   gap: 5px;
+}
+
+.wallet-balance-amount {
+  font-size: 36px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.wallet-balance-currency {
+  font-size: 16px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.wallet-number-section {
+  margin-bottom: 20px;
+  position: relative;
+  z-index: 1;
+}
+
+.wallet-number-label {
+  display: block;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
   margin-bottom: 5px;
 }
 
-.wallet-highlight-amount {
-  font-size: 32px;
-  font-weight: bold;
-}
-
-.wallet-highlight-currency {
-  font-size: 16px;
-  opacity: 0.9;
-}
-
-.wallet-highlight-number {
-  font-size: 14px;
-  opacity: 0.9;
-  font-family: monospace;
-}
-
-.wallet-highlight-status {
-  padding: 5px 15px;
-  border-radius: 20px;
-  background: rgba(255,255,255,0.2);
-  font-size: 14px;
-}
-
-/* ===== تبويبات ===== */
-.profile-tabs {
+.wallet-number-display {
   display: flex;
-  gap: 10px;
-  margin-bottom: 25px;
-  border-bottom: 2px solid #e5e7eb;
-  padding-bottom: 10px;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 10px 15px;
+  border-radius: 10px;
 }
 
-.tab-btn {
+.wallet-number {
+  font-family: 'Courier New', monospace;
+  font-size: 16px;
+  letter-spacing: 2px;
+  direction: ltr;
+}
+
+.wallet-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.wallet-action-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: white;
+  font-size: 18px;
+  cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 20px;
-  border: none;
-  background: transparent;
-  color: #6b7280;
-  font-size: 16px;
-  cursor: pointer;
-  border-radius: 8px;
-  transition: all 0.3s;
-  position: relative;
+  justify-content: center;
+  transition: all 0.3s ease;
 }
 
-.tab-btn.active {
-  color: #3b82f6;
-  background: #eff6ff;
+.wallet-action-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+  transform: scale(1.1);
+}
+
+.wallet-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  position: relative;
+  z-index: 1;
+  padding-top: 15px;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+  margin-top: 10px;
+}
+
+.wallet-stat-item {
+  text-align: center;
+}
+
+.stat-label {
+  display: block;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+  margin-bottom: 3px;
+}
+
+.stat-value {
+  font-size: 18px;
   font-weight: 600;
 }
 
-.tab-icon {
-  font-size: 20px;
-}
-
-.wallet-balance-badge {
-  background: #10b981;
-  color: white;
+.stat-value.level {
+  background: rgba(255, 215, 0, 0.3);
   padding: 2px 8px;
   border-radius: 12px;
   font-size: 12px;
-  margin-right: 5px;
+  display: inline-block;
+}
+
+/* ===== التبويبات ===== */
+.profile-tabs {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+  background: white;
+  padding: 10px;
+  border-radius: 15px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+}
+
+.tab-btn {
+  flex: 1;
+  padding: 12px;
+  border: none;
+  background: none;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #6b7280;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.3s ease;
+}
+
+.tab-btn.active {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+.tab-icon {
+  font-size: 18px;
 }
 
 .notification-badge {
   background: #ef4444;
   color: white;
-  padding: 2px 8px;
-  border-radius: 12px;
-  font-size: 12px;
-  position: absolute;
-  top: -5px;
-  right: -5px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-size: 11px;
+  margin-right: 5px;
 }
 
-/* ===== بطاقات المعلومات ===== */
+/* ===== بطاقة المعلومات ===== */
 .info-card {
   background: white;
-  border-radius: 12px;
-  padding: 25px;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+  border-radius: 15px;
+  padding: 20px;
   margin-bottom: 20px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
 }
 
 .info-card h3 {
-  margin: 0 0 20px 0;
-  color: #333;
-  font-size: 20px;
-  border-bottom: 2px solid #e5e7eb;
-  padding-bottom: 10px;
+  margin: 0 0 15px 0;
+  color: #1f2937;
+  font-size: 18px;
 }
 
 .info-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 20px;
+  grid-template-columns: 1fr 1fr;
+  gap: 15px;
 }
 
 .info-item {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
+  padding: 10px;
+  background: #f9fafb;
+  border-radius: 10px;
 }
 
 .info-label {
+  display: block;
+  font-size: 12px;
   color: #6b7280;
-  font-size: 14px;
+  margin-bottom: 5px;
 }
 
 .info-value {
-  color: #333;
-  font-size: 16px;
-  font-weight: 500;
-}
-
-.info-value.highlight {
-  color: #3b82f6;
-  font-family: monospace;
-  background: #eff6ff;
-  padding: 5px 10px;
-  border-radius: 5px;
-}
-
-.status-badge {
-  display: inline-block;
-  padding: 5px 12px;
-  border-radius: 20px;
   font-size: 14px;
+  font-weight: 600;
+  color: #1f2937;
 }
 
-.status-badge.active {
-  background: #10b981;
-  color: white;
-}
-
-.status-badge.inactive {
-  background: #ef4444;
-  color: white;
-}
-
-/* ===== بطاقة المحفظة السريعة ===== */
+/* ===== البطاقة السريعة للمحفظة ===== */
 .quick-wallet-card {
-  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
-  color: white;
-  border-radius: 12px;
+  background: white;
+  border-radius: 15px;
   padding: 20px;
-  box-shadow: 0 4px 15px rgba(245, 158, 11, 0.3);
+  margin-top: 20px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+  border: 1px solid #e5e7eb;
+  border-right: 4px solid #667eea;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
 .quick-wallet-card h4 {
-  margin: 0 0 15px 0;
-  font-size: 18px;
-  border-bottom: 1px solid rgba(255,255,255,0.2);
-  padding-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: #667eea;
+  font-size: 16px;
+}
+
+.quick-wallet-icon {
+  font-size: 20px;
 }
 
 .quick-wallet-row {
   display: flex;
-  justify-content: space-between;
-  margin-bottom: 10px;
+  align-items: center;
+  gap: 10px;
 }
 
-.quick-wallet-row .highlight {
-  font-family: monospace;
-  background: rgba(255,255,255,0.2);
-  padding: 3px 8px;
-  border-radius: 5px;
+.balance-large {
+  font-size: 18px;
+  font-weight: 700;
+  color: #10b981;
 }
 
-.quick-wallet-row .balance {
+.arrow {
   font-size: 20px;
-  font-weight: bold;
+  color: #667eea;
 }
 
-/* ===== تفاصيل المحفظة الكاملة ===== */
-.wallet-card {
+/* ===== تفاصيل المحفظة ===== */
+.wallet-details-card {
   background: white;
   border-radius: 15px;
-  padding: 30px;
-  box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-  margin-bottom: 25px;
+  padding: 20px;
+  margin-bottom: 20px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
 }
 
-.wallet-header {
+.wallet-details-card h3 {
+  margin: 0 0 15px 0;
+  color: #1f2937;
+  font-size: 18px;
+}
+
+.wallet-detail-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  padding: 10px 0;
+  border-bottom: 1px solid #e5e7eb;
 }
 
-.wallet-header h3 {
-  margin: 0;
-  color: #333;
-}
-
-.wallet-status {
-  padding: 5px 15px;
-  border-radius: 20px;
-  font-size: 14px;
-}
-
-.wallet-status.active {
-  background: #10b981;
-  color: white;
-}
-
-.wallet-balance-large {
-  text-align: center;
-  margin-bottom: 30px;
-}
-
-.balance-amount {
-  font-size: 48px;
-  font-weight: bold;
-  color: #333;
-}
-
-.balance-currency {
-  font-size: 20px;
-  color: #6b7280;
-  margin-right: 5px;
-}
-
-.wallet-details {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 20px;
-  border-top: 1px solid #e5e7eb;
-  padding-top: 20px;
-}
-
-.detail-item {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
+.wallet-detail-item:last-child {
+  border-bottom: none;
 }
 
 .detail-label {
-  color: #6b7280;
   font-size: 14px;
+  color: #6b7280;
 }
 
 .detail-value {
-  color: #333;
-  font-weight: 500;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2937;
 }
 
 .detail-value.highlight {
   color: #3b82f6;
-  font-family: monospace;
-}
-
-/* ===== أزرار المحفظة ===== */
-.wallet-actions {
   display: flex;
-  gap: 15px;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
 }
 
-.btn-primary, .btn-secondary, .btn-outline {
-  padding: 12px 25px;
+.copy-btn-small {
+  background: none;
   border: none;
-  border-radius: 8px;
-  font-size: 16px;
   cursor: pointer;
+  font-size: 14px;
+  padding: 0;
+  opacity: 0.6;
+  transition: opacity 0.3s;
+}
+
+.copy-btn-small:hover {
+  opacity: 1;
+}
+
+/* ===== المعاملات ===== */
+.recent-transactions {
+  background: white;
+  border-radius: 15px;
+  padding: 20px;
+  margin-bottom: 20px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+}
+
+.recent-transactions h4 {
+  margin: 0 0 15px 0;
+  color: #1f2937;
+  font-size: 16px;
+}
+
+.transaction-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px;
+  background: #f9fafb;
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.transaction-item:last-child {
+  margin-bottom: 0;
+}
+
+.transaction-desc {
+  font-size: 14px;
+  color: #1f2937;
+}
+
+.transaction-amount {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.transaction-amount.positive {
+  color: #10b981;
+}
+
+.transaction-amount.negative {
+  color: #ef4444;
+}
+
+/* ===== أزرار الإجراءات ===== */
+.wallet-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.btn-primary, .btn-secondary {
+  padding: 12px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   transition: all 0.3s;
-  flex: 1;
-  min-width: 120px;
 }
 
 .btn-primary {
-  background: #3b82f6;
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
   color: white;
+  border: none;
 }
 
 .btn-primary:hover {
-  background: #2563eb;
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+  box-shadow: 0 5px 15px rgba(59, 130, 246, 0.4);
 }
 
 .btn-secondary {
-  background: #10b981;
-  color: white;
+  background: white;
+  color: #1f2937;
+  border: 1px solid #e5e7eb;
 }
 
 .btn-secondary:hover {
-  background: #059669;
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+  background: #f9fafb;
+  border-color: #3b82f6;
 }
 
-.btn-outline {
-  background: transparent;
-  border: 2px solid #3b82f6;
-  color: #3b82f6;
+.btn-icon {
+  font-size: 16px;
 }
 
-.btn-outline:hover {
-  background: #3b82f6;
+/* ===== زر تسجيل الخروج ===== */
+.logout-btn {
+  width: 100%;
+  padding: 14px;
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
   color: white;
+  border: none;
+  border-radius: 10px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 20px;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.logout-btn:hover {
   transform: translateY(-2px);
+  box-shadow: 0 5px 15px rgba(239, 68, 68, 0.4);
+}
+
+.logout-btn::before {
+  content: '🚪';
+  font-size: 18px;
 }
 
 /* ===== الإشعارات ===== */
+.notifications-tab {
+  background: white;
+  border-radius: 15px;
+  padding: 20px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+}
+
 .notifications-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  margin-bottom: 15px;
 }
 
 .notifications-header h3 {
   margin: 0;
-  color: #333;
+  color: #1f2937;
+  font-size: 18px;
 }
 
 .btn-mark-all {
-  padding: 8px 16px;
-  background: #3b82f6;
-  color: white;
+  padding: 6px 12px;
+  background: #f3f4f6;
   border: none;
   border-radius: 8px;
+  font-size: 12px;
+  color: #6b7280;
   cursor: pointer;
-  transition: all 0.3s;
 }
 
 .btn-mark-all:hover {
-  background: #2563eb;
+  background: #e5e7eb;
 }
 
 .notifications-list {
@@ -463,63 +654,42 @@
 }
 
 .notification-item {
-  display: flex;
-  align-items: center;
-  gap: 15px;
   padding: 15px;
-  background: white;
+  background: #f9fafb;
   border-radius: 10px;
-  box-shadow: 0 2px 5px rgba(0,0,0,0.05);
   cursor: pointer;
   transition: all 0.3s;
   position: relative;
 }
 
-.notification-item:hover {
-  transform: translateX(-5px);
-  box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-}
-
 .notification-item.unread {
   background: #eff6ff;
-  border-right: 4px solid #3b82f6;
 }
 
-.notification-icon {
-  width: 40px;
-  height: 40px;
-  background: #f3f4f6;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 20px;
-}
-
-.notification-content {
-  flex: 1;
+.notification-item:hover {
+  transform: translateX(-2px);
 }
 
 .notification-content h4 {
   margin: 0 0 5px 0;
-  color: #333;
-  font-size: 16px;
+  font-size: 14px;
+  color: #1f2937;
 }
 
 .notification-content p {
   margin: 0 0 5px 0;
+  font-size: 13px;
   color: #6b7280;
-  font-size: 14px;
 }
 
 .notification-time {
+  font-size: 11px;
   color: #9ca3af;
-  font-size: 12px;
 }
 
 .notification-dot {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   background: #3b82f6;
   border-radius: 50%;
   position: absolute;
@@ -527,11 +697,66 @@
   left: 15px;
 }
 
-/* ===== حالات فارغة ===== */
+/* ===== حالة فارغة ===== */
 .empty-state {
   text-align: center;
-  padding: 40px;
-  background: #f9fafb;
-  border-radius: 10px;
+  padding: 40px 20px;
+  background: white;
+  border-radius: 15px;
+}
+
+.empty-icon {
+  font-size: 48px;
+  margin-bottom: 15px;
+  opacity: 0.5;
+}
+
+.empty-state h3 {
+  margin: 0 0 10px 0;
+  color: #1f2937;
+  font-size: 18px;
+}
+
+.empty-state p {
   color: #6b7280;
+}
+
+/* ===== تحسينات متجاوبة ===== */
+@media (max-width: 768px) {
+  .profile-container {
+    padding: 10px;
+  }
+  
+  .profile-header {
+    flex-direction: column;
+    text-align: center;
+  }
+  
+  .profile-badges {
+    justify-content: center;
+  }
+  
+  .info-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .wallet-balance-amount {
+    font-size: 28px;
+  }
+  
+  .quick-wallet-card {
+    flex-direction: column;
+    text-align: center;
+    gap: 10px;
+  }
+}
+
+@media (max-width: 480px) {
+  .profile-tabs {
+    flex-direction: column;
+  }
+  
+  .wallet-actions {
+    grid-template-columns: 1fr;
+  }
 }

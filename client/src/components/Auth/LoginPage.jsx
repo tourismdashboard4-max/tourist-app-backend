@@ -524,9 +524,25 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess, onClose }) => {
       exit={{ opacity: 0, x: 20 }}
       className="space-y-5"
     >
-      <h2 className="text-2xl font-bold text-gray-800 dark:text-white text-center mb-6">
-        {lang === 'ar' ? 'تسجيل الدخول' : 'Login'}
-      </h2>
+      <div className="flex items-center gap-3 mb-6">
+        <button
+          onClick={() => {
+            // استدعاء دالة onClose لإغلاق النافذة بالكامل
+            if (onClose) {
+              onClose(); // هذا يغلق نافذة تسجيل الدخول
+            } else {
+              // إذا لم تكن هناك دالة onClose، نستخدم history.back
+              window.history.back();
+            }
+          }}
+          className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition"
+        >
+          <ArrowRight className="w-5 h-5 text-gray-600 dark:text-gray-400" />
+        </button>
+        <h2 className="text-2xl font-bold text-gray-800 dark:text-white text-center flex-1">
+          {lang === 'ar' ? 'تسجيل الدخول' : 'Login'}
+        </h2>
+      </div>
 
       <div className="space-y-4">
         {/* Email */}
@@ -685,16 +701,30 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess, onClose }) => {
 
   const renderEmailStep = () => (
     <div className="space-y-5">
-      <div className="text-center mb-6">
-        <div className="w-20 h-20 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
-          <Mail className="w-10 h-10 text-green-600 dark:text-green-400" />
+      <div className="flex items-center gap-3 mb-6">
+        <button
+          onClick={() => {
+            setMode('login');
+            setStep(1);
+            setEmail('');
+            setErrors({});
+            addNotification('🔄 العودة إلى تسجيل الدخول', 'info');
+          }}
+          className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition"
+        >
+          <ArrowRight className="w-5 h-5 text-gray-600 dark:text-gray-400" />
+        </button>
+        <div className="flex-1 text-center">
+          <div className="w-20 h-20 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Mail className="w-10 h-10 text-green-600 dark:text-green-400" />
+          </div>
+          <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-2">
+            {lang === 'ar' ? 'أهلاً بك في تطبيق السائح' : 'Welcome to Tourist App'}
+          </h2>
+          <p className="text-gray-600 dark:text-gray-400">
+            {lang === 'ar' ? 'أدخل بريدك الإلكتروني للبدء' : 'Enter your email to start'}
+          </p>
         </div>
-        <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-2">
-          {lang === 'ar' ? 'أهلاً بك في تطبيق السائح' : 'Welcome to Tourist App'}
-        </h2>
-        <p className="text-gray-600 dark:text-gray-400">
-          {lang === 'ar' ? 'أدخل بريدك الإلكتروني للبدء' : 'Enter your email to start'}
-        </p>
       </div>
 
       <div>
@@ -740,11 +770,7 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess, onClose }) => {
         <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-2">
           {lang === 'ar' ? 'رمز التحقق' : 'Verification Code'}
         </h2>
-        <p className="text-gray-600 dark:text-gray-400">
-          {lang === 'ar' 
-            ? `تم إرسال رمز التحقق إلى ${email}`
-            : `Verification code sent to ${email}`}
-        </p>
+        {/* تم إزالة رسالة "تم إرسال رمز التحقق إلى بريدك" حسب الطلب */}
       </div>
 
       <div>
@@ -994,13 +1020,9 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess, onClose }) => {
         className="w-full max-w-md bg-white dark:bg-gray-800 rounded-2xl shadow-2xl overflow-hidden"
       >
         <div className="p-6">
-          {/* رأس النافذة مع الإشعارات */}
+          {/* رأس النافذة مع الإشعارات - تم إزالة العنوان العلوي لتجنب التكرار */}
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-bold text-gray-800 dark:text-white">
-              {mode === 'login' ? (lang === 'ar' ? 'تسجيل الدخول' : 'Login') : 
-               mode === 'register' ? (lang === 'ar' ? 'إنشاء حساب' : 'Create Account') : 
-               (lang === 'ar' ? 'نسيت كلمة المرور' : 'Forgot Password')}
-            </h2>
+            <div className="w-8"></div> {/* مكان فارغ للتوازن */}
             
             {/* زر الإشعارات داخل الإطار */}
             <NotificationsPanel
@@ -1010,9 +1032,9 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess, onClose }) => {
             />
           </div>
 
-          {/* الإشعار الحالي (يظهر داخل الإطار ويزول بعد 3 ثواني) */}
+          {/* الإشعار الحالي - تم تعطيله للاكتفاء بأيقونة الجرس فقط */}
           <AnimatePresence>
-            {currentNotification && (
+            {false && currentNotification && (
               <InlineNotification
                 message={currentNotification.message}
                 type={currentNotification.type}
