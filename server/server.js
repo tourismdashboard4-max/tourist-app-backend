@@ -239,7 +239,7 @@ app.get('/health', async (req, res) => {
   });
 });
 
-// ===================== Database connection and server start =====================
+// ===================== Database connection and server start (مع إضافة التأخير) =====================
 const startServer = async () => {
   const dbConnected = await connectDB();
   
@@ -249,6 +249,7 @@ const startServer = async () => {
   }
 
   server.listen(PORT, '0.0.0.0', () => {
+    // إضافة تأخير بسيط قبل طباعة الرسالة (100 مللي ثانية)
     setTimeout(() => {
       console.log(`
   ╔══════════════════════════════════════════════╗
@@ -262,10 +263,7 @@ const startServer = async () => {
   ║  ▶ Health:      /health
   ╚══════════════════════════════════════════════╝
       `);
-<<<<<<< HEAD
       console.log(`🕐 Server started at: ${new Date().toISOString()}`);
-=======
->>>>>>> 7146497
     }, 100);
   });
 };
