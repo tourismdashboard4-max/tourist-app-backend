@@ -34,16 +34,16 @@ export const api = {
   },
 
   // ✅ التحقق من الرمز فقط
-  async verifyOTP(email, code) {
+  async verifyOTP(email, code, purpose = 'register') {
     try {
-      console.log('📤 Verifying OTP with data:', { email, code });
+      console.log('📤 Verifying OTP with data:', { email, code, purpose });
       
       const response = await fetch(`${API_BASE_URL}/api/auth/verify-otp`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ email, code })
+        body: JSON.stringify({ email, code, purpose })
       });
 
       const data = await response.json();
@@ -175,7 +175,7 @@ export const api = {
     }
   },
 
-  // ✅ إعادة تعيين كلمة المرور
+  // ✅ إعادة تعيين كلمة المرور (معدلة مع purpose)
   async resetPassword(email, code, newPassword) {
     try {
       console.log('📤 Reset password request:', { email, code, newPassword });
@@ -185,7 +185,12 @@ export const api = {
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ email, code, newPassword })
+        body: JSON.stringify({ 
+          email, 
+          code, 
+          newPassword,
+          purpose: 'reset-password' // ✅ إضافة الغرض
+        })
       });
 
       const data = await response.json();
