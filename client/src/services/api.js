@@ -1,5 +1,5 @@
 // client/src/services/api.js
-const API_BASE_URL = 'https://tourist-app-api.onrender.com/api';
+const API_BASE_URL = 'https://tourist-app-api.onrender.com';
 
 export const api = {
   // ============================================
@@ -11,7 +11,7 @@ export const api = {
     try {
       console.log('📤 Sending OTP request for:', email);
       
-      const response = await fetch(`${API_BASE_URL}/auth/send-otp`, {
+      const response = await fetch(`${API_BASE_URL}/api/auth/send-otp`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -38,7 +38,7 @@ export const api = {
     try {
       console.log('📤 Verifying OTP with data:', { email, code });
       
-      const response = await fetch(`${API_BASE_URL}/auth/verify-otp`, {
+      const response = await fetch(`${API_BASE_URL}/api/auth/verify-otp`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -65,7 +65,7 @@ export const api = {
     try {
       console.log('📤 Registering new user:', { email, fullName });
       
-      const response = await fetch(`${API_BASE_URL}/auth/register`, {
+      const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -90,7 +90,7 @@ export const api = {
   // ✅ إعادة إرسال الرمز
   async resendOTP(email) {
     try {
-      const response = await fetch(`${API_BASE_URL}/auth/resend-otp`, {
+      const response = await fetch(`${API_BASE_URL}/api/auth/resend-otp`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -120,7 +120,7 @@ export const api = {
     try {
       console.log('📤 Login attempt for:', email);
       
-      const response = await fetch(`${API_BASE_URL}/auth/login`, {
+      const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -153,7 +153,7 @@ export const api = {
     try {
       console.log('📤 Forgot password request for:', email);
       
-      const response = await fetch(`${API_BASE_URL}/auth/forgot-password`, {
+      const response = await fetch(`${API_BASE_URL}/api/auth/forgot-password`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -180,7 +180,7 @@ export const api = {
     try {
       console.log('📤 Reset password request:', { email, code, newPassword });
       
-      const response = await fetch(`${API_BASE_URL}/auth/reset-password`, {
+      const response = await fetch(`${API_BASE_URL}/api/auth/reset-password`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -207,7 +207,7 @@ export const api = {
     try {
       const token = localStorage.getItem('token');
       
-      const response = await fetch(`${API_BASE_URL}/auth/profile/${userId}`, {
+      const response = await fetch(`${API_BASE_URL}/api/auth/profile/${userId}`, {
         method: 'GET',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -233,7 +233,7 @@ export const api = {
     try {
       const token = localStorage.getItem('token');
       
-      const response = await fetch(`${API_BASE_URL}/auth/profile/${userId}`, {
+      const response = await fetch(`${API_BASE_URL}/api/auth/profile/${userId}`, {
         method: 'PUT',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -260,7 +260,7 @@ export const api = {
     try {
       const token = localStorage.getItem('token');
       
-      const response = await fetch(`${API_BASE_URL}/auth/profile/${userId}/avatar`, {
+      const response = await fetch(`${API_BASE_URL}/api/auth/profile/${userId}/avatar`, {
         method: 'POST',
         headers: {
           'Authorization': token ? `Bearer ${token}` : ''
@@ -291,7 +291,7 @@ export const api = {
       const token = localStorage.getItem('token');
       console.log('📤 Sending phone verification:', { userId, phone });
       
-      const response = await fetch(`${API_BASE_URL}/auth/send-phone-otp`, {
+      const response = await fetch(`${API_BASE_URL}/api/auth/send-phone-otp`, {
         method: 'POST',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -319,7 +319,7 @@ export const api = {
       const token = localStorage.getItem('token');
       console.log('📤 Verifying phone code:', { userId, phone, code });
       
-      const response = await fetch(`${API_BASE_URL}/auth/verify-phone-otp`, {
+      const response = await fetch(`${API_BASE_URL}/api/auth/verify-phone-otp`, {
         method: 'POST',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -347,7 +347,7 @@ export const api = {
       const token = localStorage.getItem('token');
       console.log('📤 Updating phone:', { userId, phone });
       
-      const response = await fetch(`${API_BASE_URL}/auth/update-phone`, {
+      const response = await fetch(`${API_BASE_URL}/api/auth/update-phone`, {
         method: 'PUT',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -378,7 +378,7 @@ export const api = {
     try {
       console.log('📤 Registering new guide:', formData);
       
-      const response = await fetch(`${API_BASE_URL}/guides/register`, {
+      const response = await fetch(`${API_BASE_URL}/api/guides/register`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -417,7 +417,7 @@ export const api = {
     try {
       console.log('📤 Guide login attempt:', email);
       
-      const response = await fetch(`${API_BASE_URL}/guides/login`, {
+      const response = await fetch(`${API_BASE_URL}/api/guides/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -452,7 +452,7 @@ export const api = {
   // ✅ الحصول على برامج المرشد
   async getGuidePrograms(guideId, token) {
     try {
-      const response = await fetch(`${API_BASE_URL}/guides/${guideId}/programs`, {
+      const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}/programs`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -476,7 +476,7 @@ export const api = {
   // ✅ إضافة برنامج سياحي جديد
   async addTourProgram(guideId, token, programData) {
     try {
-      const response = await fetch(`${API_BASE_URL}/guides/${guideId}/programs`, {
+      const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}/programs`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -501,7 +501,7 @@ export const api = {
   // ✅ تفعيل/إيقاف برنامج
   async toggleProgramStatus(guideId, programId, token, status) {
     try {
-      const response = await fetch(`${API_BASE_URL}/guides/${guideId}/programs/${programId}`, {
+      const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}/programs/${programId}`, {
         method: 'PATCH',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -526,7 +526,7 @@ export const api = {
   // ✅ الحصول على معلومات المرشد
   async getGuideProfile(guideId, token) {
     try {
-      const response = await fetch(`${API_BASE_URL}/guides/${guideId}`, {
+      const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -550,7 +550,7 @@ export const api = {
   // ✅ تحديث بيانات المرشد
   async updateGuideProfile(guideId, token, updates) {
     try {
-      const response = await fetch(`${API_BASE_URL}/guides/${guideId}`, {
+      const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}`, {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -577,7 +577,7 @@ export const api = {
     try {
       const token = localStorage.getItem('token');
       
-      const response = await fetch(`${API_BASE_URL}/guides/status/${userId}`, {
+      const response = await fetch(`${API_BASE_URL}/api/guides/status/${userId}`, {
         method: 'GET',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -647,7 +647,7 @@ export const api = {
       const token = localStorage.getItem('token');
       const queryParams = new URLSearchParams(params).toString();
       
-      const response = await fetch(`${API_BASE_URL}/notifications?${queryParams}`, {
+      const response = await fetch(`${API_BASE_URL}/api/notifications?${queryParams}`, {
         method: 'GET',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -673,7 +673,7 @@ export const api = {
     try {
       const token = localStorage.getItem('token');
       
-      const response = await fetch(`${API_BASE_URL}/notifications/stats`, {
+      const response = await fetch(`${API_BASE_URL}/api/notifications/stats`, {
         method: 'GET',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -699,7 +699,7 @@ export const api = {
     try {
       const token = localStorage.getItem('token');
       
-      const response = await fetch(`${API_BASE_URL}/notifications/${notificationId}/read`, {
+      const response = await fetch(`${API_BASE_URL}/api/notifications/${notificationId}/read`, {
         method: 'PUT',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -725,7 +725,7 @@ export const api = {
     try {
       const token = localStorage.getItem('token');
       
-      const response = await fetch(`${API_BASE_URL}/notifications/read-all`, {
+      const response = await fetch(`${API_BASE_URL}/api/notifications/read-all`, {
         method: 'PUT',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -751,7 +751,7 @@ export const api = {
     try {
       const token = localStorage.getItem('token');
       
-      const response = await fetch(`${API_BASE_URL}/notifications/${notificationId}`, {
+      const response = await fetch(`${API_BASE_URL}/api/notifications/${notificationId}`, {
         method: 'DELETE',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -777,7 +777,7 @@ export const api = {
     try {
       const token = localStorage.getItem('token');
       
-      const response = await fetch(`${API_BASE_URL}/notifications/delete-multiple`, {
+      const response = await fetch(`${API_BASE_URL}/api/notifications/delete-multiple`, {
         method: 'POST',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -804,7 +804,7 @@ export const api = {
     try {
       const token = localStorage.getItem('token');
       
-      const response = await fetch(`${API_BASE_URL}/notifications/reply`, {
+      const response = await fetch(`${API_BASE_URL}/api/notifications/reply`, {
         method: 'POST',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -835,7 +835,7 @@ export const api = {
     try {
       const token = localStorage.getItem('token');
       
-      const response = await fetch(`${API_BASE_URL}/chats`, {
+      const response = await fetch(`${API_BASE_URL}/api/chats`, {
         method: 'GET',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -868,7 +868,7 @@ export const api = {
       
       console.log('📤 Starting support chat with data:', data);
       
-      const response = await fetch(`${API_BASE_URL}/chats/support`, {
+      const response = await fetch(`${API_BASE_URL}/api/chats/support`, {
         method: 'POST',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -896,7 +896,7 @@ export const api = {
     try {
       const token = localStorage.getItem('token');
       
-      const response = await fetch(`${API_BASE_URL}/chats`, {
+      const response = await fetch(`${API_BASE_URL}/api/chats`, {
         method: 'POST',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -924,7 +924,7 @@ export const api = {
       const token = localStorage.getItem('token');
       
       const response = await fetch(
-        `${API_BASE_URL}/chats/${conversationId}/messages?page=${page}&limit=${limit}`,
+        `${API_BASE_URL}/api/chats/${conversationId}/messages?page=${page}&limit=${limit}`,
         {
           method: 'GET',
           headers: {
@@ -952,7 +952,7 @@ export const api = {
     try {
       const token = localStorage.getItem('token');
       
-      const response = await fetch(`${API_BASE_URL}/chats/message/text`, {
+      const response = await fetch(`${API_BASE_URL}/api/chats/message/text`, {
         method: 'POST',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -979,7 +979,7 @@ export const api = {
     try {
       const token = localStorage.getItem('token');
       
-      const response = await fetch(`${API_BASE_URL}/chats/message/image`, {
+      const response = await fetch(`${API_BASE_URL}/api/chats/message/image`, {
         method: 'POST',
         headers: {
           'Authorization': token ? `Bearer ${token}` : ''
@@ -1005,7 +1005,7 @@ export const api = {
     try {
       const token = localStorage.getItem('token');
       
-      const response = await fetch(`${API_BASE_URL}/chats/message/file`, {
+      const response = await fetch(`${API_BASE_URL}/api/chats/message/file`, {
         method: 'POST',
         headers: {
           'Authorization': token ? `Bearer ${token}` : ''
@@ -1031,7 +1031,7 @@ export const api = {
     try {
       const token = localStorage.getItem('token');
       
-      const response = await fetch(`${API_BASE_URL}/chats/${conversationId}/rate`, {
+      const response = await fetch(`${API_BASE_URL}/api/chats/${conversationId}/rate`, {
         method: 'POST',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -1058,7 +1058,7 @@ export const api = {
     try {
       const token = localStorage.getItem('token');
       
-      const response = await fetch(`${API_BASE_URL}/chats/message/${messageId}/read`, {
+      const response = await fetch(`${API_BASE_URL}/api/chats/message/${messageId}/read`, {
         method: 'PUT',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
