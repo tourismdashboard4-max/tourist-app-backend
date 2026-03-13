@@ -1,5 +1,5 @@
 // client/src/pages/LoginPage.jsx - نظام تسجيل الدخول بالبريد الإلكتروني فقط
-// نسخة معدلة - تم إصلاح مشكلة تعدد الرموز
+// نسخة معدلة - تم إصلاح مشكلة تعدد الرموز وإضافة purpose إلى verifyOTP
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Mail, Lock, User, Key, ArrowRight, CheckCircle, AlertCircle } from 'lucide-react';
@@ -107,9 +107,13 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
 
     setLoading(true);
     try {
-      console.log('📤 Verifying OTP with data:', { email, otp });
+      console.log('📤 Verifying OTP with data:', { email, otp, mode });
       
-      const response = await api.verifyOTP(email, otp);
+      // ✅ تحديد الغرض بناءً على الوضع الحالي
+      const purpose = mode === 'forgot' ? 'reset-password' : 'register';
+      
+      // ✅ إرسال الغرض مع الطلب
+      const response = await api.verifyOTP(email, otp, purpose);
       
       console.log('📥 Verify response:', response);
       
