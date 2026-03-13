@@ -1,5 +1,6 @@
 // ============================================
 // LoginPage.jsx - نظام تسجيل الدخول بالبريد الإلكتروني فقط
+// نسخة معدلة - تم إصلاح مشكلة تعدد الرموز
 // ============================================
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -26,6 +27,8 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState('');
+  // متغير لتتبع الرمز الحالي الصالح (اختياري)
+  const [currentValidOTP, setCurrentValidOTP] = useState('');
 
   // ============================================
   // Validation Functions
@@ -254,25 +257,57 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
   };
 
   const handleForgotPassword = async () => {
-    if (step === 1) {
-      if (!email) {
-        setErrors({ email: lang === 'ar' ? 'البريد الإلكتروني مطلوب' : 'Email is required' });
-        return;
-      }
-      if (!validateEmail(email)) {
-        setErrors({ email: lang === 'ar' ? 'البريد الإلكتروني غير صحيح' : 'Invalid email address' });
-        return;
-      }
+    // هذه الدالة الآن مخصصة فقط لخطوة إدخال البريد الإلكتروني (step 1)
+    if (step !== 1) return;
 
-      setLoading(true);
-      try {
-        console.log('🔄 Sending forgot password request for:', email);
-        const response = await api.forgotPassword(email);
+    if (!email) {
+      setErrors({ email: lang === 'ar' ? 'البريد الإلكتروني مطلوب' : 'Email is required' });
+      return;
+    }
+    if (!validateEmail(email)) {
+      setErrors({ email: lang === 'ar' ? 'البريد الإلكتروني غير صحيح' : 'Invalid email address' });
+      return;
+    }
+
+    setLoading(true);
+    try {
+      console.log('🔄 Sending forgot password request for:', email);
+      const response = await api.forgotPassword(email);
+      
+      if (response.success) {
+        setStep(2);
+        setSuccess(lang === 'ar' ? 'تم إرسال رمز التحقق إلى بريدك' : 'Verification code sent');
         
+        setTimer(60);
+        const interval = setInterval(() => {
+          setTimer((prev) => {
+            if (prev <= 1) {
+              clearInterval(interval);
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+      }
+    } catch (error) {
+      console.error('❌ Forgot password error:', error);
+      setErrors({ general: error.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // دالة منفصلة لإعادة إرسال رمز التحقق (لمنع تعدد الرموز)
+  const handleResendOTP = async () => {
+    if (timer > 0) return;
+
+    setLoading(true);
+    try {
+      if (mode === 'forgot') {
+        console.log('🔄 Resending forgot password OTP for:', email);
+        const response = await api.forgotPassword(email);
         if (response.success) {
-          setStep(2);
-          setSuccess(lang === 'ar' ? 'تم إرسال رمز التحقق إلى بريدك' : 'Verification code sent');
-          
+          setSuccess(lang === 'ar' ? 'تم إرسال رمز جديد' : 'New code sent');
           setTimer(60);
           const interval = setInterval(() => {
             setTimer((prev) => {
@@ -284,14 +319,14 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
             });
           }, 1000);
         }
-      } catch (error) {
-        console.error('❌ Forgot password error:', error);
-        setErrors({ general: error.message });
-      } finally {
-        setLoading(false);
+      } else {
+        await handleSendOTP();
       }
-    } else if (step === 2) {
-      await handleVerifyOTP();
+    } catch (error) {
+      console.error('❌ Resend OTP error:', error);
+      setErrors({ general: error.message });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -629,8 +664,8 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
           {lang === 'ar' ? 'تغيير البريد' : 'Change email'}
         </button>
         <button
-          onClick={mode === 'forgot' ? handleForgotPassword : handleSendOTP}
-          disabled={timer > 0}
+          onClick={handleResendOTP}
+          disabled={timer > 0 || loading}
           className="text-sm text-green-600 hover:text-green-700 dark:text-green-400 disabled:opacity-50"
         >
           {timer > 0 
@@ -640,7 +675,7 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
       </div>
 
       <button
-        onClick={mode === 'forgot' ? handleForgotPassword : handleVerifyOTP}
+        onClick={handleVerifyOTP}
         disabled={loading || otp.length !== 6}
         className="w-full py-3 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl font-bold hover:from-green-700 hover:to-emerald-700 transition-all transform hover:scale-[1.02] disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg"
       >
