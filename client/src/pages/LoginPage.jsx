@@ -1,5 +1,5 @@
 // ============================================
-// LoginPage.jsx - نظام تسجيل الدخول بالبريد الإلكتروني
+// LoginPage.jsx - نظام تسجيل الدخول بالبريد الإلكتروني فقط
 // ============================================
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';

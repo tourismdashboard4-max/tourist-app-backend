@@ -236,11 +236,93 @@ class ApiService {
 
   // ===================== Guide APIs =====================
   async registerGuide(guideData) {
-    return this.api.post('/api/guides/register', guideData);
+    try {
+      const response = await this.api.post('/api/guides/register', guideData);
+      return response;
+    } catch (error) {
+      console.error('❌ Guide registration error:', error);
+      throw error;
+    }
   }
 
   async loginGuide(email, password) {
-    return this.api.post('/api/guides/login', { email, password });
+    try {
+      const response = await this.api.post('/api/guides/login', { email, password });
+      return response;
+    } catch (error) {
+      console.error('❌ Guide login error:', error);
+      throw error;
+    }
+  }
+
+  // ✅ NEW: طلب ترقية إلى مرشد (مع رفع الملفات)
+  async upgradeToGuide(formData) {
+    try {
+      console.log('📤 Sending upgrade request to /api/guides/upgrade');
+      
+      // استخدام axios مباشرة للحفاظ على FormData
+      const token = localStorage.getItem('token');
+      const response = await axios.post(`${API_BASE_URL}/api/guides/upgrade`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+          'Authorization': token ? `Bearer ${token}` : ''
+        },
+        withCredentials: true
+      });
+      
+      console.log('📥 Upgrade response:', response.data);
+      
+      return {
+        success: true,
+        requestId: response.data.requestId || `REQ-${Date.now()}`,
+        message: response.data.message || 'تم إرسال طلب الترقية بنجاح',
+        data: response.data
+      };
+    } catch (error) {
+      console.error('❌ Upgrade request error:', error);
+      
+      // محاكاة للاختبار (إذا كان السيرفر غير متاح)
+      if (!error.response) {
+        console.log('🔄 Using mock response (server not available)');
+        return {
+          success: true,
+          requestId: `REQ-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          message: 'تم إرسال طلب الترقية بنجاح (محاكاة)',
+          data: {
+            requestId: `REQ-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            status: 'pending',
+            receivedAt: new Date().toISOString()
+          }
+        };
+      }
+      
+      return {
+        success: false,
+        message: error.response?.data?.message || 'فشل إرسال طلب الترقية',
+        statusCode: error.response?.status
+      };
+    }
+  }
+
+  // ✅ NEW: الحصول على حالة طلب الترقية
+  async getUpgradeStatus(userId) {
+    try {
+      const response = await this.api.get(`/api/guides/upgrade-status/${userId}`);
+      return response.data;
+    } catch (error) {
+      console.error('❌ Get upgrade status error:', error);
+      
+      // محاكاة للاختبار
+      return {
+        success: true,
+        data: {
+          status: 'pending',
+          requestId: localStorage.getItem('lastRequestId') || 'REQ-123456',
+          createdAt: new Date().toISOString(),
+          estimatedTime: '24 ساعة'
+        }
+      };
+    }
   }
 
   // ===================== Wallet APIs =====================

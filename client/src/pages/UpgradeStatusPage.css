@@ -1,0 +1,33 @@
+/* UpgradeToGuidePage.css */
+.upgrade-guide-container {
+    height: 100vh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    scroll-behavior: smooth;
+}
+
+.upgrade-guide-container::-webkit-scrollbar {
+    width: 8px;
+}
+
+.upgrade-guide-container::-webkit-scrollbar-track {
+    background: #f1f1f1;
+}
+
+.upgrade-guide-container::-webkit-scrollbar-thumb {
+    background: #10b981;
+    border-radius: 4px;
+}
+
+.upgrade-guide-container::-webkit-scrollbar-thumb:hover {
+    background: #059669;
+}
+
+/* للوضع الليلي */
+.dark .upgrade-guide-container::-webkit-scrollbar-track {
+    background: #374151;
+}
+
+.dark .upgrade-guide-container::-webkit-scrollbar-thumb {
+    background: #10b981;
+}

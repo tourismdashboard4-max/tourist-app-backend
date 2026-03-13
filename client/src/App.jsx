@@ -5,8 +5,7 @@ import mapboxgl from "mapbox-gl";
 import "@mapbox/mapbox-gl-directions/dist/mapbox-gl-directions.css";
 import { 
   Home, Settings, Star, Heart, Navigation, Bell, User, 
-  Search,  // ✅ موجودة مرة واحدة فقط
-  Calendar, MapPin, Users, Sun, Moon, MessageCircle, 
+  Search, Calendar, MapPin, Users, Sun, Moon, MessageCircle, 
   CheckCircle, XCircle, Phone, FileText, Send, Plus, 
   Archive, Shield, Package, Target, MapPinned, Mail,     
   Edit2, LogOut, Camera, Save, X 
@@ -17,12 +16,12 @@ import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 import NotificationsPage from './pages/NotificationsPage'; 
 import { AuthProvider } from './contexts/AuthContext';
+import UpgradeToGuidePage from './pages/UpgradeToGuidePage';
+import UpgradeStatusPage from './pages/UpgradeStatusPage';
 
-
-
-
-// Mapbox token - استخدم هذا التوكن
+// Mapbox token
 mapboxgl.accessToken = "pk.eyJ1IjoibW9vaG1kMTUiLCJhIjoiY21obWJwN3EwMHF1czJvc2lyaWRyem0xciJ9.sl39WFOhm4m-kOOYtGqONw";
+
 const LOCALES = {
   en: {
     appName: "Al-Sa'eh",
@@ -89,6 +88,8 @@ const LOCALES = {
     myTours: "My Tours",
     guideDashboard: "Guide Dashboard",
     userTrips: "My Trips",
+    upgradeToGuide: "Upgrade to Guide",
+    upgradeStatus: "Upgrade Status"
   },
   ar: {
     appName: "السائح",
@@ -155,10 +156,12 @@ const LOCALES = {
     myTours: "جولاتي",
     guideDashboard: "لوحة المرشد",
     userTrips: "رحلاتي",
+    upgradeToGuide: "ترقية إلى مرشد",
+    upgradeStatus: "حالة الترقية"
   },
 };
 
-// ===================== 📱 Bottom Navigation Bar (معدل) =====================
+// ===================== 📱 Bottom Navigation Bar =====================
 function BottomNav({ current, setCurrent, lang, user }) {
   const navItems = user?.type === "guide" ? [
     { key: "home", icon: Home, label: lang === "ar" ? "الرئيسية" : "Home" },
@@ -174,7 +177,6 @@ function BottomNav({ current, setCurrent, lang, user }) {
     { key: "profile", icon: User, label: lang === "ar" ? "صفحتي" : "Profile" },
   ];
 
-  // ✅ دالة للحصول على الحرف الأول من الاسم
   const getInitial = () => {
     if (!user) return null;
     if (user.fullName) return user.fullName.charAt(0).toUpperCase();
@@ -182,7 +184,6 @@ function BottomNav({ current, setCurrent, lang, user }) {
     return null;
   };
 
-  // ✅ دالة عرض أيقونة الملف الشخصي
   const getProfileIcon = () => {
     if (!user) return <User size={24} className="mb-1" />;
     
@@ -216,7 +217,6 @@ function BottomNav({ current, setCurrent, lang, user }) {
           <button
             key={item.key}
             onClick={() => {
-              // ✅ منع الزوار من الوصول للخريطة
               if (!user && item.key === 'explore') {
                 alert(lang === 'ar' 
                   ? 'الرجاء تسجيل الدخول أولاً للوصول للخريطة' 
@@ -243,7 +243,8 @@ function BottomNav({ current, setCurrent, lang, user }) {
     </div>
   );
 }
-// ===================== 📍 Home Page (معدلة) =====================
+
+// ===================== 📍 Home Page (بدون بيانات وهمية) =====================
 function HomePage({ lang, user, setPage, dark, setDark, locationEnabled, setLocationEnabled }) {
   const t = (k) => LOCALES[lang][k] || k;
   
@@ -293,7 +294,7 @@ function HomePage({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
       <div className="p-4">
         <h2 className="text-lg font-bold mb-4 text-gray-800 dark:text-white">{t("explore")}</h2>
         <div className="grid grid-cols-4 gap-3 mb-6">
-          {/* ✅ زر الخريطة المعدل - يظهر تنبيه للزوار */}
+          {/* زر الخريطة */}
           <button 
             onClick={() => {
               if (!user) {
@@ -313,6 +314,7 @@ function HomePage({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
             <span className="text-xs font-medium dark:text-gray-200">الخريطة</span>
           </button>
           
+          {/* برامج قريبة */}
           <div className="flex flex-col items-center p-3 bg-white dark:bg-gray-800 rounded-xl shadow-sm">
             <div className="w-12 h-12 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mb-2">
               <Package className="text-green-600 dark:text-green-400" size={24} />
@@ -320,6 +322,7 @@ function HomePage({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
             <span className="text-xs font-medium dark:text-gray-200">{t("nearbyPrograms")}</span>
           </div>
           
+          {/* المرشدين / لوحة المرشد */}
           <button 
             onClick={() => setPage(user?.type === "guide" ? "guideDashboard" : "guides")}
             className="flex flex-col items-center p-3 bg-white dark:bg-gray-800 rounded-xl shadow-sm hover:shadow-md transition"
@@ -332,6 +335,7 @@ function HomePage({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
             </span>
           </button>
           
+          {/* المفضلة / الرحلات المؤرشفة */}
           <button 
             onClick={() => setPage("profile")}
             className="flex flex-col items-center p-3 bg-white dark:bg-gray-800 rounded-xl shadow-sm hover:shadow-md transition"
@@ -348,127 +352,32 @@ function HomePage({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
           </button>
         </div>
 
-        {/* Nearby Programs - تظهر للجميع */}
+        {/* Nearby Programs - تعتمد على API حقيقي */}
         <h2 className="text-lg font-bold mb-4 text-gray-800 dark:text-white">{t("nearbyPrograms")}</h2>
         
         {!user ? (
-          /* للزوار: عرض البرامج الوهمية */
-          <div className="space-y-3">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="flex items-center bg-white dark:bg-gray-800 rounded-xl p-3 shadow-sm hover:shadow-md transition">
-                <div className="w-16 h-16 rounded-lg bg-gradient-to-br from-green-400 to-blue-500 ml-3 flex items-center justify-center">
-                  <Target className="text-white" size={24} />
-                </div>
-                <div className="flex-1">
-                  <h3 className="font-bold text-gray-800 dark:text-white">جولة تاريخية في الدرعية</h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-300">مرشد: محمد العتيبي</p>
-                  <div className="flex items-center mt-1">
-                    <Star size={14} className="text-yellow-500 fill-current" />
-                    <span className="text-xs text-gray-500 dark:text-gray-400 mr-1">4.8 (24 تقييم)</span>
-                    <span className="text-xs text-green-600 bg-green-50 dark:bg-green-900/30 px-2 py-1 rounded mr-2">2 كم</span>
-                  </div>
-                </div>
-                <button className="px-3 py-1 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 transition">
-                  {t("startTrip")}
-                </button>
-              </div>
-            ))}
+          /* للزوار: رسالة تسجيل دخول */
+          <div className="bg-white dark:bg-gray-800 rounded-xl p-6 text-center shadow-sm">
+            <p className="text-gray-600 dark:text-gray-400 mb-4">
+              {lang === 'ar' 
+                ? 'سجل دخول لمشاهدة البرامج القريبة منك' 
+                : 'Login to see nearby programs'}
+            </p>
+            <button
+              onClick={() => setPage('profile')}
+              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
+            >
+              {lang === 'ar' ? 'تسجيل الدخول' : 'Login'}
+            </button>
           </div>
         ) : (
-          /* للمستخدمين المسجلين: برامج حقيقية */
-          <div className="space-y-3">
-            <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-green-100 dark:border-green-900">
-              <div className="flex items-center gap-3">
-                <div className="flex-1">
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-bold text-gray-800 dark:text-white">
-                      {lang === 'ar' ? 'جولة في المسار التاريخي' : 'Historical Route Tour'}
-                    </h3>
-                    <span className="text-sm font-bold text-green-600 dark:text-green-400">150 ريال</span>
-                  </div>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                    {lang === 'ar' ? 'مرشد: أحمد العتيبي' : 'Guide: Ahmed Al-Otaibi'}
-                  </p>
-                  <div className="flex items-center justify-between mt-2">
-                    <div className="flex items-center gap-2">
-                      <div className="flex items-center">
-                        <Star className="w-4 h-4 text-yellow-500 fill-current" />
-                        <span className="text-xs text-gray-600 dark:text-gray-300 mr-1">4.9</span>
-                      </div>
-                      <div className="flex items-center">
-                        <MapPin className="w-4 h-4 text-gray-400" />
-                        <span className="text-xs text-gray-500 dark:text-gray-400 mr-1">1.2 كم</span>
-                      </div>
-                    </div>
-                    <span className="text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-2 py-1 rounded">
-                      {lang === 'ar' ? '3 ساعات' : '3 hours'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-green-100 dark:border-green-900">
-              <div className="flex items-center gap-3">
-                <div className="flex-1">
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-bold text-gray-800 dark:text-white">
-                      {lang === 'ar' ? 'رحلة سفاري الصحراء' : 'Desert Safari Adventure'}
-                    </h3>
-                    <span className="text-sm font-bold text-green-600 dark:text-green-400">250 ريال</span>
-                  </div>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                    {lang === 'ar' ? 'مرشدة: سارة الحربي' : 'Guide: Sarah Al-Harbi'}
-                  </p>
-                  <div className="flex items-center justify-between mt-2">
-                    <div className="flex items-center gap-2">
-                      <div className="flex items-center">
-                        <Star className="w-4 h-4 text-yellow-500 fill-current" />
-                        <span className="text-xs text-gray-600 dark:text-gray-300 mr-1">4.7</span>
-                      </div>
-                      <div className="flex items-center">
-                        <MapPin className="w-4 h-4 text-gray-400" />
-                        <span className="text-xs text-gray-500 dark:text-gray-400 mr-1">3.5 كم</span>
-                      </div>
-                    </div>
-                    <span className="text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-2 py-1 rounded">
-                      {lang === 'ar' ? '5 ساعات' : '5 hours'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-green-100 dark:border-green-900">
-              <div className="flex items-center gap-3">
-                <div className="flex-1">
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-bold text-gray-800 dark:text-white">
-                      {lang === 'ar' ? 'جولة طبيعية في المنتزه' : 'Nature Park Tour'}
-                    </h3>
-                    <span className="text-sm font-bold text-green-600 dark:text-green-400">100 ريال</span>
-                  </div>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                    {lang === 'ar' ? 'مرشد: خالد الزهراني' : 'Guide: Khalid Al-Zahrani'}
-                  </p>
-                  <div className="flex items-center justify-between mt-2">
-                    <div className="flex items-center gap-2">
-                      <div className="flex items-center">
-                        <Star className="w-4 h-4 text-yellow-500 fill-current" />
-                        <span className="text-xs text-gray-600 dark:text-gray-300 mr-1">4.8</span>
-                      </div>
-                      <div className="flex items-center">
-                        <MapPin className="w-4 h-4 text-gray-400" />
-                        <span className="text-xs text-gray-500 dark:text-gray-400 mr-1">0.8 كم</span>
-                      </div>
-                    </div>
-                    <span className="text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-2 py-1 rounded">
-                      {lang === 'ar' ? 'ساعتان' : '2 hours'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
+          /* للمستخدمين المسجلين: رسالة انتظار البيانات */
+          <div className="bg-white dark:bg-gray-800 rounded-xl p-6 text-center shadow-sm">
+            <p className="text-gray-600 dark:text-gray-400">
+              {lang === 'ar' 
+                ? 'جاري تحميل البرامج القريبة...' 
+                : 'Loading nearby programs...'}
+            </p>
           </div>
         )}
       </div>
@@ -476,7 +385,7 @@ function HomePage({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
   );
 }
 
-// ===================== 🗺️ Explore/Map Page (معدلة مع شرط منع الزوار وإضافة الإشعارات) =====================
+// ===================== 🗺️ Explore/Map Page (بدون بيانات وهمية) =====================
 function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, user, programs, setPrograms, unreadCount }) {
   const t = (k) => LOCALES[lang][k] || k;
   const [selectedProgram, setSelectedProgram] = useState(null);
@@ -484,7 +393,7 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
   const [mapInstance, setMapInstance] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
 
-  // ✅ إذا كان المستخدم غير مسجل، نعرض رسالة بدلاً من الخريطة
+  // إذا كان المستخدم غير مسجل، نعرض رسالة بدلاً من الخريطة
   if (!user) {
     return (
       <div className="h-full flex items-center justify-center bg-gray-50 dark:bg-gray-900">
@@ -519,75 +428,8 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
     );
   }
 
-  // ✅ برامج وهمية للزوار فقط (لن يتم استخدامها هنا لأن user موجود)
-  const defaultPrograms = [
-    { 
-      id: 1, 
-      name_ar: "جولة تاريخية في الدرعية", 
-      name_en: "Historical Tour in Diriyah", 
-      guide_name: "محمد العتيبي",
-      coords: [46.713, 24.774],
-      price: 150,
-      duration: "3 ساعات",
-      rating: 4.8,
-      distance: 1.2,
-      active: true
-    },
-    { 
-      id: 2, 
-      name_ar: "مغامرة الصحراء", 
-      name_en: "Desert Adventure", 
-      guide_name: "أميرة الحربي",
-      coords: [46.720, 24.770],
-      price: 250,
-      duration: "5 ساعات",
-      rating: 4.9,
-      distance: 3.5,
-      active: true
-    },
-    { 
-      id: 3, 
-      name_ar: "جولة طبيعية في المنتزه", 
-      name_en: "Nature Tour in Park", 
-      guide_name: "خالد الزهراني",
-      coords: [46.725, 24.779],
-      price: 100,
-      duration: "2 ساعة",
-      rating: 4.7,
-      distance: 0.8,
-      active: true
-    },
-    { 
-      id: 4, 
-      name_ar: "رحلة بحرية في الخليج", 
-      name_en: "Gulf Sea Trip", 
-      guide_name: "فهد الدوسري",
-      coords: [46.730, 24.768],
-      price: 350,
-      duration: "4 ساعات",
-      rating: 4.9,
-      distance: 5.2,
-      active: true
-    },
-    { 
-      id: 5, 
-      name_ar: "جولة تراثية في السوق القديم", 
-      name_en: "Heritage Old Market Tour", 
-      guide_name: "نورة القحطاني",
-      coords: [46.715, 24.780],
-      price: 120,
-      duration: "2 ساعة",
-      rating: 4.7,
-      distance: 1.8,
-      active: true
-    }
-  ];
-
-  // ✅ برامج حقيقية للمستخدمين المسجلين (من API)
-  const realPrograms = programs || [];
-
-  // ✅ للمستخدمين المسجلين، نستخدم البرامج الحقيقية فقط
-  const allPrograms = realPrograms;
+  // برامج حقيقية من API فقط
+  const allPrograms = programs || [];
 
   useEffect(() => {
     if (mapContainerRef.current) {
@@ -612,7 +454,7 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
               .setPopup(new mapboxgl.Popup().setText(lang === "ar" ? "موقعك الحالي" : "Your location"))
               .addTo(map);
 
-            // إضافة علامات البرامج النشطة فقط
+            // إضافة علامات البرامج النشطة فقط (من API)
             allPrograms.filter(p => p.active !== false).forEach((program) => {
               const marker = new mapboxgl.Marker({ 
                 color: program.guide_name === user?.name ? "purple" : "blue" 
@@ -644,6 +486,7 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
             });
           },
           () => {
+            // إذا فشل تحديد الموقع، استخدم مركز افتراضي
             const defaultCenter = [46.713, 24.774];
             const map = new mapboxgl.Map({
               container: mapContainerRef.current,
@@ -740,7 +583,7 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
             </div>
           </div>
           
-          {/* ✅ الأزرار العلوية - هنا تم إضافة زر الإشعارات */}
+          {/* الأزرار العلوية */}
           <div className="flex items-center gap-2">
             {/* زر العودة للصفحة الرئيسية */}
             <button 
@@ -760,7 +603,7 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
               <span className="text-lg">🔄</span>
             </button>
             
-            {/* ✅ زر الإشعارات - تم إضافته هنا */}
+            {/* زر الإشعارات */}
             {user && (
               <button 
                 onClick={() => setPage("notifications")}
@@ -768,7 +611,6 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
                 title={lang === 'ar' ? 'الإشعارات' : 'Notifications'}
               >
                 <Bell size={20} />
-                {/* عداد الإشعارات - يظهر إذا كان هناك إشعارات غير مقروءة */}
                 {unreadCount > 0 && (
                   <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full min-w-[18px] h-[18px] flex items-center justify-center border-2 border-white">
                     {unreadCount > 99 ? '99+' : unreadCount}
@@ -871,7 +713,6 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
     </div>
   );
 }
-
 // ===================== 💬 نظام المراسلة الداخلية =====================
 function ChatSystem({ user, lang, setPage }) {
   const [messages, setMessages] = useState([
@@ -1477,266 +1318,270 @@ function GuideDashboard({ lang, guide, setPage, user, setUserPrograms }) {
 }
 
 // ===================== 👨‍🏫 صفحة المرشدين =====================
-function GuidesPage({ lang, onGuideLogin, onGuideRegister, user }) {
-  // بيانات المرشدين الوهميين - تظهر فقط للزوار
-  const sampleGuides = [
-    { 
-      id: 1, 
-      name: lang === "ar" ? "محمد العتيبي" : "Mohammed Al-Otaibi", 
-      rating: 4.9, 
-      phone: "+966500000001", 
-      specialties: ["تاريخ", "تراث"], 
-      verified: true,
-      programs: 5,
-      distance: 1.2,
-      reviews: 24,
-      licenseNumber: "TRL-1234-5678"
-    },
-    { 
-      id: 2, 
-      name: lang === "ar" ? "العنود نسيب" : "AlAnoud Naseeb", 
-      rating: 4.8, 
-      phone: "+966500000002", 
-      specialties: ["طبيعة", "مغامرات", "تخييم"], 
-      verified: true,
-      programs: 7,
-      distance: 2.8,
-      reviews: 31,
-      licenseNumber: "TRL-8765-4321"
-    },
-    { 
-      id: 3, 
-      name: lang === "ar" ? "أميرة الحربي" : "Amira Al-Harbi", 
-      rating: 4.8, 
-      phone: "+966500000003", 
-      specialties: ["طبيعة", "مغامرات"], 
-      verified: true,
-      programs: 3,
-      distance: 3.5,
-      reviews: 18,
-      licenseNumber: "TRL-5678-1234"
+function GuidesPage({ lang, user, setPage }) {
+  const [guides, setGuides] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState('');
+
+  // جلب المرشدين الحقيقيين من API
+  useEffect(() => {
+    fetchGuides();
+  }, []);
+
+  const fetchGuides = async () => {
+    setLoading(true);
+    try {
+      // TODO: استبدل هذا بطلب API حقيقي
+      // const response = await api.getGuides();
+      // if (response.success) {
+      //   setGuides(response.guides);
+      // }
+      
+      // للاختبار - سيتم إزالته عند ربط API
+      setGuides([]);
+      setLoading(false);
+    } catch (error) {
+      console.error('Error fetching guides:', error);
+      setLoading(false);
     }
-  ];
+  };
 
-  // ✅ بيانات المرشدين الحقيقين - فارغة حالياً (سيتم ملؤها من API لاحقاً)
-  const [realGuides, setRealGuides] = useState([]);
+  // دالة المراسلة - لا تعمل إلا بعد تسجيل الدخول
+  const handleStartChat = (guide) => {
+    if (!user) {
+      alert(lang === 'ar' 
+        ? 'الرجاء تسجيل الدخول أولاً للمراسلة' 
+        : 'Please login first to message');
+      return;
+    }
+    // TODO: تنفيذ المراسلة عند ربط API
+    alert(lang === 'ar' 
+      ? 'سيتم إضافة ميزة المراسلة قريباً' 
+      : 'Messaging feature will be added soon');
+  };
 
-  const t = (k) => LOCALES?.[lang]?.[k] || k;
+  // دالة عرض البرامج - لا تعمل إلا بعد تسجيل الدخول
+  const handleViewPrograms = (guideId) => {
+    if (!user) {
+      alert(lang === 'ar' 
+        ? 'الرجاء تسجيل الدخول أولاً' 
+        : 'Please login first');
+      return;
+    }
+    // TODO: عرض برامج المرشد عند ربط API
+    console.log('Viewing programs for guide:', guideId);
+  };
 
-  // التحقق من وجود LOCALES
-  if (!LOCALES) {
-    console.error('LOCALES is not defined');
-    return <div>خطأ في تحميل الترجمة</div>;
-  }
+  const filteredGuides = guides.filter(guide => 
+    guide.name?.toLowerCase().includes(searchTerm.toLowerCase()) || 
+    guide.specialties?.some(s => s.toLowerCase().includes(searchTerm.toLowerCase()))
+  );
 
   return (
     <div className="h-full overflow-y-auto bg-gray-50 dark:bg-gray-900 p-4 pb-20">
-      {/* عنوان الصفحة مع أزرار الدخول */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-800 dark:text-white">
-            {lang === "ar" ? "المرشدين السياحيين" : "Tourist Guides"}
-          </h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            {lang === "ar" 
-              ? `${!user ? sampleGuides.length : realGuides.length} مرشد معتمد` 
-              : `${!user ? sampleGuides.length : realGuides.length} Verified Guides`}
-          </p>
-        </div>
-        
-        {/* أزرار الدخول للمرشدين - تظهر فقط للمستخدمين العاديين */}
-        {(!user || user?.type !== "guide") && (
-          <div className="flex gap-2">
-            <button 
-              onClick={onGuideLogin} 
-              className="px-4 py-2 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-lg hover:from-green-700 hover:to-emerald-700 transition-all transform hover:scale-105 shadow-md flex items-center gap-2"
-            >
-              <User className="w-4 h-4" />
-              <span className="font-medium">{t("guideLogin") || "دخول مرشد"}</span>
-            </button>
-            <button 
-              onClick={onGuideRegister} 
-              className="px-4 py-2 border-2 border-green-600 text-green-600 rounded-lg hover:bg-green-50 dark:border-green-400 dark:text-green-400 dark:hover:bg-green-900/30 transition-all flex items-center gap-2"
-            >
-              <FileText className="w-4 h-4" />
-              <span className="font-medium">{t("registerAsGuide") || "التسجيل كمرشد"}</span>
-            </button>
-          </div>
-        )}
+      
+      {/* عنوان الصفحة */}
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-800 dark:text-white">
+          {lang === "ar" ? "المرشدين السياحيين" : "Tourist Guides"}
+        </h1>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+          {guides.length} {lang === "ar" ? "مرشد معتمد" : "Verified Guides"}
+        </p>
       </div>
 
-      {/* ✅ شرط العرض: إذا كان المستخدم غير مسجل اعرض الوهميين، وإذا كان مسجل اعرض الحقيقيين */}
-      {!user ? (
-        /* 🟢 عرض المرشدين الوهميين للزوار فقط */
-        <>
-          {/* شريط البحث */}
-          <div className="mb-6">
-            <div className="relative">
-              <Search className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
-              <input
-                type="text"
-                placeholder={lang === "ar" ? "ابحث عن مرشد بالاسم أو التخصص..." : "Search guides by name or specialty..."}
-                className="w-full p-3 pr-10 border dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
-              />
-            </div>
-          </div>
+      {/* شريط البحث */}
+      <div className="mb-6">
+        <div className="relative">
+          <Search className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
+          <input
+            type="text"
+            placeholder={lang === "ar" ? "ابحث عن مرشد بالاسم أو التخصص..." : "Search guides by name or specialty..."}
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full p-3 pr-10 border dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
+          />
+        </div>
+      </div>
 
-          {/* بطاقات المرشدين الوهميين */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {sampleGuides.map((guide) => (
-              <div 
-                key={guide.id} 
-                className="bg-white dark:bg-gray-800 rounded-xl p-5 shadow-md hover:shadow-lg transition-all duration-300 border border-gray-100 dark:border-gray-700"
-              >
-                {/* رأس البطاقة - صورة المرشد والمعلومات الأساسية */}
-                <div className="flex items-start justify-between mb-4">
-                  <div className="flex items-center">
-                    <div className="relative">
-                      <div className="w-16 h-16 rounded-full bg-gradient-to-br from-green-400 to-blue-500 flex items-center justify-center text-white font-bold text-xl shadow-md">
-                        {guide.name?.split(" ")[0]?.[0] || 'م'}
-                      </div>
-                      {guide.verified && (
-                        <div className="absolute -bottom-1 -right-1 bg-green-500 rounded-full p-1 border-2 border-white dark:border-gray-800">
-                          <CheckCircle className="w-4 h-4 text-white" />
-                        </div>
+      {/* حالة التحميل */}
+      {loading ? (
+        <div className="flex justify-center items-center py-20">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600"></div>
+        </div>
+      ) : (
+        <>
+          {/* رسالة عند عدم وجود مرشدين */}
+          {guides.length === 0 && (
+            <div className="text-center py-12 bg-white dark:bg-gray-800 rounded-xl shadow-sm">
+              <Users className="w-16 h-16 mx-auto text-gray-400 mb-4" />
+              <p className="text-gray-600 dark:text-gray-400 mb-2">
+                {lang === 'ar' ? 'لا يوجد مرشدين حالياً' : 'No guides available at the moment'}
+              </p>
+            </div>
+          )}
+
+          {/* بطاقات المرشدين - من API حقيقي */}
+          {filteredGuides.map((guide) => (
+            <div 
+              key={guide.id} 
+              className="bg-white dark:bg-gray-800 rounded-xl p-5 shadow-md hover:shadow-lg transition-all duration-300 border border-gray-100 dark:border-gray-700 mb-4"
+            >
+              {/* محتوى بطاقة المرشد - سيأتي من API */}
+              <div className="flex items-start justify-between mb-4">
+                <div className="flex items-center">
+                  <div className="relative">
+                    <div className="w-16 h-16 rounded-full bg-gradient-to-br from-green-400 to-blue-500 flex items-center justify-center text-white font-bold text-xl shadow-md overflow-hidden">
+                      {guide.avatar ? (
+                        <img src={guide.avatar} alt={guide.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <span>{guide.name?.split(" ")[0]?.[0] || 'م'}</span>
                       )}
                     </div>
-                    <div className="mr-3">
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-bold text-gray-800 dark:text-white text-lg">
-                          {guide.name}
-                        </h3>
-                        {guide.verified && (
-                          <span className="bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 text-xs px-2 py-1 rounded-full">
-                            موثق
-                          </span>
-                        )}
+                    {guide.verified && (
+                      <div className="absolute -bottom-1 -right-1 bg-green-500 rounded-full p-1 border-2 border-white dark:border-gray-800">
+                        <CheckCircle className="w-3 h-3 text-white" />
                       </div>
-                      <div className="flex items-center mt-1">
-                        <div className="flex items-center">
-                          <Star className="w-4 h-4 text-yellow-500 fill-current" />
-                          <span className="text-sm font-medium text-gray-700 dark:text-gray-200 mr-1">
-                            {guide.rating}
-                          </span>
-                        </div>
-                        <span className="text-xs text-gray-500 dark:text-gray-400 mr-2">
-                          ({guide.reviews || 0} تقييم)
-                        </span>
-                        <span className="text-xs text-gray-500 dark:text-gray-400">
-                          {guide.programs} برامج
-                        </span>
-                      </div>
+                    )}
+                  </div>
+                  <div className="mr-3">
+                    <h3 className="font-bold text-gray-800 dark:text-white text-lg">
+                      {guide.name}
+                    </h3>
+                    <div className="flex items-center mt-1">
+                      {/* التقييم سيأتي من API */}
+                      <span className="text-sm text-gray-600 dark:text-gray-400">
+                        {guide.rating} ⭐ ({guide.reviews})
+                      </span>
                     </div>
                   </div>
                 </div>
+              </div>
 
-                {/* التخصصات */}
-                <div className="mb-4">
-                  <div className="flex flex-wrap gap-2">
-                    {guide.specialties?.map((specialty, index) => (
-                      <span
-                        key={index}
-                        className="px-3 py-1.5 bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 text-green-700 dark:text-green-400 rounded-lg text-xs font-medium border border-green-100 dark:border-green-800"
-                      >
-                        {specialty}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                {/* معلومات إضافية - المسافة وعدد البرامج */}
-                <div className="flex items-center justify-between text-sm text-gray-600 dark:text-gray-400 mb-4 pb-4 border-b border-gray-100 dark:border-gray-700">
-                  <div className="flex items-center">
-                    <MapPinned className="w-4 h-4 ml-1 text-green-600 dark:text-green-400" />
-                    <span>{guide.distance} كم من موقعك</span>
-                  </div>
-                  <div className="flex items-center">
-                    <Package className="w-4 h-4 ml-1 text-green-600 dark:text-green-400" />
-                    <span>{guide.programs} برنامج سياحي</span>
-                  </div>
-                </div>
-
-                {/* أزرار الإجراءات */}
-                <div className="flex gap-3">
-                  <a
-                    href={`https://wa.me/${guide.phone?.replace(/[+]/g, "")}?text=${encodeURIComponent(
-                      lang === "ar" 
-                        ? `السلام عليكم ${guide.name}، أرغب في الاستفسار عن البرامج السياحية المتاحة` 
-                        : `Hello ${guide.name}, I would like to inquire about available tour programs`
-                    )}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex-1 px-3 py-2.5 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-lg text-sm text-center hover:from-green-700 hover:to-emerald-700 transition-all transform hover:scale-105 flex items-center justify-center gap-2 shadow-md"
-                  >
-                    <MessageCircle className="w-4 h-4" />
-                    <span className="font-medium">{lang === "ar" ? "محادثة واتساب" : "WhatsApp"}</span>
-                  </a>
-                  <button className="flex-1 px-3 py-2.5 border-2 border-green-600 text-green-600 rounded-lg text-sm hover:bg-green-50 dark:border-green-400 dark:text-green-400 dark:hover:bg-green-900/30 transition-all flex items-center justify-center gap-2 font-medium">
-                    <Package className="w-4 h-4" />
-                    <span>{lang === "ar" ? "عرض البرامج" : "View Programs"}</span>
-                  </button>
+              {/* التخصصات */}
+              <div className="mb-4">
+                <div className="flex flex-wrap gap-2">
+                  {guide.specialties?.map((specialty, index) => (
+                    <span
+                      key={index}
+                      className="px-3 py-1.5 bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 text-green-700 dark:text-green-400 rounded-lg text-xs font-medium border border-green-100 dark:border-green-800"
+                    >
+                      {specialty}
+                    </span>
+                  ))}
                 </div>
               </div>
-            ))}
-          </div>
 
-          {/* ✅ قسم دعوة المرشدين - يظهر فقط للزوار */}
-          <div className="mt-8 p-6 bg-gradient-to-r from-blue-50 via-indigo-50 to-purple-50 dark:from-blue-900/20 dark:via-indigo-900/20 dark:to-purple-900/20 rounded-xl border border-blue-200 dark:border-blue-800 shadow-lg">
-            <div className="flex items-center justify-between flex-wrap gap-4">
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-2">
-                  <Shield className="w-6 h-6 text-blue-600 dark:text-blue-400" />
-                  <h3 className="text-lg font-bold text-gray-800 dark:text-white">
-                    {lang === "ar" ? "انضم إلى فريق المرشدين المعتمدين" : "Join Our Verified Guides Team"}
-                  </h3>
+              {/* معلومات إضافية */}
+              <div className="flex items-center justify-between text-sm text-gray-600 dark:text-gray-400 mb-4 pb-4 border-b border-gray-100 dark:border-gray-700">
+                <div className="flex items-center">
+                  <MapPinned className="w-4 h-4 ml-1 text-green-600 dark:text-green-400" />
+                  <span>{guide.distance} كم</span>
                 </div>
-                <p className="text-gray-600 dark:text-gray-300 mb-2 max-w-2xl">
-                  {lang === "ar" 
-                    ? "احصل على فرصة لعرض برامجك السياحية على آلاف المستخدمين وزد دخلك من خلال منصتنا"
-                    : "Get the opportunity to showcase your tour programs to thousands of users and increase your income through our platform"}
+                <div className="flex items-center">
+                  <Package className="w-4 h-4 ml-1 text-green-600 dark:text-green-400" />
+                  <span>{guide.programs} برنامج</span>
+                </div>
+              </div>
+
+              {/* أزرار الإجراءات - تعمل فقط للمسجلين */}
+              <div className="flex gap-3">
+                <button
+                  onClick={() => handleStartChat(guide)}
+                  className={`flex-1 px-3 py-2.5 rounded-lg text-sm transition-all flex items-center justify-center gap-2 ${
+                    user 
+                      ? 'bg-gradient-to-r from-green-600 to-emerald-600 text-white hover:from-green-700 hover:to-emerald-700 transform hover:scale-105 shadow-md' 
+                      : 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-pointer hover:bg-gray-300 dark:hover:bg-gray-600'
+                  }`}
+                >
+                  <MessageCircle className="w-4 h-4" />
+                  <span className="font-medium">
+                    {user ? (lang === "ar" ? "مراسلة" : "Message") : (lang === "ar" ? "سجل دخول للمراسلة" : "Login to message")}
+                  </span>
+                </button>
+
+                <button 
+                  onClick={() => handleViewPrograms(guide.id)}
+                  className={`flex-1 px-3 py-2.5 rounded-lg text-sm transition-all flex items-center justify-center gap-2 ${
+                    user 
+                      ? 'border-2 border-green-600 text-green-600 hover:bg-green-50 dark:border-green-400 dark:text-green-400 dark:hover:bg-green-900/30 transform hover:scale-105' 
+                      : 'border-2 border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500 cursor-not-allowed opacity-60'
+                  }`}
+                  disabled={!user}
+                >
+                  <Package className="w-4 h-4" />
+                  <span className="font-medium">{lang === "ar" ? "البرامج" : "Programs"}</span>
+                </button>
+              </div>
+
+              {/* رسالة للمستخدمين غير المسجلين */}
+              {!user && (
+                <p className="text-xs text-center text-gray-500 dark:text-gray-400 mt-2">
+                  {lang === 'ar' ? '🔒 سجل دخول للمراسلة وعرض البرامج' : '🔒 Login to message and view programs'}
                 </p>
-                <div className="flex items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
-                  <span className="flex items-center gap-1">
-                    <CheckCircle className="w-4 h-4 text-green-500" /> توثيق فوري
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <Users className="w-4 h-4 text-green-500" /> آلاف العملاء
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <Target className="w-4 h-4 text-green-500" /> عمولة 0%
-                  </span>
-                </div>
-              </div>
-              <button
-                onClick={onGuideRegister}
-                className="px-8 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:from-blue-700 hover:to-indigo-700 transition-all transform hover:scale-105 font-bold shadow-lg flex items-center gap-2"
-              >
-                <FileText className="w-5 h-5" />
-                <span>{lang === "ar" ? "سجل الآن مجاناً" : "Register Now Free"}</span>
-              </button>
+              )}
             </div>
-          </div>
+          ))}
+
+          {/* ✅ قسم ترحيب بسيط مع زر تسجيل الدخول فقط - للمستخدمين غير المسجلين */}
+          {!user && (
+            <div className="mt-8 p-6 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 rounded-xl border border-blue-200 dark:border-blue-800 text-center">
+              <div className="max-w-md mx-auto">
+                <h3 className="text-xl font-bold text-gray-800 dark:text-white mb-3">
+                  {lang === "ar" ? "مرحباً بك في منصة السائح" : "Welcome to Al-Sa'eh Platform"}
+                </h3>
+                <p className="text-gray-600 dark:text-gray-300 mb-6">
+                  {lang === "ar" 
+                    ? "سجل دخول للاستفادة من جميع الميزات والتواصل مع المرشدين"
+                    : "Login to access all features and connect with guides"}
+                </p>
+                
+                {/* زر تسجيل الدخول فقط */}
+                <button
+                  onClick={() => window.location.href = '/login'}
+                  className="px-8 py-3 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl font-bold hover:from-green-700 hover:to-emerald-700 transition-all transform hover:scale-105 shadow-lg"
+                >
+                  {lang === "ar" ? "تسجيل الدخول" : "Login"}
+                </button>
+
+                {/* رابط إنشاء حساب جديد */}
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-4">
+                  {lang === "ar" ? "ليس لديك حساب؟" : "Don't have an account?"}{' '}
+                  <a href="/register" className="text-green-600 hover:text-green-700 dark:text-green-400 font-medium">
+                    {lang === "ar" ? "إنشاء حساب جديد" : "Create account"}
+                  </a>
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* ✅ قسم خاص للمستخدمين المسجلين فقط - خيار الترقية إلى مرشد */}
+          {user && !user.isGuide && (
+            <div className="mt-6 p-5 bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 rounded-xl border border-purple-200 dark:border-purple-800">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-purple-100 dark:bg-purple-800 rounded-full flex items-center justify-center">
+                  <span className="text-purple-600 dark:text-purple-400 text-xl">👤</span>
+                </div>
+                <div className="flex-1">
+                  <h4 className="font-bold text-gray-800 dark:text-white">كن مرشداً سياحياً</h4>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    شارك بخبراتك واربح من خلال تقديم جولات سياحية
+                  </p>
+                </div>
+                <button
+                  onClick={() => setPage('upgrade-to-guide')}
+                  className="px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg text-sm hover:from-purple-700 hover:to-pink-700 transition"
+                >
+                  {lang === "ar" ? "ترقية الحساب" : "Upgrade"}
+                </button>
+              </div>
+            </div>
+          )}
         </>
-      ) : (
-        /* 🟢 عرض رسالة للمستخدمين المسجلين - لا يوجد مرشدين حقيقيين بعد */
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-8 text-center shadow-lg">
-          <div className="w-20 h-20 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
-            <Users className="w-10 h-10 text-green-600 dark:text-green-400" />
-          </div>
-          <h3 className="text-xl font-bold text-gray-800 dark:text-white mb-2">
-            {lang === "ar" ? "مرحباً بك في منصة المرشدين" : "Welcome to Guides Platform"}
-          </h3>
-          <p className="text-gray-600 dark:text-gray-300 max-w-md mx-auto">
-            {lang === "ar" 
-              ? "المستخدمين المسجلين لا يمكنهم رؤية المرشدين الوهميين. يرجى الانتظار حتى يتم إضافة مرشدين حقيقيين."
-              : "Registered users cannot see demo guides. Please wait for real guides to be added."}
-          </p>
-        </div>
       )}
     </div>
   );
 }
-
 
 // ===================== ⭐ Favorites Page =====================
 function FavoritesPage({ lang }) {
@@ -2446,14 +2291,13 @@ function SettingsPage({ lang, dark, setDark, setLang, setPage, locationEnabled, 
 }
 
  // ===================== 📱 Main App Component =====================
+
 export function TouristAppPrototype() {
   const [lang, setLang] = useState("ar");
   const [dark, setDark] = useState(false);
   const [user, setUser] = useState(null);
   const [guide, setGuide] = useState(null);
   const [showLogin, setShowLogin] = useState(false);
-  const [showGuideLogin, setShowGuideLogin] = useState(false);
-  const [showGuideRegistration, setShowGuideRegistration] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [page, setPage] = useState("home");
   const [locationEnabled, setLocationEnabled] = useState(true);
@@ -2461,20 +2305,45 @@ export function TouristAppPrototype() {
   const [isLoading, setIsLoading] = useState(false);
   const mapContainerRef = useRef(null);
 
-  // ✅ متغير وضع الاختبار
   const [isTestMode, setIsTestMode] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
-  // ✅ دالة تسجيل الدخول الناجح (جديدة)
+  
   const handleLoginSuccess = (response) => {
-    setUser({ ...response.user, type: 'user' });
-    localStorage.setItem('touristAppUser', JSON.stringify(response.user));
+    const unifiedUser = {
+      id: response.user.id,
+      email: response.user.email,
+      fullName: response.user.fullName || response.user.name,
+      phone: response.user.phone || '',
+      phoneVerified: response.user.phoneVerified || false,
+      avatar: response.user.avatar || null,
+      createdAt: response.user.createdAt,
+      walletNumber: response.user.walletNumber,
+      chatId: response.user.chatId,
+      balance: response.user.balance || 0,
+      isGuide: response.user.isGuide || false,
+      guideStatus: response.user.guideStatus || null,
+      licenseNumber: response.user.licenseNumber || null,
+      civilId: response.user.civilId || null,
+      specialties: response.user.specialties || null,
+      experience: response.user.experience || null,
+      guideVerified: response.user.guideVerified || false,
+      programsCount: response.user.programsCount || 0,
+      type: response.user.isGuide ? 'guide' : 'user'
+    };
+    
+    setUser(unifiedUser);
+    if (unifiedUser.isGuide) {
+      setGuide(unifiedUser);
+    }
+    
+    localStorage.setItem('touristAppUser', JSON.stringify(unifiedUser));
     localStorage.setItem('touristAppToken', response.token);
-    localStorage.setItem('userType', 'user');
+    localStorage.setItem('userType', unifiedUser.type);
     setShowLogin(false);
     
     alert(lang === 'ar' 
-      ? `👋 مرحباً ${response.user.fullName || response.user.name}! تم تسجيل الدخول بنجاح`
-      : `👋 Welcome ${response.user.fullName || response.user.name}! Login successful`
+      ? `👋 مرحباً ${unifiedUser.fullName}! تم تسجيل الدخول بنجاح`
+      : `👋 Welcome ${unifiedUser.fullName}! Login successful`
     );
   };
 
@@ -2490,49 +2359,42 @@ export function TouristAppPrototype() {
       document.body.classList.remove("bg-gray-900");
     }
     
-    // التحقق من وجود مستخدم مخزن
     const savedUser = localStorage.getItem('touristAppUser');
     const savedToken = localStorage.getItem('touristAppToken');
     const savedUserType = localStorage.getItem('userType');
     
     if (savedUser && savedToken && !isTestMode) {
-      // التحقق من صحة التوكن مع السيرفر
       api.verifyToken(savedToken)
         .then((response) => {
           if (response.valid) {
             const parsedUser = JSON.parse(savedUser);
             setUser(parsedUser);
-            if (savedUserType === 'guide') {
+            if (parsedUser.isGuide) {
               setGuide(parsedUser);
-              // تحميل برامج المرشد
               loadGuidePrograms(parsedUser.id, savedToken);
             }
           } else {
-            // توكن غير صالح - تسجيل خروج
             localStorage.removeItem('touristAppUser');
             localStorage.removeItem('touristAppToken');
             localStorage.removeItem('userType');
           }
         })
         .catch(() => {
-          // خطأ في الاتصال - نستخدم البيانات المخزنة مؤقتاً
           const parsedUser = JSON.parse(savedUser);
           setUser(parsedUser);
-          if (savedUserType === 'guide') {
+          if (parsedUser.isGuide) {
             setGuide(parsedUser);
           }
         });
     } else if (savedUser && isTestMode) {
-      // وضع الاختبار - نستخدم البيانات المخزنة مباشرة
       const parsedUser = JSON.parse(savedUser);
       setUser(parsedUser);
-      if (savedUserType === 'guide') {
+      if (parsedUser.isGuide) {
         setGuide(parsedUser);
       }
     }
   }, [lang, dark, isTestMode]);
 
-  // ✅ تحميل برامج المرشد
   const loadGuidePrograms = async (guideId, token) => {
     try {
       const programs = await api.getGuidePrograms(guideId, token);
@@ -2542,12 +2404,10 @@ export function TouristAppPrototype() {
     }
   };
 
-  // ✅ تبديل وضع الاختبار
   const toggleTestMode = () => {
     const newMode = !isTestMode;
     setIsTestMode(newMode);
     
-    // تسجيل خروج تلقائي
     setUser(null);
     setGuide(null);
     localStorage.removeItem('touristAppUser');
@@ -2562,130 +2422,6 @@ export function TouristAppPrototype() {
     setPage("home");
   };
 
-  const handleGuideLogin = () => {
-    setShowGuideLogin(true);
-  };
-
-  const handleGuideRegister = () => {
-    setShowGuideRegistration(true);
-  };
-
-  // ✅ دالة تسجيل دخول المرشد
-  const handleGuideLoginForm = async (formData) => {
-    setIsLoading(true);
-    
-    try {
-      if (isTestMode) {
-        console.log('🧪 وضع الاختبار: تسجيل دخول مرشد');
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        const mockGuide = {
-          id: Date.now().toString(),
-          name: formData.licenseNumber === "TRL-1234-5678" ? "محمد العتيبي" : 
-                formData.licenseNumber === "TRL-8765-4321" ? "العنود نسيب" : "أميرة الحربي",
-          email: formData.email,
-          licenseNumber: formData.licenseNumber,
-          type: "guide",
-          phone: "+966500000000",
-          status: "approved",
-          verified: true,
-          rating: 4.8,
-          programsCount: 12,
-          avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(formData.licenseNumber)}&background=10b981&color=fff`,
-          permissions: ['create_tours', 'manage_bookings', 'chat_with_users']
-        };
-        
-        setUser(mockGuide);
-        setGuide(mockGuide);
-        localStorage.setItem('touristAppUser', JSON.stringify(mockGuide));
-        localStorage.setItem('userType', 'guide');
-        
-        alert(lang === 'ar' 
-          ? `🧪 وضع الاختبار: مرحباً ${mockGuide.name}`
-          : `🧪 Test Mode: Welcome ${mockGuide.name}`
-        );
-        
-      } else {
-        console.log('🔴 وضع الإنتاج: جاري تسجيل دخول المرشد');
-        
-        const response = await api.guideLogin(
-          formData.licenseNumber,
-          formData.email,
-          formData.password
-        );
-        
-        const { user: guideUser, token } = response;
-        const guideWithType = { ...guideUser, type: 'guide' };
-        
-        setUser(guideWithType);
-        setGuide(guideWithType);
-        localStorage.setItem('touristAppUser', JSON.stringify(guideWithType));
-        localStorage.setItem('touristAppToken', token);
-        localStorage.setItem('userType', 'guide');
-        
-        if (guideWithType.id && token) {
-          await loadGuidePrograms(guideWithType.id, token);
-        }
-        
-        alert(lang === 'ar' 
-          ? `✅ مرحباً ${guideWithType.fullName || guideWithType.name}، تم تسجيل دخولك بنجاح`
-          : `✅ Welcome ${guideWithType.fullName || guideWithType.name}, login successful`
-        );
-      }
-      
-      setShowGuideLogin(false);
-      setPage("guideDashboard");
-      
-    } catch (error) {
-      console.error('Guide login error:', error);
-      alert(lang === 'ar' 
-        ? `❌ فشل تسجيل الدخول: ${error.message}` 
-        : `❌ Login failed: ${error.message}`
-      );
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // ✅ دالة تسجيل مرشد جديد
-  const handleGuideRegistrationSubmit = async (data) => {
-    setIsLoading(true);
-    
-    try {
-      if (isTestMode) {
-        console.log('🧪 Guide registration submitted:', data);
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        alert(lang === 'ar' 
-          ? '🧪 وضع الاختبار: تم إرسال طلب التسجيل التجريبي'
-          : '🧪 Test Mode: Demo registration submitted'
-        );
-        
-      } else {
-        console.log('🔴 جاري إرسال طلب تسجيل مرشد جديد');
-        
-        const response = await api.guideRegister(data);
-        
-        alert(lang === 'ar' 
-          ? `✅ تم إرسال طلب التسجيل بنجاح! رقم الطلب: ${response.requestId || ''}\nسيتم مراجعة طلبك من قبل الإدارة خلال 24 ساعة`
-          : `✅ Registration submitted successfully! Request ID: ${response.requestId || ''}\nYour request will be reviewed within 24 hours`
-        );
-      }
-      
-      setShowGuideRegistration(false);
-      
-    } catch (error) {
-      console.error('Registration error:', error);
-      alert(lang === 'ar' 
-        ? `❌ فشل إرسال الطلب: ${error.message}` 
-        : `❌ Registration failed: ${error.message}`
-      );
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // ✅ دالة تسجيل الخروج
   const handleLogout = () => {
     setUser(null);
     setGuide(null);
@@ -2701,12 +2437,20 @@ export function TouristAppPrototype() {
     );
   };
 
+  const handleUserUpdate = (updatedUserData) => {
+    const updatedUser = { ...user, ...updatedUserData };
+    setUser(updatedUser);
+    if (updatedUser.isGuide) {
+      setGuide(updatedUser);
+    }
+    localStorage.setItem('touristAppUser', JSON.stringify(updatedUser));
+  };
+
   const t = (k) => LOCALES[lang][k] || k;
 
   return (
     <div className="h-screen flex flex-col bg-gray-50 dark:bg-gray-900 overflow-hidden">
       
-      {/* شريط وضع التطوير */}
       {isTestMode && (
         <div className="bg-yellow-500 text-white text-center py-1 px-4 text-xs font-medium flex items-center justify-center gap-2">
           <span className="animate-pulse">🧪</span>
@@ -2722,101 +2466,109 @@ export function TouristAppPrototype() {
         </div>
       )}
       
-{/* المحتوى الرئيسي */}
-<div className="flex-1 overflow-hidden relative">
-  {/* للتتبع - معرفة قيمة page الحالية */}
-  {console.log('🔄 Current page in App:', page)}
-  
-  {page === "home" && (
-    <HomePage 
-      lang={lang} 
-      user={user} 
-      setPage={setPage} 
-      dark={dark}
-      setDark={setDark}
-      locationEnabled={locationEnabled}
-      setLocationEnabled={setLocationEnabled}
-    />
-  )}
-  
-  {page === "explore" && (
-    <ExplorePage 
-      lang={lang} 
-      mapContainerRef={mapContainerRef}
-      setPage={setPage}
-      user={user}
-      programs={userPrograms}
-    />
-  )}
-  
-  {/* ===== صفحة الإشعارات ===== */}
-  {page === "notifications" && (
-    <NotificationsPage 
-      setPage={setPage} 
-    />
-  )}
-  
-  
-  {page === "favorites" && <FavoritesPage lang={lang} />}
-  
-  {page === "events" && <EventsPage lang={lang} />}
-  
-  {page === "guides" && (
-    <GuidesPage 
-      lang={lang} 
-      onGuideLogin={handleGuideLogin}
-      onGuideRegister={handleGuideRegister}
-      user={user}
-    />
-  )}
-  
-  {page === "guideDashboard" && user?.type === 'guide' && (
-    <GuideDashboard 
-      lang={lang} 
-      guide={guide}
-      setPage={setPage}
-      user={user}
-      setUserPrograms={setUserPrograms}
-    />
-  )}
-  
-  {page === "messages" && (
-    <ChatSystem 
-      user={user}
-      lang={lang}
-      setPage={setPage}
-    />
-  )}
-  
-  {page === "profile" && (
-    <ProfilePage 
-      lang={lang} 
-      user={user} 
-      setPage={setPage} 
-      setShowLogin={setShowLogin}
-      onLogout={handleLogout}
-    />
-  )}
-  
-  {page === "settings" && (
-    <SettingsPage 
-      lang={lang} 
-      dark={dark} 
-      setDark={setDark} 
-      setLang={setLang} 
-      setPage={setPage}
-      locationEnabled={locationEnabled}
-      setLocationEnabled={setLocationEnabled}
-      isTestMode={isTestMode}
-      onToggleTestMode={toggleTestMode}
-      onLogout={handleLogout}
-    />
-  )}
-</div>
+      <div className="flex-1 overflow-hidden relative">
+        {console.log('🔄 Current page in App:', page)}
+        
+        {page === "home" && (
+          <HomePage 
+            lang={lang} 
+            user={user} 
+            setPage={setPage} 
+            dark={dark}
+            setDark={setDark}
+            locationEnabled={locationEnabled}
+            setLocationEnabled={setLocationEnabled}
+          />
+        )}
+        
+        {page === "explore" && (
+          <ExplorePage 
+            lang={lang} 
+            mapContainerRef={mapContainerRef}
+            setPage={setPage}
+            user={user}
+            programs={userPrograms}
+          />
+        )}
+        
+        {page === "notifications" && (
+          <NotificationsPage 
+            setPage={setPage} 
+          />
+        )}
+        
+        {page === "upgrade-to-guide" && (
+          <UpgradeToGuidePage 
+            setPage={setPage}
+            onUpgradeSuccess={handleUserUpdate}
+          />
+        )}
+
+        {page === "upgrade-status" && (
+          <UpgradeStatusPage 
+            setPage={setPage}
+          />
+        )}
+        
+        {page === "favorites" && <FavoritesPage lang={lang} />}
+        
+        {page === "events" && <EventsPage lang={lang} />}
+        
+        {page === "guides" && (
+          <GuidesPage 
+            lang={lang} 
+            user={user}
+            setPage={setPage}
+          />
+        )}
+        
+        {page === "guideDashboard" && user?.isGuide && (
+          <GuideDashboard 
+            lang={lang} 
+            guide={guide || user}
+            setPage={setPage}
+            user={user}
+            setUserPrograms={setUserPrograms}
+          />
+        )}
+        
+        {page === "messages" && (
+          <ChatSystem 
+            user={user}
+            lang={lang}
+            setPage={setPage}
+          />
+        )}
+        
+        {page === "profile" && (
+          <ProfilePage 
+            lang={lang} 
+            user={user} 
+            setPage={setPage} 
+            setShowLogin={setShowLogin}
+            onLogout={handleLogout}
+            onUserUpdate={handleUserUpdate}
+          />
+        )}
+        
+        {page === "settings" && (
+          <SettingsPage 
+            lang={lang} 
+            dark={dark} 
+            setDark={setDark} 
+            setLang={setLang} 
+            setPage={setPage}
+            locationEnabled={locationEnabled}
+            setLocationEnabled={setLocationEnabled}
+            isTestMode={isTestMode}
+            onToggleTestMode={toggleTestMode}
+            onLogout={handleLogout}
+          />
+        )}
+      </div>
 
       <BottomNav current={page} setCurrent={setPage} lang={lang} user={user} />
 
-      {/* ✅ نافذة تسجيل الدخول الجديدة - OTP + Email/Password */}
       {showLogin && (
         <LoginPage 
           lang={lang}
@@ -2824,172 +2576,6 @@ export function TouristAppPrototype() {
         />
       )}
       
-      {/* نافذة تسجيل دخول المرشدين */}
-      {showGuideLogin && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="w-full max-w-md bg-white dark:bg-gray-800 rounded-2xl p-6 mx-4">
-            
-            {isTestMode && (
-              <div className="bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-400 p-3 rounded-lg mb-4 text-sm flex items-center gap-2">
-                <span className="animate-pulse">🧪</span>
-                <span>{lang === 'ar' ? 'وضع الاختبار - استخدم بيانات تجريبية' : 'Test Mode - Use demo credentials'}</span>
-              </div>
-            )}
-            
-            <div className="text-center mb-6">
-              <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-2">
-                {lang === "ar" ? "دخول المرشدين" : "Guide Login"}
-              </h2>
-              <p className="text-sm text-gray-600 dark:text-gray-400">
-                {lang === "ar" 
-                  ? "منطقة خاصة بالمرشدين السياحيين المعتمدين" 
-                  : "Authorized tourist guides only"}
-              </p>
-            </div>
-
-            <form onSubmit={(e) => {
-              e.preventDefault();
-              const formData = {
-                licenseNumber: e.target.licenseNumber.value,
-                email: e.target.email.value,
-                password: e.target.password.value,
-                rememberMe: e.target.rememberMe?.checked || false
-              };
-              handleGuideLoginForm(formData);
-            }}>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    {lang === "ar" ? "رقم الرخصة السياحية" : "License Number"}
-                  </label>
-                  <input
-                    type="text"
-                    name="licenseNumber"
-                    placeholder="TRL-1234-5678"
-                    defaultValue={isTestMode ? "TRL-1234-5678" : ""}
-                    className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    {lang === "ar" ? "البريد الإلكتروني" : "Email"}
-                  </label>
-                  <input
-                    type="email"
-                    name="email"
-                    placeholder="guide@example.com"
-                    defaultValue={isTestMode ? "guide@example.com" : ""}
-                    className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    {lang === "ar" ? "كلمة المرور" : "Password"}
-                  </label>
-                  <input
-                    type="password"
-                    name="password"
-                    placeholder="••••••••"
-                    defaultValue={isTestMode ? "Guide1234" : ""}
-                    className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
-                    required
-                  />
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <label className="flex items-center">
-                    <input
-                      type="checkbox"
-                      name="rememberMe"
-                      className="w-4 h-4 text-green-600 border-gray-300 rounded focus:ring-green-500"
-                    />
-                    <span className="mr-2 text-sm text-gray-700 dark:text-gray-300">
-                      {lang === "ar" ? "تذكرني" : "Remember me"}
-                    </span>
-                  </label>
-                  <button
-                    type="button"
-                    className="text-sm text-green-600 hover:text-green-700 dark:text-green-400"
-                  >
-                    {lang === "ar" ? "نسيت كلمة المرور؟" : "Forgot password?"}
-                  </button>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={isLoading}
-                  className="w-full py-3 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-lg font-medium hover:from-green-700 hover:to-emerald-700 transition-all transform hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg"
-                >
-                  {isLoading ? (
-                    <>
-                      <span className="animate-spin">🌀</span>
-                      <span>{lang === 'ar' ? 'جاري التحقق...' : 'Verifying...'}</span>
-                    </>
-                  ) : (
-                    <>
-                      <span>🔐</span>
-                      <span>{lang === "ar" ? "دخول لوحة المرشد" : "Access Guide Dashboard"}</span>
-                    </>
-                  )}
-                </button>
-
-                <div className="text-center space-y-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowGuideLogin(false);
-                      setShowGuideRegistration(true);
-                    }}
-                    className="text-sm text-green-600 hover:text-green-700 dark:text-green-400 font-medium"
-                  >
-                    {lang === "ar" ? "ليس لديك حساب؟ سجل كمرشد" : "Don't have an account? Register"}
-                  </button>
-                  <div>
-                    <button
-                      type="button"
-                      onClick={() => setShowGuideLogin(false)}
-                      className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400"
-                    >
-                      {lang === "ar" ? "رجوع" : "Back"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* نافذة تسجيل مرشد جديد */}
-      {showGuideRegistration && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="w-full max-w-4xl max-h-[90vh] bg-white dark:bg-gray-800 rounded-xl shadow-lg overflow-hidden mx-4">
-            <div className="flex items-center justify-between p-4 border-b dark:border-gray-700">
-              <h3 className="text-lg font-bold dark:text-white">
-                {lang === 'ar' ? 'تسجيل مرشد جديد' : 'New Guide Registration'}
-              </h3>
-              <button 
-                onClick={() => setShowGuideRegistration(false)}
-                className="text-gray-500 hover:text-gray-700 dark:text-gray-400"
-              >
-                <XCircle size={24} />
-              </button>
-            </div>
-            <div className="max-h-[calc(90vh-80px)] overflow-y-auto">
-              <GuideRegistrationPage
-                lang={lang}
-                onBack={() => setShowGuideRegistration(false)}
-                onSubmit={handleGuideRegistrationSubmit}
-                isTestMode={isTestMode}
-              />
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -3041,9 +2627,9 @@ export default function App() {
   ) : (
     <ThemeProvider>
       <LanguageProvider>
-        <AuthProvider>  {/* ✅ أضف هذا السطر */}
+        <AuthProvider>
           <TouristAppPrototype />
-        </AuthProvider> {/* ✅ وأغلق القوس هنا */}
+        </AuthProvider>
       </LanguageProvider>
     </ThemeProvider>
   );

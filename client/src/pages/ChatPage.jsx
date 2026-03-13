@@ -17,183 +17,497 @@ import {
   FaPaperclip,
   FaMicrophone,
   FaSun,
-  FaMoon
+  FaMoon,
+  FaSpinner,
+  FaUser,
+  FaFile,
+  FaDownload,
+  FaTrash,
+  FaReply
 } from 'react-icons/fa';
 import { useTheme } from '../contexts/ThemeContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
+import api from '../services/apiService';
+import socketService from '../services/socketService';
+import toast from 'react-hot-toast';
 
-const ChatPage = ({ setPage }) => {
+const ChatPage = ({ setPage, initialConversationId }) => {
   const { theme, darkMode, toggleDarkMode } = useTheme();
   const { language } = useLanguage();
   const { user } = useAuth();
   
   const messagesEndRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const typingTimeoutRef = useRef(null);
+  
+  // حالات البيانات
+  const [conversations, setConversations] = useState([]);
   const [selectedChat, setSelectedChat] = useState(null);
+  const [messages, setMessages] = useState([]);
   const [messageInput, setMessageInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [showChatInfo, setShowChatInfo] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [conversationDetails, setConversationDetails] = useState(null);
+  const [page, setPageState] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [typing, setTyping] = useState(false);
+  const [replyingTo, setReplyingTo] = useState(null);
 
-  // بيانات المحادثات التجريبية
-  const [chats, setChats] = useState([
-    {
-      id: 1,
-      name: 'محمد العتيبي',
-      avatar: null,
-      lastMessage: 'مرحباً، كيف يمكنني مساعدتك؟',
-      lastTime: new Date(Date.now() - 5 * 60000).toISOString(),
-      unread: 2,
-      online: true,
-      typing: false,
-      role: 'مرشد سياحي'
-    },
-    {
-      id: 2,
-      name: 'أحمد الحربي',
-      avatar: null,
-      lastMessage: 'تم تأكيد الحجز الخاص بك',
-      lastTime: new Date(Date.now() - 60 * 60000).toISOString(),
-      unread: 0,
-      online: false,
-      lastSeen: new Date(Date.now() - 30 * 60000).toISOString(),
-      role: 'مرشد سياحي'
-    },
-    {
-      id: 3,
-      name: 'سارة العنزي',
-      avatar: null,
-      lastMessage: 'شكراً لك على الرحلة الرائعة',
-      lastTime: new Date(Date.now() - 24 * 60 * 60000).toISOString(),
-      unread: 0,
-      online: true,
-      role: 'سائحة'
-    },
-    {
-      id: 4,
-      name: 'فهد الدوسري',
-      avatar: null,
-      lastMessage: 'هل يمكننا تغيير موعد الرحلة؟',
-      lastTime: new Date(Date.now() - 2 * 24 * 60 * 60000).toISOString(),
-      unread: 1,
-      online: false,
-      lastSeen: new Date(Date.now() - 2 * 24 * 60 * 60000).toISOString(),
-      role: 'سائح'
-    }
-  ]);
-
-  // بيانات الرسائل لكل محادثة
-  const [messages, setMessages] = useState({
-    1: [
-      { id: 1, sender: 'them', text: 'مرحباً، كيف يمكنني مساعدتك؟', time: new Date(Date.now() - 10 * 60000).toISOString(), status: 'read' },
-      { id: 2, sender: 'me', text: 'أريد الاستفسار عن رحلة سفاري', time: new Date(Date.now() - 8 * 60000).toISOString(), status: 'read' },
-      { id: 3, sender: 'them', text: 'بالتأكيد، لدينا عدة خيارات متاحة', time: new Date(Date.now() - 5 * 60000).toISOString(), status: 'delivered' },
-      { id: 4, sender: 'them', text: 'هل تفضل رحلة صباحية أم مسائية؟', time: new Date(Date.now() - 5 * 60000).toISOString(), status: 'delivered' }
-    ],
-    2: [
-      { id: 1, sender: 'them', text: 'تم تأكيد الحجز الخاص بك', time: new Date(Date.now() - 60 * 60000).toISOString(), status: 'read' },
-      { id: 2, sender: 'me', text: 'شكراً جزيلاً', time: new Date(Date.now() - 55 * 60000).toISOString(), status: 'read' }
-    ],
-    3: [
-      { id: 1, sender: 'them', text: 'شكراً لك على الرحلة الرائعة', time: new Date(Date.now() - 24 * 60 * 60000).toISOString(), status: 'read' },
-      { id: 2, sender: 'me', text: 'العفو، كان من دواعي سروري', time: new Date(Date.now() - 23 * 60 * 60000).toISOString(), status: 'read' }
-    ],
-    4: [
-      { id: 1, sender: 'them', text: 'هل يمكننا تغيير موعد الرحلة؟', time: new Date(Date.now() - 2 * 24 * 60 * 60000).toISOString(), status: 'read' }
-    ]
-  });
-
-  // تمرير لآخر رسالة
+  // تحميل المحادثات عند فتح الصفحة
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [selectedChat, messages]);
+    loadConversations();
+    
+    // الاتصال بـ Socket.io
+    connectSocket();
+    
+    return () => {
+      disconnectSocket();
+    };
+  }, []);
+
+  // تحميل محادثة محددة إذا وجدت
+  useEffect(() => {
+    if (initialConversationId && conversations.length > 0) {
+      const conv = conversations.find(c => c._id === initialConversationId || c.id === initialConversationId);
+      if (conv) {
+        selectConversation(conv);
+      }
+    }
+  }, [initialConversationId, conversations]);
+
+  // التمرير لآخر رسالة
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  // تحديث حالة الكتابة
+  useEffect(() => {
+    if (messageInput) {
+      handleTypingStart();
+    } else {
+      handleTypingStop();
+    }
+  }, [messageInput]);
+
+  const connectSocket = () => {
+    socketService.connect();
+    socketService.on('new-message', handleNewMessage);
+    socketService.on('message-read', handleMessageRead);
+    socketService.on('message-deleted', handleMessageDeleted);
+    socketService.on('user-online', handleUserOnline);
+    socketService.on('user-offline', handleUserOffline);
+    socketService.on('typing', handleTyping);
+    socketService.on('stop-typing', handleStopTyping);
+  };
+
+  const disconnectSocket = () => {
+    socketService.off('new-message');
+    socketService.off('message-read');
+    socketService.off('message-deleted');
+    socketService.off('user-online');
+    socketService.off('user-offline');
+    socketService.off('typing');
+    socketService.off('stop-typing');
+  };
+
+  const scrollToBottom = () => {
+    setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, 100);
+  };
+
+  const loadConversations = async () => {
+    setLoading(true);
+    try {
+      const response = await api.getUserConversations();
+      console.log('📥 Conversations response:', response);
+      
+      if (response.success) {
+        setConversations(response.conversations || []);
+      } else {
+        toast.error('فشل تحميل المحادثات');
+      }
+    } catch (error) {
+      console.error('❌ Error loading conversations:', error);
+      toast.error('فشل تحميل المحادثات');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadMessages = async (conversationId, reset = false) => {
+    try {
+      if (reset) {
+        setMessages([]);
+        setPageState(1);
+      }
+      
+      const currentPage = reset ? 1 : page;
+      setLoadingMore(currentPage > 1);
+      
+      const response = await api.getConversationMessages(conversationId, currentPage, 50);
+      console.log('📥 Messages response:', response);
+      
+      if (response.success) {
+        const newMessages = response.messages || [];
+        
+        if (reset) {
+          setMessages(newMessages);
+          setPageState(2);
+        } else {
+          setMessages(prev => [...newMessages, ...prev]);
+          setPageState(prev => prev + 1);
+        }
+        
+        setHasMore(response.hasMore || false);
+      }
+    } catch (error) {
+      console.error('❌ Error loading messages:', error);
+      toast.error('فشل تحميل الرسائل');
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  const loadConversationDetails = async (conversationId) => {
+    try {
+      const response = await api.getConversation?.(conversationId);
+      if (response?.success) {
+        setConversationDetails(response.conversation);
+      }
+    } catch (error) {
+      console.error('Error loading conversation details:', error);
+    }
+  };
+
+  const handleNewMessage = (message) => {
+    console.log('📩 New message received:', message);
+    
+    // إضافة الرسالة إلى المحادثة الحالية
+    if (message.conversationId === selectedChat?._id || message.conversationId === selectedChat?.id) {
+      setMessages(prev => [...prev, message]);
+    }
+    
+    // تحديث آخر رسالة في قائمة المحادثات
+    setConversations(prev =>
+      prev.map(conv => {
+        const convId = conv._id || conv.id;
+        const msgConvId = message.conversationId;
+        
+        if (convId === msgConvId) {
+          return {
+            ...conv,
+            lastMessage: message,
+            updatedAt: new Date().toISOString(),
+            unreadCount: (conv.unreadCount || 0) + 1
+          };
+        }
+        return conv;
+      })
+    );
+    
+    // فرز المحادثات حسب آخر رسالة
+    setConversations(prev => 
+      [...prev].sort((a, b) => {
+        const dateA = new Date(a.lastMessage?.createdAt || a.updatedAt || 0);
+        const dateB = new Date(b.lastMessage?.createdAt || b.updatedAt || 0);
+        return dateB - dateA;
+      })
+    );
+  };
+
+  const handleMessageRead = ({ messageId, conversationId }) => {
+    setMessages(prev =>
+      prev.map(msg => {
+        if (msg._id === messageId || msg.id === messageId) {
+          return { ...msg, read: true };
+        }
+        return msg;
+      })
+    );
+  };
+
+  const handleMessageDeleted = ({ messageId, conversationId }) => {
+    setMessages(prev => prev.filter(msg => (msg._id !== messageId && msg.id !== messageId)));
+  };
+
+  const handleUserOnline = (data) => {
+    setConversations(prev =>
+      prev.map(conv => {
+        const participantId = conv.participant?._id || conv.participant?.id;
+        if (participantId === data.userId) {
+          return {
+            ...conv,
+            participant: { ...conv.participant, online: true }
+          };
+        }
+        return conv;
+      })
+    );
+    
+    if (conversationDetails?.participant?._id === data.userId || conversationDetails?.participant?.id === data.userId) {
+      setConversationDetails(prev => ({
+        ...prev,
+        participant: { ...prev.participant, online: true }
+      }));
+    }
+  };
+
+  const handleUserOffline = (data) => {
+    setConversations(prev =>
+      prev.map(conv => {
+        const participantId = conv.participant?._id || conv.participant?.id;
+        if (participantId === data.userId) {
+          return {
+            ...conv,
+            participant: { ...conv.participant, online: false, lastSeen: data.lastSeen }
+          };
+        }
+        return conv;
+      })
+    );
+    
+    if (conversationDetails?.participant?._id === data.userId || conversationDetails?.participant?.id === data.userId) {
+      setConversationDetails(prev => ({
+        ...prev,
+        participant: { ...prev.participant, online: false, lastSeen: data.lastSeen }
+      }));
+    }
+  };
+
+  const handleTyping = (data) => {
+    if (data.conversationId === selectedChat?._id || data.conversationId === selectedChat?.id) {
+      setTyping(true);
+      
+      // إخفاء حالة الكتابة بعد 3 ثواني
+      setTimeout(() => {
+        setTyping(false);
+      }, 3000);
+    }
+  };
+
+  const handleStopTyping = (data) => {
+    if (data.conversationId === selectedChat?._id || data.conversationId === selectedChat?.id) {
+      setTyping(false);
+    }
+  };
+
+  const sendMessage = async () => {
+    if (!messageInput.trim() || !selectedChat || sending) return;
+
+    setSending(true);
+    const messageText = messageInput;
+    setMessageInput('');
+    
+    try {
+      const conversationId = selectedChat._id || selectedChat.id;
+      const response = await api.sendMessage(conversationId, messageText);
+      
+      if (!response.success) {
+        throw new Error(response.message || 'فشل إرسال الرسالة');
+      }
+      
+      // إيقاف حالة الكتابة
+      socketService.stopTyping(conversationId);
+      
+    } catch (error) {
+      console.error('❌ Error sending message:', error);
+      toast.error(error.message || 'فشل إرسال الرسالة');
+      setMessageInput(messageText); // استرجاع النص
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleTypingStart = () => {
+    if (!selectedChat || !messageInput) return;
+    
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+    
+    const conversationId = selectedChat._id || selectedChat.id;
+    socketService.sendTyping(conversationId);
+    
+    typingTimeoutRef.current = setTimeout(() => {
+      socketService.stopTyping(conversationId);
+    }, 3000);
+  };
+
+  const handleTypingStop = () => {
+    if (!selectedChat) return;
+    
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+    
+    const conversationId = selectedChat._id || selectedChat.id;
+    socketService.stopTyping(conversationId);
+  };
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file || !selectedChat) return;
+
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('conversationId', selectedChat._id || selectedChat.id);
+
+      const response = await api.sendFileMessage(formData);
+      
+      if (response.success) {
+        toast.success('تم رفع الملف بنجاح');
+      }
+    } catch (error) {
+      console.error('Error uploading file:', error);
+      toast.error('فشل رفع الملف');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const deleteMessage = async (messageId) => {
+    if (!window.confirm('هل أنت متأكد من حذف هذه الرسالة؟')) return;
+    
+    try {
+      const response = await api.deleteMessage(messageId);
+      if (response.success) {
+        setMessages(prev => prev.filter(msg => (msg._id !== messageId && msg.id !== messageId)));
+        toast.success('تم حذف الرسالة');
+      }
+    } catch (error) {
+      console.error('Error deleting message:', error);
+      toast.error('فشل حذف الرسالة');
+    }
+  };
+
+  const markConversationAsRead = async (conversationId) => {
+    try {
+      await api.markConversationAsRead?.(conversationId);
+      
+      setConversations(prev =>
+        prev.map(conv => {
+          if ((conv._id === conversationId || conv.id === conversationId)) {
+            return { ...conv, unreadCount: 0 };
+          }
+          return conv;
+        })
+      );
+    } catch (error) {
+      console.error('Error marking as read:', error);
+    }
+  };
+
+  const selectConversation = async (conversation) => {
+    setSelectedChat(conversation);
+    setShowChatInfo(false);
+    setTyping(false);
+    
+    const conversationId = conversation._id || conversation.id;
+    
+    await loadMessages(conversationId, true);
+    await loadConversationDetails(conversationId);
+    await markConversationAsRead(conversationId);
+    
+    // تحديث unreadCount في القائمة
+    setConversations(prev =>
+      prev.map(conv => {
+        if ((conv._id === conversationId || conv.id === conversationId)) {
+          return { ...conv, unreadCount: 0 };
+        }
+        return conv;
+      })
+    );
+  };
+
+  const loadMoreMessages = () => {
+    if (hasMore && !loadingMore && selectedChat) {
+      const conversationId = selectedChat._id || selectedChat.id;
+      loadMessages(conversationId);
+    }
+  };
 
   const formatTime = (timestamp) => {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diff = now - date;
-    const diffMinutes = Math.floor(diff / (1000 * 60));
-    const diffHours = Math.floor(diff / (1000 * 60 * 60));
-    const diffDays = Math.floor(diff / (1000 * 60 * 60 * 24));
+    if (!timestamp) return '';
+    
+    try {
+      const date = new Date(timestamp);
+      const now = new Date();
+      const diff = now - date;
+      const diffMinutes = Math.floor(diff / (1000 * 60));
+      const diffHours = Math.floor(diff / (1000 * 60 * 60));
+      const diffDays = Math.floor(diff / (1000 * 60 * 60 * 24));
 
-    if (language === 'ar') {
-      if (diffMinutes < 1) return 'الآن';
-      if (diffMinutes < 60) return `منذ ${diffMinutes} دقيقة`;
-      if (diffHours < 24) return `منذ ${diffHours} ساعة`;
-      if (diffDays === 1) return 'أمس';
-      if (diffDays < 7) return `منذ ${diffDays} أيام`;
-      return date.toLocaleDateString('ar-SA');
+      if (language === 'ar') {
+        if (diffMinutes < 1) return 'الآن';
+        if (diffMinutes < 60) return `منذ ${diffMinutes} دقيقة`;
+        if (diffHours < 24) return `منذ ${diffHours} ساعة`;
+        if (diffDays === 1) return 'أمس';
+        if (diffDays < 7) return `منذ ${diffDays} أيام`;
+        return date.toLocaleDateString('ar-SA');
+      } else {
+        if (diffMinutes < 1) return 'now';
+        if (diffMinutes < 60) return `${diffMinutes} min ago`;
+        if (diffHours < 24) return `${diffHours} hours ago`;
+        if (diffDays === 1) return 'yesterday';
+        if (diffDays < 7) return `${diffDays} days ago`;
+        return date.toLocaleDateString('en-US');
+      }
+    } catch (e) {
+      return '';
+    }
+  };
+
+  const getMessageStatusIcon = (message) => {
+    if (message.senderId !== user?.id && message.sender !== user?.id) return null;
+    
+    if (message.read) {
+      return <FaCheckDouble style={{ color: theme.primary }} size={12} />;
+    } else if (message.delivered) {
+      return <FaCheckDouble style={{ color: theme.textSecondary }} size={12} />;
     } else {
-      if (diffMinutes < 1) return 'now';
-      if (diffMinutes < 60) return `${diffMinutes} min ago`;
-      if (diffHours < 24) return `${diffHours} hours ago`;
-      if (diffDays === 1) return 'yesterday';
-      if (diffDays < 7) return `${diffDays} days ago`;
-      return date.toLocaleDateString('en-US');
+      return <FaCheck style={{ color: theme.textSecondary }} size={12} />;
     }
   };
 
-  const formatLastSeen = (timestamp) => {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diff = now - date;
-    const diffMinutes = Math.floor(diff / (1000 * 60));
-    const diffHours = Math.floor(diff / (1000 * 60 * 60));
-
-    if (language === 'ar') {
-      if (diffMinutes < 1) return 'متصل الآن';
-      if (diffMinutes < 60) return `آخر ظهور منذ ${diffMinutes} دقيقة`;
-      if (diffHours < 24) return `آخر ظهور منذ ${diffHours} ساعة`;
-      return `آخر ظهور ${date.toLocaleDateString('ar-SA')}`;
-    } else {
-      if (diffMinutes < 1) return 'online now';
-      if (diffMinutes < 60) return `last seen ${diffMinutes} min ago`;
-      if (diffHours < 24) return `last seen ${diffHours} hours ago`;
-      return `last seen ${date.toLocaleDateString('en-US')}`;
+  const getParticipantName = (conv) => {
+    if (!conv) return 'مستخدم';
+    
+    if (conv.participant) {
+      return conv.participant.fullName || conv.participant.name || conv.participant.email || 'مستخدم';
     }
-  };
-
-  const sendMessage = () => {
-    if (!messageInput.trim() || !selectedChat) return;
-
-    const newMessage = {
-      id: messages[selectedChat].length + 1,
-      sender: 'me',
-      text: messageInput,
-      time: new Date().toISOString(),
-      status: 'sent'
-    };
-
-    setMessages({
-      ...messages,
-      [selectedChat]: [...messages[selectedChat], newMessage]
-    });
-
-    // تحديث آخر رسالة في قائمة المحادثات
-    setChats(chats.map(chat => 
-      chat.id === selectedChat 
-        ? { ...chat, lastMessage: messageInput, lastTime: new Date().toISOString(), unread: 0 }
-        : chat
-    ));
-
-    setMessageInput('');
-  };
-
-  const getMessageStatusIcon = (status) => {
-    switch(status) {
-      case 'sent':
-        return <FaCheck style={{ color: theme.textSecondary }} size={12} />;
-      case 'delivered':
-        return <FaCheckDouble style={{ color: theme.textSecondary }} size={12} />;
-      case 'read':
-        return <FaCheckDouble style={{ color: theme.primary }} size={12} />;
-      default:
-        return <FaClock style={{ color: theme.textSecondary }} size={12} />;
+    
+    if (conv.user) {
+      return conv.user.fullName || conv.user.name || conv.user.email || 'مستخدم';
     }
+    
+    return 'مستخدم';
   };
 
-  const filteredChats = chats.filter(chat =>
-    chat.name.includes(searchTerm) || chat.lastMessage.includes(searchTerm)
-  );
+  const getParticipantAvatar = (conv) => {
+    if (conv.participant?.avatar) return conv.participant.avatar;
+    if (conv.user?.avatar) return conv.user.avatar;
+    return null;
+  };
+
+  const getParticipantOnline = (conv) => {
+    return conv.participant?.online || conv.user?.online || false;
+  };
+
+  const filteredConversations = conversations.filter(conv => {
+    const name = getParticipantName(conv).toLowerCase();
+    const lastMsg = conv.lastMessage?.content?.toLowerCase() || '';
+    const search = searchTerm.toLowerCase();
+    
+    return name.includes(search) || lastMsg.includes(search);
+  });
 
   const texts = {
     ar: {
@@ -218,7 +532,11 @@ const ChatPage = ({ setPage }) => {
       chatInfo: 'معلومات المحادثة',
       media: 'الوسائط',
       files: 'الملفات',
-      links: 'الروابط'
+      links: 'الروابط',
+      typing: 'يكتب...',
+      delete: 'حذف',
+      reply: 'رد',
+      loadMore: 'تحميل المزيد'
     },
     en: {
       title: 'Chats',
@@ -242,11 +560,32 @@ const ChatPage = ({ setPage }) => {
       chatInfo: 'Chat info',
       media: 'Media',
       files: 'Files',
-      links: 'Links'
+      links: 'Links',
+      typing: 'typing...',
+      delete: 'Delete',
+      reply: 'Reply',
+      loadMore: 'Load more'
     }
   };
 
   const t = texts[language];
+
+  if (loading) {
+    return (
+      <div style={{
+        height: '100vh',
+        backgroundColor: theme.background,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexDirection: 'column',
+        gap: '20px'
+      }}>
+        <FaSpinner className="animate-spin" size={40} color={theme.primary} />
+        <p style={{ color: theme.textSecondary }}>جاري تحميل المحادثات...</p>
+      </div>
+    );
+  }
 
   return (
     <div style={{
@@ -289,30 +628,24 @@ const ChatPage = ({ setPage }) => {
           <h1 style={{ margin: 0, fontSize: '20px' }}>{t.title}</h1>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          {/* زر الوضع الليلي */}
-          <button
-            onClick={toggleDarkMode}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: theme.text,
-              cursor: 'pointer',
-              padding: '8px',
-              borderRadius: '50%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}
-          >
-            {darkMode ? <FaSun size={18} /> : <FaMoon size={18} />}
-          </button>
-        </div>
+        <button
+          onClick={toggleDarkMode}
+          style={{
+            background: 'none',
+            border: 'none',
+            color: theme.text,
+            cursor: 'pointer',
+            padding: '8px',
+            borderRadius: '50%'
+          }}
+        >
+          {darkMode ? <FaSun size={18} /> : <FaMoon size={18} />}
+        </button>
       </div>
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         
-        {/* قائمة المحادثات - الجانب الأيسر */}
+        {/* قائمة المحادثات */}
         <div style={{
           width: '350px',
           borderLeft: language === 'ar' ? 'none' : `1px solid ${theme.border}`,
@@ -322,7 +655,7 @@ const ChatPage = ({ setPage }) => {
           flexDirection: 'column'
         }}>
           
-          {/* شريط البحث */}
+          {/* البحث */}
           <div style={{ padding: '15px' }}>
             <div style={{
               background: theme.background,
@@ -351,21 +684,31 @@ const ChatPage = ({ setPage }) => {
           </div>
 
           {/* قائمة المحادثات */}
-          <div style={{ flex: 1, overflowY: 'auto', padding: '0 15px' }}>
-            {filteredChats.length === 0 ? (
+          <div 
+            style={{ flex: 1, overflowY: 'auto', padding: '0 15px' }}
+            onScroll={(e) => {
+              const bottom = e.target.scrollHeight - e.target.scrollTop === e.target.clientHeight;
+              if (bottom && hasMore && !loadingMore) {
+                loadMoreMessages();
+              }
+            }}
+          >
+            {filteredConversations.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '40px 20px', color: theme.textSecondary }}>
                 <p>{t.noChats}</p>
               </div>
             ) : (
-              filteredChats.map(chat => (
+              filteredConversations.map(conv => (
                 <div
-                  key={chat.id}
-                  onClick={() => setSelectedChat(chat.id)}
+                  key={conv._id || conv.id}
+                  onClick={() => selectConversation(conv)}
                   style={{
                     padding: '15px',
                     borderRadius: '12px',
                     marginBottom: '5px',
-                    backgroundColor: selectedChat === chat.id ? theme.primary + '20' : 'transparent',
+                    backgroundColor: (selectedChat?._id === conv._id || selectedChat?.id === conv.id) 
+                      ? theme.primary + '20' 
+                      : 'transparent',
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
@@ -386,9 +729,21 @@ const ChatPage = ({ setPage }) => {
                       fontSize: '20px',
                       color: theme.primary
                     }}>
-                      <FaUserCircle size={30} />
+                      {getParticipantAvatar(conv) ? (
+                        <img 
+                          src={getParticipantAvatar(conv)} 
+                          alt="avatar"
+                          style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}
+                          onError={(e) => {
+                            e.target.style.display = 'none';
+                            e.target.parentElement.innerHTML = '<FaUser size={24} />';
+                          }}
+                        />
+                      ) : (
+                        <FaUser size={24} />
+                      )}
                     </div>
-                    {chat.online && (
+                    {getParticipantOnline(conv) && (
                       <div style={{
                         position: 'absolute',
                         bottom: '2px',
@@ -396,7 +751,7 @@ const ChatPage = ({ setPage }) => {
                         width: '12px',
                         height: '12px',
                         borderRadius: '50%',
-                        backgroundColor: theme.primary,
+                        backgroundColor: '#10b981',
                         border: `2px solid ${theme.card}`
                       }} />
                     )}
@@ -405,9 +760,11 @@ const ChatPage = ({ setPage }) => {
                   {/* معلومات المحادثة */}
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 'bold' }}>{chat.name}</h3>
+                      <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 'bold' }}>
+                        {getParticipantName(conv)}
+                      </h3>
                       <span style={{ fontSize: '11px', color: theme.textSecondary }}>
-                        {formatTime(chat.lastTime)}
+                        {conv.lastMessage && formatTime(conv.lastMessage.createdAt)}
                       </span>
                     </div>
                     
@@ -421,9 +778,9 @@ const ChatPage = ({ setPage }) => {
                         textOverflow: 'ellipsis',
                         maxWidth: '180px'
                       }}>
-                        {chat.lastMessage}
+                        {conv.lastMessage?.content || '...'}
                       </p>
-                      {chat.unread > 0 && (
+                      {conv.unreadCount > 0 && (
                         <span style={{
                           background: theme.primary,
                           color: 'white',
@@ -436,13 +793,9 @@ const ChatPage = ({ setPage }) => {
                           fontSize: '11px',
                           fontWeight: 'bold'
                         }}>
-                          {chat.unread}
+                          {conv.unreadCount}
                         </span>
                       )}
-                    </div>
-                    
-                    <div style={{ marginTop: '2px', fontSize: '11px', color: theme.textSecondary }}>
-                      {chat.online ? t.online : (chat.lastSeen && formatLastSeen(chat.lastSeen))}
                     </div>
                   </div>
                 </div>
@@ -451,7 +804,7 @@ const ChatPage = ({ setPage }) => {
           </div>
         </div>
 
-        {/* منطقة المحادثة - الجانب الأيمن */}
+        {/* منطقة المحادثة */}
         {selectedChat ? (
           <div style={{
             flex: 1,
@@ -480,9 +833,17 @@ const ChatPage = ({ setPage }) => {
                     alignItems: 'center',
                     justifyContent: 'center'
                   }}>
-                    <FaUserCircle size={24} color={theme.primary} />
+                    {getParticipantAvatar(selectedChat) ? (
+                      <img 
+                        src={getParticipantAvatar(selectedChat)} 
+                        alt="avatar"
+                        style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}
+                      />
+                    ) : (
+                      <FaUser size={20} />
+                    )}
                   </div>
-                  {chats.find(c => c.id === selectedChat)?.online && (
+                  {getParticipantOnline(selectedChat) && (
                     <div style={{
                       position: 'absolute',
                       bottom: '2px',
@@ -490,7 +851,7 @@ const ChatPage = ({ setPage }) => {
                       width: '10px',
                       height: '10px',
                       borderRadius: '50%',
-                      backgroundColor: theme.primary,
+                      backgroundColor: '#10b981',
                       border: `2px solid ${theme.card}`
                     }} />
                   )}
@@ -498,12 +859,16 @@ const ChatPage = ({ setPage }) => {
                 
                 <div>
                   <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 'bold' }}>
-                    {chats.find(c => c.id === selectedChat)?.name}
+                    {getParticipantName(selectedChat)}
                   </h3>
                   <p style={{ margin: '4px 0 0', fontSize: '12px', color: theme.textSecondary }}>
-                    {chats.find(c => c.id === selectedChat)?.online 
-                      ? t.online 
-                      : formatLastSeen(chats.find(c => c.id === selectedChat)?.lastSeen)}
+                    {typing ? (
+                      <span style={{ color: theme.primary }}>{t.typing}</span>
+                    ) : getParticipantOnline(selectedChat) ? (
+                      t.online
+                    ) : (
+                      selectedChat.participant?.lastSeen && formatTime(selectedChat.participant.lastSeen)
+                    )}
                   </p>
                 </div>
               </div>
@@ -528,48 +893,140 @@ const ChatPage = ({ setPage }) => {
               
               {/* الرسائل */}
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                <div style={{
-                  flex: 1,
-                  overflowY: 'auto',
-                  padding: '20px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '10px'
-                }}>
-                  {messages[selectedChat]?.map((msg, index) => (
-                    <div
-                      key={msg.id}
-                      style={{
-                        display: 'flex',
-                        justifyContent: msg.sender === 'me' ? 'flex-end' : 'flex-start',
-                        marginBottom: '5px'
-                      }}
-                    >
-                      <div style={{
-                        maxWidth: '70%',
-                        padding: '12px 16px',
-                        borderRadius: msg.sender === 'me' ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
-                        backgroundColor: msg.sender === 'me' ? theme.primary : theme.card,
-                        color: msg.sender === 'me' ? 'white' : theme.text,
-                        boxShadow: darkMode ? '0 2px 4px rgba(0,0,0,0.3)' : '0 2px 4px rgba(0,0,0,0.05)',
-                        position: 'relative'
-                      }}>
-                        <p style={{ margin: 0, fontSize: '14px', lineHeight: '1.5' }}>{msg.text}</p>
-                        <div style={{
+                <div 
+                  style={{
+                    flex: 1,
+                    overflowY: 'auto',
+                    padding: '20px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '10px'
+                  }}
+                  onScroll={(e) => {
+                    if (e.target.scrollTop === 0 && hasMore && !loadingMore) {
+                      loadMoreMessages();
+                    }
+                  }}
+                >
+                  {loadingMore && (
+                    <div style={{ textAlign: 'center', padding: '10px' }}>
+                      <FaSpinner className="animate-spin" color={theme.primary} />
+                    </div>
+                  )}
+                  
+                  {messages.map((msg) => {
+                    const isMe = msg.senderId === user?.id || msg.sender === user?.id;
+                    
+                    return (
+                      <div
+                        key={msg._id || msg.id}
+                        style={{
                           display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'flex-end',
-                          gap: '4px',
-                          marginTop: '4px',
-                          fontSize: '10px',
-                          color: msg.sender === 'me' ? 'rgba(255,255,255,0.7)' : theme.textSecondary
+                          justifyContent: isMe ? 'flex-end' : 'flex-start',
+                          marginBottom: '5px',
+                          position: 'relative'
+                        }}
+                        onMouseEnter={(e) => {
+                          const actions = e.currentTarget.querySelector('.message-actions');
+                          if (actions) actions.style.opacity = 1;
+                        }}
+                        onMouseLeave={(e) => {
+                          const actions = e.currentTarget.querySelector('.message-actions');
+                          if (actions) actions.style.opacity = 0;
+                        }}
+                      >
+                        <div style={{
+                          maxWidth: '70%',
+                          padding: '12px 16px',
+                          borderRadius: isMe ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
+                          backgroundColor: isMe ? theme.primary : theme.card,
+                          color: isMe ? 'white' : theme.text,
+                          boxShadow: darkMode ? '0 2px 4px rgba(0,0,0,0.3)' : '0 2px 4px rgba(0,0,0,0.05)',
+                          position: 'relative'
                         }}>
-                          <span>{formatTime(msg.time)}</span>
-                          {msg.sender === 'me' && getMessageStatusIcon(msg.status)}
+                          {msg.type === 'text' && (
+                            <p style={{ margin: 0, fontSize: '14px', lineHeight: '1.5' }}>{msg.content}</p>
+                          )}
+                          {msg.type === 'image' && (
+                            <img 
+                              src={msg.content} 
+                              alt="message" 
+                              style={{ maxWidth: '100%', maxHeight: '200px', borderRadius: '8px', cursor: 'pointer' }}
+                              onClick={() => window.open(msg.content, '_blank')}
+                            />
+                          )}
+                          {msg.type === 'file' && (
+                            <a 
+                              href={msg.content} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              style={{ 
+                                color: isMe ? 'white' : theme.primary,
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '8px',
+                                textDecoration: 'none'
+                              }}
+                            >
+                              <FaFile />
+                              <span>تحميل الملف</span>
+                              <FaDownload size={12} />
+                            </a>
+                          )}
+                          
+                          {/* وقت الرسالة وحالتها */}
+                          <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'flex-end',
+                            gap: '4px',
+                            marginTop: '4px',
+                            fontSize: '10px',
+                            color: isMe ? 'rgba(255,255,255,0.7)' : theme.textSecondary
+                          }}>
+                            <span>{formatTime(msg.createdAt)}</span>
+                            {getMessageStatusIcon(msg)}
+                          </div>
+
+                          {/* أزرار الإجراءات (تظهر عند hover) */}
+                          <div 
+                            className="message-actions"
+                            style={{
+                              position: 'absolute',
+                              top: '50%',
+                              transform: 'translateY(-50%)',
+                              [language === 'ar' ? 'left' : 'right']: '-30px',
+                              display: 'flex',
+                              gap: '5px',
+                              opacity: 0,
+                              transition: 'opacity 0.2s',
+                              backgroundColor: theme.card,
+                              borderRadius: '20px',
+                              padding: '5px',
+                              boxShadow: darkMode ? '0 2px 8px rgba(0,0,0,0.5)' : '0 2px 8px rgba(0,0,0,0.1)'
+                            }}
+                          >
+                            {isMe && (
+                              <button
+                                onClick={() => deleteMessage(msg._id || msg.id)}
+                                style={iconButtonStyle(theme)}
+                                title={t.delete}
+                              >
+                                <FaTrash size={12} color="#ef4444" />
+                              </button>
+                            )}
+                            <button
+                              onClick={() => setReplyingTo(msg)}
+                              style={iconButtonStyle(theme)}
+                              title={t.reply}
+                            >
+                              <FaReply size={12} />
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                   <div ref={messagesEndRef} />
                 </div>
 
@@ -586,8 +1043,19 @@ const ChatPage = ({ setPage }) => {
                     <button style={iconButtonStyle(theme)}>
                       <FaSmile size={20} />
                     </button>
-                    <button style={iconButtonStyle(theme)}>
-                      <FaPaperclip size={20} />
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      onChange={handleFileUpload}
+                      style={{ display: 'none' }}
+                      accept="image/*,.pdf,.doc,.docx"
+                    />
+                    <button 
+                      style={iconButtonStyle(theme)}
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploading}
+                    >
+                      {uploading ? <FaSpinner className="animate-spin" size={20} /> : <FaPaperclip size={20} />}
                     </button>
                   </div>
 
@@ -595,7 +1063,12 @@ const ChatPage = ({ setPage }) => {
                     type="text"
                     value={messageInput}
                     onChange={(e) => setMessageInput(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        sendMessage();
+                      }
+                    }}
                     placeholder={t.typeMessage}
                     style={{
                       flex: 1,
@@ -610,7 +1083,7 @@ const ChatPage = ({ setPage }) => {
 
                   <button
                     onClick={sendMessage}
-                    disabled={!messageInput.trim()}
+                    disabled={!messageInput.trim() || sending}
                     style={{
                       background: messageInput.trim() ? theme.primary : theme.border,
                       border: 'none',
@@ -624,13 +1097,17 @@ const ChatPage = ({ setPage }) => {
                       transition: 'all 0.2s ease'
                     }}
                   >
-                    <FaPaperPlane color="white" size={18} />
+                    {sending ? (
+                      <FaSpinner className="animate-spin" color="white" size={18} />
+                    ) : (
+                      <FaPaperPlane color="white" size={18} />
+                    )}
                   </button>
                 </div>
               </div>
 
-              {/* معلومات المحادثة - جانبية */}
-              {showChatInfo && (
+              {/* معلومات المحادثة */}
+              {showChatInfo && conversationDetails && (
                 <div style={{
                   width: '300px',
                   borderLeft: language === 'ar' ? 'none' : `1px solid ${theme.border}`,
@@ -652,48 +1129,92 @@ const ChatPage = ({ setPage }) => {
                       alignItems: 'center',
                       justifyContent: 'center'
                     }}>
-                      <FaUserCircle size={50} color={theme.primary} />
+                      {getParticipantAvatar(conversationDetails) ? (
+                        <img 
+                          src={getParticipantAvatar(conversationDetails)} 
+                          alt="avatar"
+                          style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}
+                        />
+                      ) : (
+                        <FaUser size={40} color={theme.primary} />
+                      )}
                     </div>
-                    <h4 style={{ margin: '0 0 5px 0' }}>{chats.find(c => c.id === selectedChat)?.name}</h4>
+                    <h4 style={{ margin: '0 0 5px 0' }}>
+                      {getParticipantName(conversationDetails)}
+                    </h4>
                     <p style={{ fontSize: '13px', color: theme.textSecondary }}>
-                      {chats.find(c => c.id === selectedChat)?.role}
+                      {conversationDetails.participant?.role === 'guide' ? 'مرشد سياحي' : 'سائح'}
                     </p>
                   </div>
 
-                  <div style={{
-                    padding: '15px 0',
-                    borderTop: `1px solid ${theme.border}`,
-                    borderBottom: `1px solid ${theme.border}`
-                  }}>
-                    <div style={{ marginBottom: '10px' }}>
-                      <span style={{ fontSize: '13px', color: theme.textSecondary }}>{t.media}</span>
+                  {/* وسائط مشتركة */}
+                  {conversationDetails.media && conversationDetails.media.length > 0 && (
+                    <div style={{
+                      padding: '15px 0',
+                      borderTop: `1px solid ${theme.border}`,
+                      borderBottom: `1px solid ${theme.border}`
+                    }}>
+                      <div style={{ marginBottom: '10px' }}>
+                        <span style={{ fontSize: '13px', color: theme.textSecondary }}>{t.media}</span>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '5px' }}>
+                        {conversationDetails.media.slice(0, 6).map((media, i) => (
+                          <div 
+                            key={i} 
+                            style={{
+                              height: '80px',
+                              background: theme.border,
+                              borderRadius: '8px',
+                              overflow: 'hidden',
+                              cursor: 'pointer'
+                            }}
+                            onClick={() => window.open(media, '_blank')}
+                          >
+                            <img 
+                              src={media} 
+                              alt="media" 
+                              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                            />
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '5px' }}>
-                      {[1, 2, 3].map(i => (
-                        <div key={i} style={{
-                          height: '80px',
-                          background: theme.border,
-                          borderRadius: '8px'
-                        }} />
-                      ))}
-                    </div>
-                  </div>
+                  )}
 
-                  <div style={{ padding: '15px 0' }}>
-                    <div style={{ marginBottom: '10px' }}>
-                      <span style={{ fontSize: '13px', color: theme.textSecondary }}>{t.files}</span>
+                  {/* الملفات المشتركة */}
+                  {conversationDetails.files && conversationDetails.files.length > 0 && (
+                    <div style={{ padding: '15px 0' }}>
+                      <div style={{ marginBottom: '10px' }}>
+                        <span style={{ fontSize: '13px', color: theme.textSecondary }}>{t.files}</span>
+                      </div>
+                      <div style={{ color: theme.textSecondary, fontSize: '13px' }}>
+                        {conversationDetails.files.map((file, i) => (
+                          <div 
+                            key={i} 
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '10px',
+                              padding: '8px',
+                              borderRadius: '8px',
+                              cursor: 'pointer',
+                              hover: { backgroundColor: theme.border }
+                            }}
+                            onClick={() => window.open(file.url, '_blank')}
+                          >
+                            <FaFile />
+                            <span style={{ flex: 1 }}>{file.name}</span>
+                            <span style={{ fontSize: '11px' }}>{(file.size / 1024).toFixed(1)} KB</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                    <div style={{ color: theme.textSecondary, fontSize: '13px' }}>
-                      <p>IMG_001.jpg • 2.5 MB</p>
-                      <p>DOC_001.pdf • 1.2 MB</p>
-                    </div>
-                  </div>
+                  )}
                 </div>
               )}
             </div>
           </div>
         ) : (
-          // شاشة عدم تحديد محادثة
           <div style={{
             flex: 1,
             display: 'flex',
@@ -724,7 +1245,6 @@ const ChatPage = ({ setPage }) => {
   );
 };
 
-// نمط موحد للأزرار الأيقونية
 const iconButtonStyle = (theme) => ({
   background: 'none',
   border: 'none',
@@ -735,7 +1255,10 @@ const iconButtonStyle = (theme) => ({
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
-  transition: 'all 0.2s ease'
+  transition: 'all 0.2s ease',
+  ':hover': {
+    backgroundColor: theme.border
+  }
 });
 
 export default ChatPage;
