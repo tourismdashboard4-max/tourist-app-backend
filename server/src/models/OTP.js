@@ -2,6 +2,7 @@
 // OTP Model - رموز التحقق للمصادقة (PostgreSQL)
 // ============================================
 import { pool } from '../../server.js';
+import { createExpiryDate, isOTPValid, getTimeRemaining } from '../utils/timeUtils.js';
 
 const OTP = {
   // ============================================
@@ -15,7 +16,7 @@ const OTP = {
       code,
       purpose = 'register',
       identifierType = email ? 'email' : 'phone',
-      expiresAt = new Date(new Date().getTime() + 10 * 60 * 1000), // 10 دقائق من الآن
+      expiresAt = createExpiryDate(10), // استخدام الدالة المساعدة
       metadata = {}
     } = otpData;
 
@@ -134,20 +135,17 @@ const OTP = {
       index++;
     }
 
-    // معالجة $gt (أكبر من) لتاريخ انتهاء الصلاحية
-    if (criteria.expiresAt && criteria.expiresAt.$gt) {
-      query += ` AND expires_at > $${index}`;
-      values.push(criteria.expiresAt.$gt);
-      index++;
-    }
-
     query += ' ORDER BY created_at DESC LIMIT 1';
 
     try {
       const result = await pool.query(query, values);
       console.log('🔍 findOne result count:', result.rows.length);
       if (result.rows.length > 0) {
-        console.log('✅ Found OTP:', result.rows[0]);
+        console.log('✅ Found OTP:', {
+          id: result.rows[0].id,
+          code: result.rows[0].code,
+          expires_at: result.rows[0].expires_at
+        });
       } else {
         console.log('❌ No OTP found');
       }
@@ -247,7 +245,7 @@ const OTP = {
   },
 
   // ============================================
-  // البحث عن رمز صالح - نسخة متسامحة
+  // البحث عن رمز صالح - نسخة محسنة
   // ============================================
   async findValidOTP(identifier, code, purpose) {
     console.log('🔍 Searching for valid OTP with:', { 
@@ -257,14 +255,14 @@ const OTP = {
       currentTime: new Date().toISOString()
     });
     
-    // أولاً: البحث بالشرط الصارم (غير منتهي الصلاحية)
+    // البحث بالشرط الصارم باستخدام NOW() AT TIME ZONE 'UTC'
     const strictQuery = `
       SELECT * FROM app.otps 
       WHERE identifier = $1 
         AND code = $2 
         AND purpose = $3 
         AND verified = false 
-        AND expires_at > NOW()
+        AND expires_at > NOW() AT TIME ZONE 'UTC'
       ORDER BY created_at DESC 
       LIMIT 1
     `;
@@ -277,12 +275,13 @@ const OTP = {
         console.log('✅ Found valid OTP (strict):', {
           id: result.rows[0].id,
           code: result.rows[0].code,
-          expires_at: result.rows[0].expires_at
+          expires_at: result.rows[0].expires_at,
+          time_remaining: getTimeRemaining(result.rows[0])
         });
         return result.rows[0];
       }
       
-      // إذا لم نجد، نبحث بدون شرط انتهاء الصلاحية
+      // إذا لم نجد، نبحث بدون شرط انتهاء الصلاحية للتشخيص
       console.log('⚠️ No OTP found with strict expiry, checking all records...');
       
       const lenientQuery = `
@@ -298,14 +297,15 @@ const OTP = {
       result = await pool.query(lenientQuery, values);
       
       if (result.rows.length > 0) {
+        const remaining = getTimeRemaining(result.rows[0]);
         console.log('⚠️ Found OTP but it might be expired:', {
           id: result.rows[0].id,
           code: result.rows[0].code,
           expires_at: result.rows[0].expires_at,
-          time_remaining: Math.floor((new Date(result.rows[0].expires_at) - new Date()) / 1000) + ' seconds'
+          time_remaining: remaining + ' seconds',
+          expired: remaining <= 0
         });
         
-        // نعيده على أي حال للتجربة
         return result.rows[0];
       }
       
@@ -319,11 +319,13 @@ const OTP = {
       `;
       const allResults = await pool.query(allOTPsQuery, [identifier]);
       console.log(`📋 All OTPs for ${identifier}:`, allResults.rows.map(r => ({
+        id: r.id,
         code: r.code,
         purpose: r.purpose,
         verified: r.verified,
         expires_at: r.expires_at,
-        created_at: r.created_at
+        created_at: r.created_at,
+        remaining: getTimeRemaining(r)
       })));
       
       return null;
@@ -341,11 +343,11 @@ const OTP = {
     
     const query = `
       UPDATE app.otps 
-      SET expires_at = NOW() 
+      SET expires_at = NOW() AT TIME ZONE 'UTC'
       WHERE identifier = $1 
         AND purpose = $2 
         AND verified = false 
-        AND expires_at > NOW()
+        AND expires_at > NOW() AT TIME ZONE 'UTC'
     `;
     const values = [identifier, purpose];
 
@@ -369,17 +371,14 @@ const OTP = {
   // التحقق من صحة الرمز (للاستخدام في الكود)
   // ============================================
   isValid(otpRecord) {
-    if (!otpRecord) return false;
-    return !otpRecord.verified && new Date(otpRecord.expires_at) > new Date();
+    return isOTPValid(otpRecord);
   },
 
   // ============================================
   // الحصول على الوقت المتبقي بالثواني
   // ============================================
   getTimeRemaining(otpRecord) {
-    if (!otpRecord) return 0;
-    const remaining = Math.max(0, Math.floor((new Date(otpRecord.expires_at) - new Date()) / 1000));
-    return remaining;
+    return getTimeRemaining(otpRecord);
   },
 
   // ============================================
@@ -409,7 +408,7 @@ const OTP = {
   async expire(id) {
     const query = `
       UPDATE app.otps 
-      SET expires_at = NOW() 
+      SET expires_at = NOW() AT TIME ZONE 'UTC'
       WHERE id = $1 
       RETURNING *
     `;

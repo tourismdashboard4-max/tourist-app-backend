@@ -17,11 +17,19 @@ import bookingRoutes from './src/routes/bookingRoutes.js';
 import chatRoutes from './src/routes/chatRoutes.js';
 import notificationRoutes from './src/routes/notificationRoutes.js';
 
+// استيراد دوال الوقت المساعدة
+import timeUtils from './src/utils/timeUtils.js';
+
 dotenv.config();
 
 const app = express();
 const server = createServer(app);
 const PORT = process.env.PORT || 5002;
+
+// ===================== دوال مساعدة للتواريخ (مصدرة للاستخدام) =====================
+export const createExpiryDate = timeUtils.createExpiryDate;
+export const isOTPValid = timeUtils.isOTPValid;
+export const getTimeRemaining = timeUtils.getTimeRemaining;
 
 // ===================== إعداد WebSocket =====================
 const io = new Server(server, {
@@ -134,6 +142,12 @@ app.use(cors({
   credentials: true
 }));
 
+// Middleware لإضافة معلومات الوقت لكل طلب
+app.use((req, res, next) => {
+  console.log(`🕐 Request received at: ${new Date().toISOString()}`);
+  next();
+});
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));
@@ -202,6 +216,8 @@ app.get('/api/test', (req, res) => {
     success: true, 
     message: '✅ Server is working with PostgreSQL!',
     timestamp: new Date().toISOString(),
+    serverTime: new Date().toLocaleString(),
+    timezone: 'UTC',
     websocket: 'enabled',
     onlineUsers: onlineUsers.size
   });
@@ -213,6 +229,8 @@ app.get('/health', async (req, res) => {
   res.json({
     status: 'OK',
     timestamp: new Date().toISOString(),
+    serverTime: new Date().toLocaleString(),
+    timezone: 'UTC',
     uptime: process.uptime(),
     port: PORT,
     database: dbConnected ? 'connected' : 'disconnected',
@@ -240,14 +258,16 @@ const startServer = async () => {
   ║  ▶ Port:        ${PORT}
   ║  ▶ Database:    ✅ PostgreSQL
   ║  ▶ WebSocket:   ✅ Enabled
+  ║  ▶ Timezone:    UTC
   ║  ▶ Test API:    /api/test
   ║  ▶ Health:      /health
   ╚══════════════════════════════════════════════╝
       `);
-    }, 100); // تأخير 100 مللي ثانية
+      console.log(`🕐 Server started at: ${new Date().toISOString()}`);
+    }, 100);
   });
 };
 
 startServer();
 
-export { io, onlineUsers, pool };
+export { io, onlineUsers, pool, createExpiryDate, isOTPValid, getTimeRemaining };

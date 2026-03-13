@@ -1,10 +1,10 @@
-// server/src/routes/authRoutes.js
 import express from 'express';
 import User from '../models/User.js';
 import OTP from '../models/OTP.js';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import { sendEmail } from '../utils/email.js';
+import { createExpiryDate, isOTPValid, getTimeRemaining } from '../../server.js';
 
 const router = express.Router();
 
@@ -50,6 +50,7 @@ router.post('/send-otp', async (req, res) => {
   try {
     const { email } = req.body;
     console.log('📧 Received OTP request for:', email);
+    console.log('🕐 Server time:', new Date().toISOString());
 
     if (!email) {
       return res.status(400).json({ 
@@ -76,14 +77,17 @@ router.post('/send-otp', async (req, res) => {
     const code = OTP.generateCode();
     console.log('🔐 Generated OTP:', code);
 
-    // حفظ الرمز مع إضافة email
+    // حفظ الرمز مع وقت انتهاء محسوب بدقة
+    const expiresAt = createExpiryDate(10); // 10 دقائق
+    console.log('⏰ OTP will expire at:', expiresAt.toISOString());
+
     await OTP.create({
       identifier: cleanEmail,
       email: cleanEmail,
       type: 'email',
       code,
       purpose: 'register',
-      expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+      expiresAt
     });
 
     // إرسال البريد الإلكتروني
@@ -102,7 +106,7 @@ router.post('/send-otp', async (req, res) => {
               <div style="background-color: #f0f9ff; padding: 20px; border-radius: 8px; text-align: center; margin: 20px 0;">
                 <span style="font-size: 48px; font-weight: bold; color: #3b82f6; letter-spacing: 5px;">${code}</span>
               </div>
-              <p style="color: #666; font-size: 14px;">هذا الرمز صالح لمدة <strong>10 دقائق</strong></p>
+              <p style="color: #666; font-size: 14px;">هذا الرمز صالح لمدة <strong>10 دقائق</strong> من ${new Date().toLocaleString('ar-SA')}</p>
               <p style="color: #999; font-size: 12px; margin-top: 30px;">إذا لم تطلب هذا الرمز، يمكنك تجاهل هذه الرسالة.</p>
             </div>
             <div style="text-align: center; margin-top: 20px; color: #999; font-size: 12px;">
@@ -120,6 +124,7 @@ router.post('/send-otp', async (req, res) => {
     res.json({
       success: true,
       message: 'تم إرسال رمز التحقق',
+      expiresIn: 600, // 10 دقائق بالثواني
       devCode: process.env.NODE_ENV === 'development' ? code : undefined
     });
 
@@ -139,6 +144,7 @@ router.post('/verify-otp', async (req, res) => {
   try {
     const { email, code } = req.body;
     console.log('📧 Verify OTP request:', { email, code });
+    console.log('🕐 Server time:', new Date().toISOString());
 
     if (!email || !code) {
       return res.status(400).json({ 
@@ -154,7 +160,18 @@ router.post('/verify-otp', async (req, res) => {
     
     console.log('🔍 OTP Record found:', otpRecord ? '✅ YES' : '❌ NO');
 
-    if (!otpRecord) {
+    // استخدام دالة isOTPValid للتحقق من الصلاحية
+    if (!otpRecord || !isOTPValid(otpRecord)) {
+      console.log('⏰ OTP expired or invalid:', {
+        found: !!otpRecord,
+        valid: otpRecord ? isOTPValid(otpRecord) : false
+      });
+      
+      if (otpRecord) {
+        const remaining = getTimeRemaining(otpRecord);
+        console.log(`⏰ Time remaining: ${remaining} seconds`);
+      }
+      
       return res.status(400).json({
         success: false,
         message: 'رمز التحقق غير صحيح أو منتهي الصلاحية'
@@ -366,6 +383,7 @@ router.post('/forgot-password', async (req, res) => {
   try {
     const { email } = req.body;
     console.log('🔄 طلب نسيت كلمة المرور لـ:', email);
+    console.log('🕐 Server time:', new Date().toISOString());
 
     if (!email) {
       return res.status(400).json({ 
@@ -394,14 +412,18 @@ router.post('/forgot-password', async (req, res) => {
     // توليد رمز جديد
     const code = OTP.generateCode();
 
-    // حفظ الرمز الجديد مع إضافة email
+    // إنشاء وقت انتهاء الصلاحية (10 دقائق)
+    const expiresAt = createExpiryDate(10);
+    console.log('⏰ Reset code will expire at:', expiresAt.toISOString());
+
+    // حفظ الرمز الجديد
     await OTP.create({
       identifier: cleanEmail,
       email: cleanEmail,
       type: 'email',
       code,
       purpose: 'reset-password',
-      expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+      expiresAt
     });
 
     console.log(`🔄 رمز إعادة تعيين كلمة المرور لـ ${cleanEmail}: ${code}`);
@@ -422,7 +444,7 @@ router.post('/forgot-password', async (req, res) => {
               <div style="background-color: #f0f9ff; padding: 20px; border-radius: 8px; text-align: center; margin: 20px 0;">
                 <span style="font-size: 48px; font-weight: bold; color: #3b82f6; letter-spacing: 5px;">${code}</span>
               </div>
-              <p style="color: #666; font-size: 14px;">هذا الرمز صالح لمدة <strong>10 دقائق</strong></p>
+              <p style="color: #666; font-size: 14px;">هذا الرمز صالح لمدة <strong>10 دقائق</strong> من ${new Date().toLocaleString('ar-SA')}</p>
               <p style="color: #999; font-size: 12px; margin-top: 30px;">إذا لم تطلب تغيير كلمة المرور، يمكنك تجاهل هذه الرسالة.</p>
             </div>
             <div style="text-align: center; margin-top: 20px; color: #999; font-size: 12px;">
@@ -440,6 +462,7 @@ router.post('/forgot-password', async (req, res) => {
     res.json({
       success: true,
       message: 'تم إرسال رمز إعادة تعيين كلمة المرور',
+      expiresIn: 600, // 10 دقائق بالثواني
       devCode: process.env.NODE_ENV === 'development' ? code : undefined
     });
 
@@ -458,6 +481,8 @@ router.post('/forgot-password', async (req, res) => {
 router.post('/reset-password', async (req, res) => {
   try {
     const { email, code, newPassword } = req.body;
+    console.log('🔄 Reset password request for:', email);
+    console.log('🕐 Server time:', new Date().toISOString());
 
     if (!email || !code || !newPassword) {
       return res.status(400).json({
@@ -471,7 +496,13 @@ router.post('/reset-password', async (req, res) => {
     // البحث عن الرمز الصحيح
     const otpRecord = await OTP.findValidOTP(cleanEmail, code, 'reset-password');
 
-    if (!otpRecord) {
+    // استخدام دالة isOTPValid للتحقق من الصلاحية
+    if (!otpRecord || !isOTPValid(otpRecord)) {
+      console.log('⏰ Reset code expired or invalid:', {
+        found: !!otpRecord,
+        valid: otpRecord ? isOTPValid(otpRecord) : false
+      });
+      
       return res.status(400).json({
         success: false,
         message: 'رمز التحقق غير صحيح أو منتهي الصلاحية'
@@ -617,7 +648,10 @@ router.post('/send-phone-otp', authenticate, async (req, res) => {
     // إنشاء رمز تحقق عشوائي
     const code = OTP.generateCode();
     
-    // حفظ الرمز في قاعدة البيانات مع إضافة phone
+    // إنشاء وقت انتهاء الصلاحية
+    const expiresAt = createExpiryDate(10);
+    
+    // حفظ الرمز في قاعدة البيانات
     await OTP.create({
       identifier: cleanPhone,
       phone: cleanPhone,
@@ -625,7 +659,7 @@ router.post('/send-phone-otp', authenticate, async (req, res) => {
       code,
       purpose: 'phone-verification',
       userId,
-      expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+      expiresAt
     });
 
     console.log(`📱 Phone OTP for user ${userId}: ${code}`);
@@ -633,6 +667,7 @@ router.post('/send-phone-otp', authenticate, async (req, res) => {
     res.json({
       success: true,
       message: 'تم إرسال رمز التحقق إلى جوالك',
+      expiresIn: 600,
       devCode: process.env.NODE_ENV === 'development' ? code : undefined
     });
 
@@ -667,7 +702,7 @@ router.post('/verify-phone-otp', authenticate, async (req, res) => {
     // البحث عن الرمز الصحيح
     const otpRecord = await OTP.findValidOTP(cleanPhone, code, 'phone-verification');
 
-    if (!otpRecord) {
+    if (!otpRecord || !isOTPValid(otpRecord)) {
       return res.status(400).json({
         success: false,
         message: 'رمز التحقق غير صحيح أو منتهي الصلاحية'
@@ -701,7 +736,9 @@ router.get('/test', (req, res) => {
   res.json({
     success: true,
     message: '✅ Auth routes are working with PostgreSQL',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    serverTime: new Date().toLocaleString(),
+    timezone: 'UTC'
   });
 });
 
