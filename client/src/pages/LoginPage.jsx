@@ -1,7 +1,5 @@
-// ============================================
-// LoginPage.jsx - نظام تسجيل الدخول بالبريد الإلكتروني فقط
+// client/src/pages/LoginPage.jsx - نظام تسجيل الدخول بالبريد الإلكتروني فقط
 // نسخة معدلة - تم إصلاح مشكلة تعدد الرموز
-// ============================================
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Mail, Lock, User, Key, ArrowRight, CheckCircle, AlertCircle } from 'lucide-react';
