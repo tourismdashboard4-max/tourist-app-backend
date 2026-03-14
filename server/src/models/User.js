@@ -250,16 +250,27 @@ const User = {
   },
 
   // ============================================
-  // 🔄 تحديث كلمة المرور
+  // 🔄 تحديث كلمة المرور (الإصدار المعدل - يستخدم email)
   // ============================================
-  async updatePassword(id, newPassword) {
-    const salt = await bcrypt.genSalt(10);
-    const password_hash = await bcrypt.hash(newPassword, salt);
-    
-    const query = 'UPDATE app.users SET password_hash = $2 WHERE id = $1';
-    
+  async updatePassword(email, newPassword) {
     try {
-      await pool.query(query, [id, password_hash]);
+      console.log('🔐 Updating password for email:', email);
+      
+      const salt = await bcrypt.genSalt(10);
+      const password_hash = await bcrypt.hash(newPassword, salt);
+      
+      const query = 'UPDATE app.users SET password_hash = $1, updated_at = NOW() WHERE email = $2 RETURNING id';
+      const values = [password_hash, email];
+      
+      const result = await pool.query(query, values);
+      
+      if (result.rows.length === 0) {
+        console.log('❌ User not found for email:', email);
+        return false;
+      }
+      
+      console.log('✅ Password updated successfully for:', email);
+      return true;
     } catch (error) {
       console.error('❌ Error updating password:', error);
       throw error;
