@@ -1,5 +1,4 @@
-
-// client/src/pages/NotificationsPage.jsx (النسخة النهائية)
+// client/src/pages/NotificationsPage.jsx (النسخة النهائية مع تحسين معالجة الأخطاء)
 import React, { useState, useEffect } from 'react';
 import { 
   FaArrowLeft, 
@@ -92,49 +91,47 @@ const NotificationsPage = ({ setPage }) => {
   };
 
   // ============================================
-// 3️⃣ فتح محادثة دعم جديدة (فقط عند الضغط على الزر)
-// ============================================
-const openSupportChat = async () => {
-  try {
-    setOpeningSupport(true);
-    console.log('🔄 فتح محادثة دعم جديدة...');
-    
-    // ✅ يجب إرسال object مع manual: true
-    const response = await api.startSupportChat({
-      subject: 'استفسار من صفحة الإشعارات',
-      manual: true  // 👈 هذا هو المفتاح
-    });
-    
-    if (response.success) {
-      console.log('✅ تم إنشاء المحادثة بنجاح:', response.chat);
+  // 3️⃣ فتح محادثة دعم جديدة (فقط عند الضغط على الزر)
+  // ============================================
+  const openSupportChat = async () => {
+    try {
+      setOpeningSupport(true);
+      console.log('🔄 فتح محادثة دعم جديدة...');
       
-      // حفظ معرف المحادثة
-      const chatId = response.chat?._id || response.chat?.id;
-      if (chatId) {
-        localStorage.setItem('currentSupportChat', chatId);
-        console.log('💾 تم حفظ معرف المحادثة:', chatId);
-      }
+      const response = await api.startSupportChat({
+        subject: 'استفسار من صفحة الإشعارات',
+        manual: true
+      });
       
-      toast.success('تم فتح محادثة مع الدعم الفني');
-      
-      if (setPage) {
-        setPage('support-chat');
+      if (response.success) {
+        console.log('✅ تم إنشاء المحادثة بنجاح:', response.chat);
+        
+        const chatId = response.chat?._id || response.chat?.id;
+        if (chatId) {
+          localStorage.setItem('currentSupportChat', chatId);
+          console.log('💾 تم حفظ معرف المحادثة:', chatId);
+        }
+        
+        toast.success('تم فتح محادثة مع الدعم الفني');
+        
+        if (setPage) {
+          setPage('support-chat');
+        } else {
+          window.location.href = '/support-chat';
+        }
       } else {
-        window.location.href = '/support-chat';
+        throw new Error(response.message || 'فشل فتح المحادثة');
       }
-    } else {
-      throw new Error(response.message || 'فشل فتح المحادثة');
+    } catch (error) {
+      console.error('❌ خطأ في فتح محادثة الدعم:', error);
+      toast.error('فشل الاتصال بالدعم. يرجى المحاولة مرة أخرى.');
+    } finally {
+      setOpeningSupport(false);
     }
-  } catch (error) {
-    console.error('❌ خطأ في فتح محادثة الدعم:', error);
-    toast.error('فشل الاتصال بالدعم. يرجى المحاولة مرة أخرى.');
-  } finally {
-    setOpeningSupport(false);
-  }
-};
+  };
 
   // ============================================
-  // 4️⃣ جلب الإشعارات
+  // 4️⃣ جلب الإشعارات (مع تحسين معالجة الأخطاء)
   // ============================================
   const fetchNotifications = async () => {
     setLoading(true);
@@ -180,8 +177,23 @@ const openSupportChat = async () => {
       }
     } catch (err) {
       console.error('❌ خطأ في جلب الإشعارات:', err);
+      
+      // ✅ معالجة خطأ 401 (انتهاء الجلسة)
       if (err.message?.includes('401') || err.response?.status === 401) {
         setError('انتهت الجلسة. يرجى تسجيل الدخول مرة أخرى');
+        
+        // تنظيف التخزين المحلي
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        
+        // توجيه المستخدم إلى صفحة تسجيل الدخول بعد 3 ثوان
+        setTimeout(() => {
+          if (setPage) {
+            setPage('login');
+          } else {
+            window.location.href = '/login';
+          }
+        }, 3000);
       } else {
         setError('حدث خطأ في تحميل الإشعارات');
       }
@@ -203,6 +215,12 @@ const openSupportChat = async () => {
       }
     } catch (err) {
       console.error('❌ خطأ في الإحصائيات:', err);
+      
+      // معالجة خطأ 401 في الإحصائيات
+      if (err.message?.includes('401') || err.response?.status === 401) {
+        console.log('⚠️ Token expired in stats - will redirect');
+        // لا نحتاج لمعالجة إضافية لأن fetchNotifications ستقوم بالتوجيه
+      }
     }
   };
 
@@ -222,6 +240,20 @@ const openSupportChat = async () => {
       }));
     } catch (err) {
       console.error('❌ خطأ في تحديث الإشعار:', err);
+      
+      if (err.message?.includes('401') || err.response?.status === 401) {
+        setError('انتهت الجلسة. يرجى تسجيل الدخول مرة أخرى');
+        
+        setTimeout(() => {
+          if (setPage) {
+            setPage('login');
+          } else {
+            window.location.href = '/login';
+          }
+        }, 3000);
+      } else {
+        toast.error('فشل تحديث الإشعار');
+      }
     }
   };
 
@@ -236,6 +268,20 @@ const openSupportChat = async () => {
       toast.success('تم تحديث جميع الإشعارات كمقروءة');
     } catch (err) {
       console.error('❌ خطأ في تحديث الكل:', err);
+      
+      if (err.message?.includes('401') || err.response?.status === 401) {
+        setError('انتهت الجلسة. يرجى تسجيل الدخول مرة أخرى');
+        
+        setTimeout(() => {
+          if (setPage) {
+            setPage('login');
+          } else {
+            window.location.href = '/login';
+          }
+        }, 3000);
+      } else {
+        toast.error('فشل تحديث الإشعارات');
+      }
     }
   };
 
@@ -257,6 +303,20 @@ const openSupportChat = async () => {
       toast.success('تم حذف الإشعار');
     } catch (err) {
       console.error('❌ خطأ في حذف الإشعار:', err);
+      
+      if (err.message?.includes('401') || err.response?.status === 401) {
+        setError('انتهت الجلسة. يرجى تسجيل الدخول مرة أخرى');
+        
+        setTimeout(() => {
+          if (setPage) {
+            setPage('login');
+          } else {
+            window.location.href = '/login';
+          }
+        }, 3000);
+      } else {
+        toast.error('فشل حذف الإشعار');
+      }
     }
   };
 
@@ -459,7 +519,24 @@ const openSupportChat = async () => {
             marginBottom: '20px',
             textAlign: 'center'
           }}>
-            {error}
+            <p>{error}</p>
+            {error.includes('انتهت الجلسة') && (
+              <button
+                onClick={() => setPage('login')}
+                style={{
+                  background: darkMode ? '#fbbf24' : '#721c24',
+                  color: darkMode ? '#000' : '#fff',
+                  border: 'none',
+                  padding: '8px 20px',
+                  borderRadius: '5px',
+                  marginTop: '10px',
+                  cursor: 'pointer',
+                  fontWeight: 'bold'
+                }}
+              >
+                تسجيل الدخول
+              </button>
+            )}
           </div>
         )}
 
@@ -497,7 +574,7 @@ const openSupportChat = async () => {
               <FaArrowLeft /> {t.back}
             </button>
 
-            {/* ✅ زر الدعم - فقط هذا الزر ينشئ محادثة جديدة */}
+            {/* ✅ زر الدعم */}
             <button
               onClick={openSupportChat}
               disabled={openingSupport}
