@@ -18,7 +18,7 @@ import chatRoutes from './src/routes/chatRoutes.js';
 import notificationRoutes from './src/routes/notificationRoutes.js';
 
 // استيراد دوال الوقت المساعدة
-import timeUtils from './src/utils/timeUtils.js';
+import { createExpiryDate, isOTPValid, getTimeRemaining } from './src/utils/timeUtils.js';
 
 dotenv.config();
 
@@ -29,7 +29,12 @@ const PORT = process.env.PORT || 5002;
 // ===================== إعداد WebSocket =====================
 const io = new Server(server, {
   cors: {
-    origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', 'https://tourist-app-api.onrender.com'],
+    origin: [
+      'http://localhost:5173', 
+      'http://localhost:5174', 
+      'http://localhost:5175', 
+      'https://tourist-app-api.onrender.com'
+    ],
     credentials: true
   }
 });
@@ -79,48 +84,86 @@ io.on('connection', (socket) => {
   });
 });
 
-// ===================== إعداد PostgreSQL =====================
+// ===================== إعداد PostgreSQL السحابي (Supabase) =====================
 let pool;
 let poolConfig;
 
-if (process.env.DATABASE_URL) {
-  console.log('📦 Using DATABASE_URL for connection');
-  poolConfig = {
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-  };
-} else {
-  console.log('📦 Using individual DB variables for connection');
-  poolConfig = {
-    host: process.env.DB_HOST || 'localhost',
-    port: parseInt(process.env.DB_PORT || '5432'),
-    user: process.env.DB_USER || 'postgres',
-    password: process.env.DB_PASSWORD || '123456',
-    database: process.env.DB_NAME || 'touristapp',
-    max: 20,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 2000,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-  };
+// التأكد من وجود DATABASE_URL (مطلوب للسحابي)
+if (!process.env.DATABASE_URL) {
+  console.error('❌ DATABASE_URL is required for cloud connection!');
+  console.error('⚠️ Please add DATABASE_URL to your environment variables');
+  console.error('📝 Example: postgresql://postgres.sqcdxhmnrbazrzeswxmv:1Z8EorhYqsAClmLn@aws-1-ap-northeast-1.pooler.supabase.com:6543/postgres?pgbouncer=true');
+  process.exit(1);
 }
+
+// ✅ استخدام DATABASE_URL للسحابي
+console.log('☁️ Connecting to Supabase Cloud via DATABASE_URL');
+poolConfig = {
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false // ضروري لـ Supabase
+  },
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 10000
+};
 
 pool = new Pool(poolConfig);
 
-// اختبار الاتصال بقاعدة البيانات
+// اختبار الاتصال بقاعدة البيانات السحابية
 const connectDB = async () => {
   try {
     const client = await pool.connect();
-    console.log('✅ Connected to PostgreSQL successfully');
-    console.log(`📦 Database: ${pool.options?.database || 'postgres'}`);
+    
+    // استخراج معلومات المضيف من connectionString
+    const hostMatch = process.env.DATABASE_URL.match(/@([^:]+)/);
+    const host = hostMatch ? hostMatch[1] : 'supabase.co';
+    
+    console.log(`
+    ╔══════════════════════════════════════════╗
+    ║   ✅ Supabase PostgreSQL Connected       ║
+    ╠══════════════════════════════════════════╣
+    ║  Host: ${host.padEnd(30)}║
+    ║  Database: ${poolConfig.connectionString.split('/').pop().split('?')[0].padEnd(30)}║
+    ║  Type: Cloud (Supabase)                 ║
+    ║  SSL: Enabled ✅                         ║
+    ║  Pool Size: 20                           ║
+    ╚══════════════════════════════════════════╝
+    `);
+    
     client.release();
+
+    pool.on('error', (err) => {
+      console.error('❌ Supabase PostgreSQL connection error:', err);
+    });
+
+    pool.on('connect', () => {
+      console.log('🔄 New client connected to Supabase PostgreSQL');
+    });
+
+    pool.on('remove', () => {
+      console.log('🔄 Client removed from pool');
+    });
+
     return true;
   } catch (error) {
-    console.error('❌ PostgreSQL connection error:', error.message);
+    console.error(`
+    ╔══════════════════════════════════════════╗
+    ║   ❌ Supabase Connection Failed           ║
+    ╠══════════════════════════════════════════╣
+    ║  Error: ${error.message.substring(0, 30).padEnd(30)}║
+    ║  Time: ${new Date().toLocaleString().padEnd(30)}║
+    ╚══════════════════════════════════════════╝
+    `);
+    
     if (process.env.DATABASE_URL) {
-      console.error('   Please check that DATABASE_URL is correct');
-    } else {
-      console.error('   Please check DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME');
+      console.error('⚠️ Please check that DATABASE_URL is correct');
+      console.error('🔑 Make sure your password is correct');
+      console.error('🌐 Verify that your Supabase project is active');
     }
+    
     return false;
   }
 };
@@ -131,7 +174,12 @@ app.use(helmet({
 }));
 
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', 'https://tourist-app-api.onrender.com'],
+  origin: [
+    'http://localhost:5173', 
+    'http://localhost:5174', 
+    'http://localhost:5175', 
+    'https://tourist-app-api.onrender.com'
+  ],
   credentials: true
 }));
 
@@ -149,7 +197,7 @@ app.use(morgan('dev'));
 app.get('/', (req, res) => {
   res.json({ 
     success: true, 
-    message: 'Tourist App API is running',
+    message: 'Tourist App API is running on Supabase Cloud',
     docs: '/api/test',
     health: '/health',
     endpoints: {
@@ -207,10 +255,11 @@ app.get('/api/wallet/:userId', async (req, res) => {
 app.get('/api/test', (req, res) => {
   res.json({ 
     success: true, 
-    message: '✅ Server is working with PostgreSQL!',
+    message: '✅ Server is working with Supabase PostgreSQL!',
     timestamp: new Date().toISOString(),
     serverTime: new Date().toLocaleString(),
     timezone: 'UTC',
+    database: 'Supabase Cloud',
     websocket: 'enabled',
     onlineUsers: onlineUsers.size
   });
@@ -219,6 +268,18 @@ app.get('/api/test', (req, res) => {
 // ===================== Health check =====================
 app.get('/health', async (req, res) => {
   const dbConnected = await connectDB().catch(() => false);
+  
+  // استعلام إضافي للحصول على معلومات Supabase
+  let dbInfo = {};
+  if (dbConnected) {
+    try {
+      const versionResult = await pool.query('SELECT version()');
+      dbInfo.version = versionResult.rows[0].version.split(' ')[0] + ' ' + versionResult.rows[0].version.split(' ')[1];
+    } catch (e) {
+      dbInfo.version = 'PostgreSQL';
+    }
+  }
+  
   res.json({
     status: 'OK',
     timestamp: new Date().toISOString(),
@@ -227,6 +288,8 @@ app.get('/health', async (req, res) => {
     uptime: process.uptime(),
     port: PORT,
     database: dbConnected ? 'connected' : 'disconnected',
+    databaseType: 'Supabase Cloud',
+    databaseVersion: dbInfo.version || 'Unknown',
     websocket: 'active',
     onlineUsers: onlineUsers.size
   });
@@ -234,10 +297,12 @@ app.get('/health', async (req, res) => {
 
 // ===================== Database connection and server start =====================
 const startServer = async () => {
+  console.log('🚀 Starting server with Supabase Cloud connection...');
+  
   const dbConnected = await connectDB();
   
   if (!dbConnected) {
-    console.error('❌ Failed to connect to database. Exiting...');
+    console.error('❌ Failed to connect to Supabase database. Exiting...');
     process.exit(1);
   }
 
@@ -248,14 +313,16 @@ const startServer = async () => {
   ║         🚀 TOURIST APP SERVER               ║
   ╠══════════════════════════════════════════════╣
   ║  ▶ Port:        ${PORT}
-  ║  ▶ Database:    ✅ PostgreSQL
+  ║  ▶ Database:    ✅ Supabase Cloud
   ║  ▶ WebSocket:   ✅ Enabled
+  ║  ▶ SSL:         ✅ Enabled
   ║  ▶ Timezone:    UTC
   ║  ▶ Test API:    /api/test
   ║  ▶ Health:      /health
   ╚══════════════════════════════════════════════╝
       `);
       console.log(`🕐 Server started at: ${new Date().toISOString()}`);
+      console.log(`☁️ Connected to Supabase Cloud PostgreSQL`);
     }, 100);
   });
 };
