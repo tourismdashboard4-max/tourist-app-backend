@@ -26,11 +26,6 @@ const app = express();
 const server = createServer(app);
 const PORT = process.env.PORT || 5002;
 
-// ===================== دوال مساعدة للتواريخ (مصدرة للاستخدام) =====================
-export const createExpiryDate = timeUtils.createExpiryDate;
-export const isOTPValid = timeUtils.isOTPValid;
-export const getTimeRemaining = timeUtils.getTimeRemaining;
-
 // ===================== إعداد WebSocket =====================
 const io = new Server(server, {
   cors: {
@@ -89,14 +84,12 @@ let pool;
 let poolConfig;
 
 if (process.env.DATABASE_URL) {
-  // ✅ استخدام DATABASE_URL إذا كان موجوداً (في Render)
   console.log('📦 Using DATABASE_URL for connection');
   poolConfig = {
     connectionString: process.env.DATABASE_URL,
     ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
   };
 } else {
-  // ✅ استخدام المتغيرات المنفصلة كخطة احتياطية (للتطوير المحلي)
   console.log('📦 Using individual DB variables for connection');
   poolConfig = {
     host: process.env.DB_HOST || 'localhost',
@@ -179,7 +172,7 @@ app.use('/api/bookings', bookingRoutes);
 app.use('/api/chats', chatRoutes);
 app.use('/api/notifications', notificationRoutes);
 
-// ===================== Route إضافي للمحفظة (مؤقت حتى يكتمل walletRoutes) =====================
+// ===================== Route إضافي للمحفظة =====================
 app.get('/api/wallet/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
@@ -239,7 +232,7 @@ app.get('/health', async (req, res) => {
   });
 });
 
-// ===================== Database connection and server start (مع إضافة التأخير) =====================
+// ===================== Database connection and server start =====================
 const startServer = async () => {
   const dbConnected = await connectDB();
   
@@ -249,7 +242,6 @@ const startServer = async () => {
   }
 
   server.listen(PORT, '0.0.0.0', () => {
-    // إضافة تأخير بسيط قبل طباعة الرسالة (100 مللي ثانية)
     setTimeout(() => {
       console.log(`
   ╔══════════════════════════════════════════════╗
@@ -270,4 +262,5 @@ const startServer = async () => {
 
 startServer();
 
+// ===================== التصدير مرة واحدة فقط =====================
 export { io, onlineUsers, pool, createExpiryDate, isOTPValid, getTimeRemaining };
