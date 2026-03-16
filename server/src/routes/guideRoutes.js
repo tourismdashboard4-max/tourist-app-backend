@@ -9,7 +9,7 @@ import { body } from 'express-validator';
 const router = express.Router();
 
 // ============================================
-// قواعد التحقق لطلب الترقية
+// ✅ قواعد التحقق لطلب الترقية (محدثة)
 // ============================================
 const upgradeValidation = [
   body('fullName')
@@ -18,17 +18,21 @@ const upgradeValidation = [
   
   body('civilId')
     .notEmpty().withMessage('رقم الهوية مطلوب')
-    .matches(/^\d{10}$/).withMessage('رقم الهوية يجب أن يكون 10 أرقام'),
+    .matches(/^\d{10}$/).withMessage('رقم الهوية يجب أن يكون 10 أرقام')
+    .optional({ checkFalsy: true }),
   
   body('licenseNumber')
     .notEmpty().withMessage('رقم الرخصة مطلوب')
-    .matches(/^[A-Z]{3}-\d{4}-\d{4}$/).withMessage('صيغة الرخصة غير صحيحة (مثال: TRL-1234-5678)'),
+    .matches(/^[A-Z]{3}-\d{4}-\d{4}$/).withMessage('صيغة الرخصة غير صحيحة (مثال: TRL-1234-5678)')
+    .optional({ checkFalsy: true }),
   
   body('phone')
     .notEmpty().withMessage('رقم الجوال مطلوب')
-    .matches(/^(05|\+9665)[0-9]{8}$/).withMessage('رقم الجوال غير صحيح (مثال: 05xxxxxxxx أو +9665xxxxxxxx)'),
+    .matches(/^(05|\+9665)[0-9]{8}$/).withMessage('رقم الجوال غير صحيح (مثال: 05xxxxxxxx أو +9665xxxxxxxx)')
+    .optional({ checkFalsy: true }),
   
   body('experience')
+    .optional()
     .isInt({ min: 0, max: 50 }).withMessage('سنوات الخبرة يجب أن تكون بين 0 و 50'),
   
   body('specialties')
