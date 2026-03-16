@@ -1,18 +1,50 @@
 // server/src/services/notificationService.js
-import Notification from '../models/Notification.js';
+import { pool } from '../config/database.js';
 import { getIO } from '../config/socket.js';
 
 class NotificationService {
-  // إنشاء إشعار جديد
+  /**
+   * إنشاء إشعار جديد
+   * @param {string} userId - معرف المستخدم
+   * @param {Object} data - بيانات الإشعار
+   * @returns {Promise<Object>} الإشعار المنشأ
+   */
   async create(userId, data) {
+    const client = await pool.connect();
+    
     try {
-      const notification = await Notification.create({
-        user: userId,
-        ...data
-      });
+      await client.query('BEGIN');
+
+      const notificationId = `NOTIF-${Date.now()}-${Math.random().toString(36).substr(2, 8).toUpperCase()}`;
+
+      // إنشاء الإشعار
+      const notificationResult = await client.query(
+        `INSERT INTO app.notifications (
+          notification_id, user_id, title, message, type, priority,
+          data, action_url, is_read, read_at, is_deleted, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+        RETURNING *`,
+        [
+          notificationId,
+          userId,
+          data.title || 'إشعار جديد',
+          data.message,
+          data.type || 'system',
+          data.priority || 'low',
+          data.data ? JSON.stringify(data.data) : null,
+          data.actionUrl || null,
+          false,
+          null,
+          false
+        ]
+      );
+
+      const notification = notificationResult.rows[0];
 
       // جلب عدد الإشعارات غير المقروءة
-      const unreadCount = await this.getUnreadCount(userId);
+      const unreadCount = await this.getUnreadCount(client, userId);
+
+      await client.query('COMMIT');
 
       // إرسال الإشعار عبر WebSocket
       const io = getIO();
@@ -31,25 +63,61 @@ class NotificationService {
 
       return notification;
     } catch (error) {
-      console.error('Error creating notification:', error);
+      await client.query('ROLLBACK');
+      console.error('❌ Error creating notification:', error);
       throw error;
+    } finally {
+      client.release();
     }
   }
 
-  // إنشاء إشعارات متعددة
+  /**
+   * إنشاء إشعارات متعددة
+   * @param {Array} userIds - قائمة معرفات المستخدمين
+   * @param {Object} data - بيانات الإشعار
+   * @returns {Promise<Array>} الإشعارات المنشأة
+   */
   async createBulk(userIds, data) {
+    const client = await pool.connect();
+    
     try {
-      const notifications = await Notification.insertMany(
-        userIds.map(userId => ({
-          user: userId,
-          ...data
-        }))
-      );
+      await client.query('BEGIN');
+
+      const notifications = [];
+
+      for (const userId of userIds) {
+        const notificationId = `NOTIF-${Date.now()}-${Math.random().toString(36).substr(2, 8).toUpperCase()}-${userId}`;
+
+        const result = await client.query(
+          `INSERT INTO app.notifications (
+            notification_id, user_id, title, message, type, priority,
+            data, action_url, is_read, read_at, is_deleted, created_at, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+          RETURNING *`,
+          [
+            notificationId,
+            userId,
+            data.title || 'إشعار جديد',
+            data.message,
+            data.type || 'system',
+            data.priority || 'low',
+            data.data ? JSON.stringify(data.data) : null,
+            data.actionUrl || null,
+            false,
+            null,
+            false
+          ]
+        );
+
+        notifications.push(result.rows[0]);
+      }
+
+      await client.query('COMMIT');
 
       const io = getIO();
       if (io) {
         userIds.forEach(async (userId) => {
-          const unreadCount = await this.getUnreadCount(userId);
+          const unreadCount = await this.getUnreadCount(null, userId);
           io.to(`user-${userId}`).emit('new_notification', {
             notification: data,
             unreadCount
@@ -59,45 +127,69 @@ class NotificationService {
 
       return notifications;
     } catch (error) {
-      console.error('Error creating bulk notifications:', error);
+      await client.query('ROLLBACK');
+      console.error('❌ Error creating bulk notifications:', error);
       throw error;
+    } finally {
+      client.release();
     }
   }
 
-  // جلب إشعارات المستخدم
+  /**
+   * جلب إشعارات المستخدم
+   * @param {string} userId - معرف المستخدم
+   * @param {number} page - رقم الصفحة
+   * @param {number} limit - عدد العناصر
+   * @param {Object} filters - عوامل التصفية
+   * @returns {Promise<Object>} الإشعارات مع معلومات التصفح
+   */
   async getUserNotifications(userId, page = 1, limit = 20, filters = {}) {
     try {
-      const query = { user: userId, isDeleted: false };
+      let query = 'SELECT * FROM app.notifications WHERE user_id = $1 AND is_deleted = false';
+      const queryParams = [userId];
+      let paramIndex = 2;
 
       if (filters.type && filters.type !== 'all') {
-        query.type = filters.type;
+        query += ` AND type = $${paramIndex}`;
+        queryParams.push(filters.type);
+        paramIndex++;
       }
 
       if (filters.isRead !== undefined && filters.isRead !== 'all') {
-        query.isRead = filters.isRead === 'read';
+        query += ` AND is_read = $${paramIndex}`;
+        queryParams.push(filters.isRead === 'read');
+        paramIndex++;
       }
 
-      if (filters.startDate || filters.endDate) {
-        query.createdAt = {};
-        if (filters.startDate) {
-          query.createdAt.$gte = new Date(filters.startDate);
-        }
-        if (filters.endDate) {
-          query.createdAt.$lte = new Date(filters.endDate);
-        }
+      if (filters.startDate) {
+        query += ` AND created_at >= $${paramIndex}`;
+        queryParams.push(filters.startDate);
+        paramIndex++;
       }
 
-      const notifications = await Notification.find(query)
-        .sort({ createdAt: -1 })
-        .limit(limit)
-        .skip((page - 1) * limit)
-        .lean();
+      if (filters.endDate) {
+        query += ` AND created_at <= $${paramIndex}`;
+        queryParams.push(filters.endDate);
+        paramIndex++;
+      }
 
-      const total = await Notification.countDocuments(query);
-      const unreadCount = await this.getUnreadCount(userId);
+      // جلب العدد الإجمالي
+      const countQuery = query.replace('SELECT *', 'SELECT COUNT(*)');
+      const countResult = await pool.query(countQuery, queryParams);
+      const total = parseInt(countResult.rows[0].count);
+
+      // جلب الإشعارات مع الترتيب والتصفح
+      const offset = (page - 1) * limit;
+      query += ' ORDER BY created_at DESC LIMIT $' + paramIndex + ' OFFSET $' + (paramIndex + 1);
+      queryParams.push(limit, offset);
+
+      const notificationsResult = await pool.query(query, queryParams);
+
+      // جلب عدد الإشعارات غير المقروءة
+      const unreadCount = await this.getUnreadCount(null, userId);
 
       return {
-        notifications,
+        notifications: notificationsResult.rows,
         pagination: {
           currentPage: page,
           totalPages: Math.ceil(total / limit),
@@ -107,39 +199,60 @@ class NotificationService {
         unreadCount
       };
     } catch (error) {
-      console.error('Error getting user notifications:', error);
+      console.error('❌ Error getting user notifications:', error);
       throw error;
     }
   }
 
-  // جلب عدد الإشعارات غير المقروءة
-  async getUnreadCount(userId) {
+  /**
+   * جلب عدد الإشعارات غير المقروءة
+   * @param {Object} client - عميل PostgreSQL (اختياري)
+   * @param {string} userId - معرف المستخدم
+   * @returns {Promise<number>} عدد الإشعارات غير المقروءة
+   */
+  async getUnreadCount(client, userId) {
     try {
-      return await Notification.countDocuments({
-        user: userId,
-        isRead: false,
-        isDeleted: false
-      });
+      const query = 'SELECT COUNT(*) FROM app.notifications WHERE user_id = $1 AND is_read = false AND is_deleted = false';
+      const values = [userId];
+
+      if (client) {
+        const result = await client.query(query, values);
+        return parseInt(result.rows[0].count);
+      } else {
+        const result = await pool.query(query, values);
+        return parseInt(result.rows[0].count);
+      }
     } catch (error) {
-      console.error('Error getting unread count:', error);
+      console.error('❌ Error getting unread count:', error);
       return 0;
     }
   }
 
-  // تحديث إشعار كمقروء
+  /**
+   * تحديث إشعار كمقروء
+   * @param {string} userId - معرف المستخدم
+   * @param {string} notificationId - معرف الإشعار
+   * @returns {Promise<Object>} الإشعار المحدث
+   */
   async markAsRead(userId, notificationId) {
+    const client = await pool.connect();
+    
     try {
-      const notification = await Notification.findOneAndUpdate(
-        { _id: notificationId, user: userId },
-        { 
-          isRead: true, 
-          readAt: new Date() 
-        },
-        { new: true }
+      await client.query('BEGIN');
+
+      const result = await client.query(
+        `UPDATE app.notifications 
+         SET is_read = true, read_at = NOW(), updated_at = NOW()
+         WHERE notification_id = $1 AND user_id = $2
+         RETURNING *`,
+        [notificationId, userId]
       );
 
-      if (notification) {
-        const unreadCount = await this.getUnreadCount(userId);
+      if (result.rows.length > 0) {
+        const unreadCount = await this.getUnreadCount(client, userId);
+        
+        await client.query('COMMIT');
+
         const io = getIO();
         if (io) {
           io.to(`user-${userId}`).emit('notification_read', {
@@ -147,52 +260,84 @@ class NotificationService {
             unreadCount
           });
         }
+
+        return result.rows[0];
       }
 
-      return notification;
+      await client.query('COMMIT');
+      return null;
     } catch (error) {
-      console.error('Error marking notification as read:', error);
+      await client.query('ROLLBACK');
+      console.error('❌ Error marking notification as read:', error);
       throw error;
+    } finally {
+      client.release();
     }
   }
 
-  // تحديث الكل كمقروء
+  /**
+   * تحديث الكل كمقروء
+   * @param {string} userId - معرف المستخدم
+   * @returns {Promise<Object>} نتيجة التحديث
+   */
   async markAllAsRead(userId) {
+    const client = await pool.connect();
+    
     try {
-      const result = await Notification.updateMany(
-        { user: userId, isRead: false, isDeleted: false },
-        { 
-          isRead: true, 
-          readAt: new Date() 
-        }
+      await client.query('BEGIN');
+
+      const result = await client.query(
+        `UPDATE app.notifications 
+         SET is_read = true, read_at = NOW(), updated_at = NOW()
+         WHERE user_id = $1 AND is_read = false AND is_deleted = false`,
+        [userId]
       );
+
+      await client.query('COMMIT');
 
       const io = getIO();
       if (io) {
         io.to(`user-${userId}`).emit('all_notifications_read', {
-          count: result.modifiedCount,
+          count: result.rowCount,
           unreadCount: 0
         });
       }
 
       return result;
     } catch (error) {
-      console.error('Error marking all as read:', error);
+      await client.query('ROLLBACK');
+      console.error('❌ Error marking all as read:', error);
       throw error;
+    } finally {
+      client.release();
     }
   }
 
-  // حذف إشعار
+  /**
+   * حذف إشعار
+   * @param {string} userId - معرف المستخدم
+   * @param {string} notificationId - معرف الإشعار
+   * @returns {Promise<Object>} الإشعار المحذوف
+   */
   async deleteNotification(userId, notificationId) {
+    const client = await pool.connect();
+    
     try {
-      const notification = await Notification.findOneAndUpdate(
-        { _id: notificationId, user: userId },
-        { isDeleted: true },
-        { new: true }
+      await client.query('BEGIN');
+
+      const result = await client.query(
+        `UPDATE app.notifications 
+         SET is_deleted = true, updated_at = NOW()
+         WHERE notification_id = $1 AND user_id = $2
+         RETURNING *`,
+        [notificationId, userId]
       );
 
-      if (notification) {
-        const unreadCount = await this.getUnreadCount(userId);
+      if (result.rows.length > 0) {
+        const unreadCount = await this.getUnreadCount(client, userId);
+        
+        await client.query('COMMIT');
+
         const io = getIO();
         if (io) {
           io.to(`user-${userId}`).emit('notification_deleted', {
@@ -200,39 +345,65 @@ class NotificationService {
             unreadCount
           });
         }
+
+        return result.rows[0];
       }
 
-      return notification;
+      await client.query('COMMIT');
+      return null;
     } catch (error) {
-      console.error('Error deleting notification:', error);
+      await client.query('ROLLBACK');
+      console.error('❌ Error deleting notification:', error);
       throw error;
+    } finally {
+      client.release();
     }
   }
 
-  // حذف جميع الإشعارات
+  /**
+   * حذف جميع الإشعارات
+   * @param {string} userId - معرف المستخدم
+   * @returns {Promise<Object>} نتيجة الحذف
+   */
   async deleteAllNotifications(userId) {
+    const client = await pool.connect();
+    
     try {
-      const result = await Notification.updateMany(
-        { user: userId, isDeleted: false },
-        { isDeleted: true }
+      await client.query('BEGIN');
+
+      const result = await client.query(
+        `UPDATE app.notifications 
+         SET is_deleted = true, updated_at = NOW()
+         WHERE user_id = $1 AND is_deleted = false`,
+        [userId]
       );
+
+      await client.query('COMMIT');
 
       const io = getIO();
       if (io) {
         io.to(`user-${userId}`).emit('all_notifications_deleted', {
-          count: result.modifiedCount,
+          count: result.rowCount,
           unreadCount: 0
         });
       }
 
       return result;
     } catch (error) {
-      console.error('Error deleting all notifications:', error);
+      await client.query('ROLLBACK');
+      console.error('❌ Error deleting all notifications:', error);
       throw error;
+    } finally {
+      client.release();
     }
   }
 
-  // إنشاء إشعارات مخصصة للأحداث المختلفة
+  /**
+   * إنشاء إشعار حجز
+   * @param {string} userId - معرف المستخدم
+   * @param {Object} bookingData - بيانات الحجز
+   * @returns {Promise<Object>} الإشعار المنشأ
+   */
   async createBookingNotification(userId, bookingData) {
     return this.create(userId, {
       title: 'تأكيد الحجز',
@@ -247,6 +418,12 @@ class NotificationService {
     });
   }
 
+  /**
+   * إنشاء إشعار دفع
+   * @param {string} userId - معرف المستخدم
+   * @param {Object} paymentData - بيانات الدفع
+   * @returns {Promise<Object>} الإشعار المنشأ
+   */
   async createPaymentNotification(userId, paymentData) {
     return this.create(userId, {
       title: 'عملية دفع ناجحة',
@@ -261,6 +438,12 @@ class NotificationService {
     });
   }
 
+  /**
+   * إنشاء إشعار محادثة
+   * @param {string} userId - معرف المستخدم
+   * @param {Object} chatData - بيانات المحادثة
+   * @returns {Promise<Object>} الإشعار المنشأ
+   */
   async createChatNotification(userId, chatData) {
     return this.create(userId, {
       title: 'رسالة جديدة',
@@ -275,6 +458,12 @@ class NotificationService {
     });
   }
 
+  /**
+   * إنشاء إشعار ترقية
+   * @param {string} userId - معرف المستخدم
+   * @param {Object} upgradeData - بيانات الترقية
+   * @returns {Promise<Object>} الإشعار المنشأ
+   */
   async createUpgradeNotification(userId, upgradeData) {
     return this.create(userId, {
       title: 'طلب ترقية',
@@ -289,6 +478,12 @@ class NotificationService {
     });
   }
 
+  /**
+   * إنشاء إشعار مرشد
+   * @param {string} userId - معرف المستخدم
+   * @param {Object} guideData - بيانات المرشد
+   * @returns {Promise<Object>} الإشعار المنشأ
+   */
   async createGuideNotification(userId, guideData) {
     return this.create(userId, {
       title: 'تحديث للمرشدين',
@@ -300,6 +495,12 @@ class NotificationService {
     });
   }
 
+  /**
+   * إنشاء إشعار نظام
+   * @param {string} userId - معرف المستخدم
+   * @param {Object} systemData - بيانات النظام
+   * @returns {Promise<Object>} الإشعار المنشأ
+   */
   async createSystemNotification(userId, systemData) {
     return this.create(userId, {
       title: systemData.title || 'إشعار النظام',
