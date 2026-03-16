@@ -1,15 +1,13 @@
-// server/src/controllers/chatController.js
-import Chat from '../models/Chat.js';
-import Message from '../models/Message.js';
+// server/src/controllers/chat.controller.js
+import { pool } from '../config/database.js';
 import chatService from '../services/chatService.js';
-import User from '../models/User.js';
 
 /**
  * الحصول على محادثات المستخدم
  */
 export const getUserConversations = async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = req.user.id; // ✅ PostgreSQL uses 'id' not '_id'
     const conversations = await chatService.getUserConversations(userId);
 
     res.json({
@@ -31,7 +29,7 @@ export const getUserConversations = async (req, res) => {
  */
 export const createConversation = async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = req.user.id;
     const { participantId, type = 'direct', bookingId } = req.body;
 
     const participants = [userId, participantId];
@@ -57,7 +55,7 @@ export const createConversation = async (req, res) => {
  */
 export const startSupportChat = async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = req.user.id;
     const { subject } = req.body;
 
     const chat = await chatService.createSupportChat(userId, subject);
@@ -82,42 +80,74 @@ export const startSupportChat = async (req, res) => {
  */
 export const getConversationMessages = async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = req.user.id;
     const { conversationId } = req.params;
     const { page = 1, limit = 50 } = req.query;
 
-    // التحقق من أن المستخدم مشارك في المحادثة
-    const chat = await Chat.findById(conversationId);
-    if (!chat || !chat.participants.includes(userId)) {
+    // التحقق من أن المستخدم مشارك في المحادثة (باستخدام PostgreSQL)
+    const chatResult = await pool.query(
+      'SELECT * FROM app.chats WHERE chat_id = $1 AND $2 = ANY(participants)',
+      [conversationId, userId]
+    );
+    
+    if (chatResult.rows.length === 0) {
       return res.status(403).json({
         success: false,
         message: 'غير مصرح لك بعرض هذه المحادثة'
       });
     }
 
-    const messages = await Message.find({ chatId: conversationId })
-      .populate('senderId', 'fullName email avatar type')
-      .populate('replyTo')
-      .sort({ createdAt: -1 })
-      .limit(parseInt(limit))
-      .skip((parseInt(page) - 1) * parseInt(limit));
+    // الحصول على الرسائل مع التصفح
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+    
+    const messagesResult = await pool.query(
+      `SELECT m.*,
+              json_build_object(
+                'id', u.id,
+                'fullName', u.full_name,
+                'email', u.email,
+                'avatar', u.avatar,
+                'type', u.type
+              ) as sender,
+              json_build_object(
+                'id', rm.id,
+                'message_id', rm.message_id,
+                'content', rm.content,
+                'sender_id', rm.sender_id
+              ) as reply_to
+       FROM app.messages m
+       JOIN app.users u ON u.id = m.sender_id
+       LEFT JOIN app.messages rm ON rm.id = m.reply_to_id
+       WHERE m.chat_id = $1 AND m.is_deleted = false
+       ORDER BY m.created_at DESC
+       LIMIT $2 OFFSET $3`,
+      [conversationId, parseInt(limit), offset]
+    );
 
-    const total = await Message.countDocuments({ chatId: conversationId });
+    const totalResult = await pool.query(
+      'SELECT COUNT(*) FROM app.messages WHERE chat_id = $1 AND is_deleted = false',
+      [conversationId]
+    );
 
-    // تحديث حالة القراءة
-    await Message.updateMany(
-      {
-        chatId: conversationId,
-        'readBy.userId': { $ne: userId }
-      },
-      {
-        $push: { readBy: { userId, readAt: new Date() } }
-      }
+    const total = parseInt(totalResult.rows[0].count);
+
+    // تحديث حالة القراءة (باستخدام PostgreSQL)
+    await pool.query(
+      `UPDATE app.messages 
+       SET read_by = read_by || jsonb_build_array(
+         jsonb_build_object('userId', $1, 'readAt', NOW())
+       )
+       WHERE chat_id = $2 
+         AND NOT EXISTS (
+           SELECT 1 FROM jsonb_array_elements(read_by) AS rb 
+           WHERE rb->>'userId' = $1::text
+         )`,
+      [userId, conversationId]
     );
 
     res.json({
       success: true,
-      messages: messages.reverse(),
+      messages: messagesResult.rows.reverse(),
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -140,7 +170,7 @@ export const getConversationMessages = async (req, res) => {
  */
 export const sendTextMessage = async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = req.user.id;
     const { chatId, content, replyTo } = req.body;
 
     if (!content || !content.trim()) {
@@ -178,7 +208,7 @@ export const sendTextMessage = async (req, res) => {
  */
 export const markAsRead = async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = req.user.id;
     const { messageId } = req.params;
 
     const result = await chatService.markAsRead(messageId, userId);
@@ -203,7 +233,7 @@ export const markAsRead = async (req, res) => {
  */
 export const deleteMessage = async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = req.user.id;
     const { messageId } = req.params;
     const { forEveryone = false } = req.body;
 
@@ -229,7 +259,7 @@ export const deleteMessage = async (req, res) => {
  */
 export const addReaction = async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = req.user.id;
     const { messageId } = req.params;
     const { emoji } = req.body;
 
@@ -255,7 +285,7 @@ export const addReaction = async (req, res) => {
  */
 export const updateChatSettings = async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = req.user.id;
     const { chatId } = req.params;
     const settings = req.body;
 
@@ -274,4 +304,17 @@ export const updateChatSettings = async (req, res) => {
       message: error.message || 'حدث خطأ في تحديث الإعدادات'
     });
   }
+};
+
+// ✅ تصدير جميع الدوال (مفردة)
+export default {
+  getUserConversations,
+  createConversation,
+  startSupportChat,
+  getConversationMessages,
+  sendTextMessage,
+  markAsRead,
+  deleteMessage,
+  addReaction,
+  updateChatSettings
 };
