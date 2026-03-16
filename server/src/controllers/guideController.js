@@ -16,9 +16,9 @@ export const requestUpgrade = async (req, res) => {
     const { fullName, civilId, licenseNumber, phone, experience, specialties } = req.body;
     const files = req.files;
 
-    // التحقق من عدم وجود طلب سابق
+    // ✅ التحقق من عدم وجود طلب سابق - باستخدام guide_upgrade_requests
     const existingRequest = await pool.query(
-      `SELECT id FROM app.guide_registrations 
+      `SELECT id FROM app.guide_upgrade_requests 
        WHERE user_id = $1 AND status = 'pending'`,
       [userId]
     );
@@ -41,9 +41,9 @@ export const requestUpgrade = async (req, res) => {
       }
     }
 
-    // إنشاء طلب الترقية
+    // ✅ إنشاء طلب الترقية - باستخدام guide_upgrade_requests
     const result = await pool.query(
-      `INSERT INTO app.guide_registrations (
+      `INSERT INTO app.guide_upgrade_requests (
         user_id, full_name, civil_id, license_number, phone,
         experience, specialties, documents, status, created_at
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
@@ -119,9 +119,9 @@ export const registerGuide = async (req, res) => {
       });
     }
 
-    // Check if already has pending registration
+    // ✅ Check if already has pending registration - باستخدام guide_upgrade_requests
     const existingRegistration = await pool.query(
-      `SELECT id FROM app.guide_registrations 
+      `SELECT id FROM app.guide_upgrade_requests 
        WHERE (civil_id = $1 OR license_number = $2 OR email = $3) AND status = 'pending'`,
       [civilId, licenseNumber, email]
     );
@@ -133,9 +133,9 @@ export const registerGuide = async (req, res) => {
       });
     }
 
-    // Create new registration
+    // ✅ Create new registration - باستخدام guide_upgrade_requests
     const registrationResult = await pool.query(
-      `INSERT INTO app.guide_registrations (
+      `INSERT INTO app.guide_upgrade_requests (
         full_name, civil_id, license_number, email, phone, experience,
         specialties, ip_address, user_agent, status, created_at
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
@@ -496,9 +496,9 @@ export const approveGuideRegistration = async (req, res) => {
     const { registrationId } = req.params;
     const adminId = req.user.id;
 
-    // Get registration details
+    // ✅ Get registration details - باستخدام guide_upgrade_requests
     const registrationResult = await pool.query(
-      'SELECT * FROM app.guide_registrations WHERE id = $1 AND status = $2',
+      'SELECT * FROM app.guide_upgrade_requests WHERE id = $1 AND status = $2',
       [registrationId, 'pending']
     );
 
@@ -542,9 +542,9 @@ export const approveGuideRegistration = async (req, res) => {
 
     const newGuideId = guideResult.rows[0].id;
 
-    // Update registration status
+    // ✅ Update registration status - باستخدام guide_upgrade_requests
     await pool.query(
-      `UPDATE app.guide_registrations 
+      `UPDATE app.guide_upgrade_requests 
        SET status = 'approved', processed_by = $1, processed_at = NOW()
        WHERE id = $2`,
       [adminId, registrationId]
@@ -586,8 +586,9 @@ export const rejectGuideRegistration = async (req, res) => {
     const { reason } = req.body;
     const adminId = req.user.id;
 
+    // ✅ باستخدام guide_upgrade_requests
     const result = await pool.query(
-      `UPDATE app.guide_registrations 
+      `UPDATE app.guide_upgrade_requests 
        SET status = 'rejected', 
            rejection_reason = $1,
            processed_by = $2, 
@@ -634,10 +635,11 @@ export const rejectGuideRegistration = async (req, res) => {
 // ============================================
 export const getPendingRegistrations = async (req, res) => {
   try {
+    // ✅ باستخدام guide_upgrade_requests
     const registrations = await pool.query(
       `SELECT id, full_name, email, phone, civil_id, license_number,
               experience, specialties, created_at
-       FROM app.guide_registrations
+       FROM app.guide_upgrade_requests
        WHERE status = 'pending'
        ORDER BY created_at DESC`
     );
