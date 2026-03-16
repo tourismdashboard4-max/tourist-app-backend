@@ -2,9 +2,13 @@
 // UPLOAD MIDDLEWARE
 // رفع الملفات (الصور والمستندات)
 // ============================================
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // ============================================
 // التأكد من وجود مجلد uploads
@@ -62,23 +66,22 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
+// إنشاء كائن multer الأساسي
+const upload = multer({
+  storage,
+  fileFilter,
+  limits: { fileSize: 5 * 1024 * 1024 } // 5MB حد أقصى افتراضي
+});
+
 // ============================================
 // رفع صورة واحدة
 // ============================================
-const uploadSingleImage = multer({
-  storage: storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
-  fileFilter: fileFilter
-}).single('image');
+const uploadSingleImage = upload.single('image');
 
 // ============================================
 // رفع عدة صور
 // ============================================
-const uploadMultipleImages = multer({
-  storage: storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB لكل صورة
-  fileFilter: fileFilter
-}).array('images', 5); // حد أقصى 5 صور
+const uploadMultipleImages = upload.array('images', 5); // حد أقصى 5 صور
 
 // ============================================
 // رفع مستند
@@ -105,7 +108,7 @@ const uploadAvatar = multer({
 }).single('avatar');
 
 // ============================================
-// رفع وثيقة الرخصة
+// رفع وثيقة الرخصة (لطلب الترقية)
 // ============================================
 const uploadLicense = multer({
   storage: storage,
@@ -161,9 +164,22 @@ const deleteFile = (filePath) => {
 };
 
 // ============================================
-// تصدير الدوال
+// ✅ تصدير الدوال (ES Modules)
 // ============================================
-module.exports = {
+export {
+  upload, // ✅ التصدير المطلوب لـ guideRoutes.js
+  uploadSingleImage,
+  uploadMultipleImages,
+  uploadDocument,
+  uploadAvatar,
+  uploadLicense,
+  handleUploadError,
+  deleteFile
+};
+
+// ✅ تصدير افتراضي أيضاً
+export default {
+  upload,
   uploadSingleImage,
   uploadMultipleImages,
   uploadDocument,
