@@ -1,6 +1,6 @@
-const Wallet = require('../models/Wallet');
-const Transaction = require('../models/Transaction');
-const { v4: uuidv4 } = require('uuid');
+// server/src/services/authWalletService.js
+import { pool } from '../config/database.js';
+import { v4 as uuidv4 } from 'uuid';
 
 class AuthWalletService {
   
@@ -27,11 +27,20 @@ class AuthWalletService {
    * @returns {Promise<Object>} المحفظة المنشأة
    */
   async createWalletForNewUser(userId, userType, userData = {}) {
+    const client = await pool.connect();
+    
     try {
+      await client.query('BEGIN');
+
       // التحقق من عدم وجود محفظة مسبقة
-      const existingWallet = await Wallet.findOne({ userId });
-      if (existingWallet) {
-        return existingWallet;
+      const existingWallet = await client.query(
+        'SELECT * FROM app.wallets WHERE user_id = $1',
+        [userId]
+      );
+      
+      if (existingWallet.rows.length > 0) {
+        await client.query('COMMIT');
+        return existingWallet.rows[0];
       }
 
       // توليد رقم المحفظة
@@ -41,57 +50,62 @@ class AuthWalletService {
       const limits = this.getUserLimits(userType);
 
       // إنشاء المحفظة
-      const wallet = new Wallet({
-        walletNumber,
-        userId,
-        userType: userType === 'guide' ? 'guide' : 'tourist',
-        balance: 0,
-        frozenBalance: 0,
-        pendingBalance: 0,
-        currency: 'SAR',
-        status: 'active',
-        
-        // حدود المعاملات
-        dailyLimit: limits.dailyLimit,
-        monthlyLimit: limits.monthlyLimit,
-        
-        // إحصائيات أولية
-        stats: {
-          totalDeposits: 0,
-          totalWithdrawals: 0,
-          totalBookings: 0,
-          totalFees: 0,
-          lastActivity: new Date()
-        },
-        
-        // برنامج افتراضي للمرشدين
-        program: userType === 'guide' ? {
-          type: 'basic',
-          startDate: new Date(),
-          nextBillingDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-          autoRenew: true
-        } : undefined,
+      const walletResult = await client.query(
+        `INSERT INTO app.wallets (
+          wallet_number, user_id, user_type, balance, frozen_balance,
+          pending_balance, currency, status, daily_limit, monthly_limit,
+          stats, program, metadata, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
+        RETURNING *`,
+        [
+          walletNumber,
+          userId,
+          userType === 'guide' ? 'guide' : 'tourist',
+          0, // balance
+          0, // frozen_balance
+          0, // pending_balance
+          'SAR',
+          'active',
+          limits.dailyLimit,
+          limits.monthlyLimit,
+          JSON.stringify({
+            totalDeposits: 0,
+            totalWithdrawals: 0,
+            totalBookings: 0,
+            totalFees: 0,
+            lastActivity: new Date()
+          }),
+          userType === 'guide' ? JSON.stringify({
+            type: 'basic',
+            startDate: new Date(),
+            nextBillingDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+            autoRenew: true
+          }) : null,
+          JSON.stringify({
+            createdFrom: 'registration',
+            userEmail: userData.email,
+            userName: userData.name,
+            createdAt: new Date()
+          })
+        ]
+      );
 
-        // بيانات إضافية
-        metadata: {
-          createdFrom: 'registration',
-          userEmail: userData.email,
-          userName: userData.name,
-          createdAt: new Date()
-        }
-      });
-
-      await wallet.save();
+      const wallet = walletResult.rows[0];
 
       // تسجيل معاملة إنشاء المحفظة
-      await this.logWalletCreation(wallet, userData);
+      await this.logWalletCreation(client, wallet, userData);
+
+      await client.query('COMMIT');
 
       console.log(`✅ تم إنشاء محفظة جديدة: ${walletNumber} للمستخدم ${userId}`);
       
       return wallet;
     } catch (error) {
+      await client.query('ROLLBACK');
       console.error('❌ خطأ في إنشاء المحفظة:', error);
       throw error;
+    } finally {
+      client.release();
     }
   }
 
@@ -120,29 +134,36 @@ class AuthWalletService {
 
   /**
    * تسجيل معاملة إنشاء المحفظة
+   * @param {Object} client - عميل PostgreSQL للـ transaction
    * @param {Object} wallet - المحفظة
    * @param {Object} userData - بيانات المستخدم
    */
-  async logWalletCreation(wallet, userData) {
-    const transaction = new Transaction({
-      transactionId: `TXN-${Date.now()}-${uuidv4().slice(0, 8)}`,
-      walletId: wallet._id,
-      userId: wallet.userId,
-      type: 'SYSTEM',
-      amount: 0,
-      netAmount: 0,
-      status: 'COMPLETED',
-      description: 'تم إنشاء المحفظة بنجاح',
-      balanceAfter: 0,
-      metadata: {
-        walletNumber: wallet.walletNumber,
-        userType: wallet.userType,
-        userName: userData.name,
-        event: 'WALLET_CREATION'
-      }
-    });
-
-    await transaction.save();
+  async logWalletCreation(client, wallet, userData) {
+    const transactionId = `TXN-${Date.now()}-${uuidv4().slice(0, 8)}`;
+    
+    await client.query(
+      `INSERT INTO app.transactions (
+        transaction_id, wallet_id, user_id, type, amount, net_amount,
+        status, description, balance_after, metadata, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
+      [
+        transactionId,
+        wallet.id,
+        wallet.user_id,
+        'SYSTEM',
+        0,
+        0,
+        'COMPLETED',
+        'تم إنشاء المحفظة بنجاح',
+        0,
+        JSON.stringify({
+          walletNumber: wallet.wallet_number,
+          userType: wallet.user_type,
+          userName: userData.name,
+          event: 'WALLET_CREATION'
+        })
+      ]
+    );
   }
 
   /**
@@ -150,8 +171,12 @@ class AuthWalletService {
    * @returns {Promise<Object>} نتائج الإنشاء
    */
   async createWalletsForExistingUsers() {
-    const User = require('../models/User');
-    const users = await User.find({});
+    // جلب جميع المستخدمين من PostgreSQL
+    const usersResult = await pool.query(
+      'SELECT id, email, full_name as name, type FROM app.users'
+    );
+    
+    const users = usersResult.rows;
     
     const results = {
       total: users.length,
@@ -162,20 +187,24 @@ class AuthWalletService {
 
     for (const user of users) {
       try {
-        const existingWallet = await Wallet.findOne({ userId: user._id });
+        // التحقق من وجود محفظة
+        const existingWallet = await pool.query(
+          'SELECT * FROM app.wallets WHERE user_id = $1',
+          [user.id]
+        );
         
-        if (!existingWallet) {
+        if (existingWallet.rows.length === 0) {
           await this.createWalletForNewUser(
-            user._id, 
+            user.id, 
             user.type,
-            { email: user.email, name: user.fullName }
+            { email: user.email, name: user.name }
           );
           results.created++;
         } else {
           results.skipped++;
         }
       } catch (error) {
-        console.error(`فشل إنشاء محفظة للمستخدم ${user._id}:`, error);
+        console.error(`فشل إنشاء محفظة للمستخدم ${user.id}:`, error);
         results.failed++;
       }
     }
@@ -189,11 +218,58 @@ class AuthWalletService {
    * @returns {Promise<Object>} المحفظة مع بيانات المستخدم
    */
   async getWalletWithUser(userId) {
-    const wallet = await Wallet.findOne({ userId })
-      .populate('userId', 'fullName email phone avatar');
+    const result = await pool.query(
+      `SELECT 
+        w.*,
+        json_build_object(
+          'id', u.id,
+          'fullName', u.full_name,
+          'email', u.email,
+          'phone', u.phone,
+          'avatar', u.avatar
+        ) as user
+      FROM app.wallets w
+      JOIN app.users u ON u.id = w.user_id
+      WHERE w.user_id = $1`,
+      [userId]
+    );
     
-    return wallet;
+    return result.rows[0] || null;
+  }
+
+  /**
+   * الحصول على رصيد المحفظة
+   * @param {string} userId - معرف المستخدم
+   * @returns {Promise<Object>} معلومات الرصيد
+   */
+  async getWalletBalance(userId) {
+    const result = await pool.query(
+      `SELECT 
+        balance, frozen_balance, pending_balance, currency,
+        daily_limit, monthly_limit
+      FROM app.wallets 
+      WHERE user_id = $1`,
+      [userId]
+    );
+    
+    if (result.rows.length === 0) {
+      return null;
+    }
+    
+    const wallet = result.rows[0];
+    return {
+      available: parseFloat(wallet.balance) - parseFloat(wallet.frozen_balance),
+      balance: parseFloat(wallet.balance),
+      frozen: parseFloat(wallet.frozen_balance),
+      pending: parseFloat(wallet.pending_balance),
+      currency: wallet.currency,
+      limits: {
+        daily: parseFloat(wallet.daily_limit),
+        monthly: parseFloat(wallet.monthly_limit)
+      }
+    };
   }
 }
 
-module.exports = new AuthWalletService();
+// تصدير الكلاس
+export default new AuthWalletService();
