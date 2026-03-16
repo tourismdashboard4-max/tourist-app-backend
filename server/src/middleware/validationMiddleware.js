@@ -2,10 +2,28 @@
 // VALIDATION MIDDLEWARE
 // التحقق من صحة البيانات
 // ============================================
-const { body, param, query, validationResult } = require('express-validator');
+import { body, param, query, validationResult } from 'express-validator';
 
 // ============================================
-// دالة التحقق من النتائج
+// ✅ دالة التحقق من النتائج (التي يبحث عنها programRoutes.js)
+// ============================================
+export const validate = (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      message: 'خطأ في صحة البيانات',
+      errors: errors.array().map(err => ({
+        field: err.path || err.param,
+        message: err.msg
+      }))
+    });
+  }
+  next();
+};
+
+// ============================================
+// دالة التحقق من النتائج (الاسم القديم للتوافق)
 // ============================================
 const checkValidation = (req, res, next) => {
   const errors = validationResult(req);
@@ -14,7 +32,7 @@ const checkValidation = (req, res, next) => {
       success: false,
       message: 'خطأ في صحة البيانات',
       errors: errors.array().map(err => ({
-        field: err.path,
+        field: err.path || err.param,
         message: err.msg
       }))
     });
@@ -25,7 +43,7 @@ const checkValidation = (req, res, next) => {
 // ============================================
 // التحقق من تسجيل المرشد
 // ============================================
-const validateGuideRegistration = [
+export const validateGuideRegistration = [
   body('fullName')
     .notEmpty().withMessage('الاسم الكامل مطلوب')
     .isLength({ min: 3, max: 50 }).withMessage('الاسم يجب أن يكون بين 3 و 50 حرف'),
@@ -59,13 +77,13 @@ const validateGuideRegistration = [
     .optional()
     .isURL().withMessage('رابط الموقع غير صحيح'),
   
-  checkValidation
+  validate // ✅ استخدام validate بدلاً من checkValidation
 ];
 
 // ============================================
 // التحقق من تسجيل دخول المرشد
 // ============================================
-const validateGuideLogin = [
+export const validateGuideLogin = [
   body('licenseNumber')
     .notEmpty().withMessage('رقم الرخصة مطلوب'),
   
@@ -76,13 +94,13 @@ const validateGuideLogin = [
   body('password')
     .notEmpty().withMessage('كلمة المرور مطلوبة'),
   
-  checkValidation
+  validate // ✅ استخدام validate
 ];
 
 // ============================================
 // التحقق من تحديث الملف الشخصي
 // ============================================
-const validateProfileUpdate = [
+export const validateProfileUpdate = [
   body('phone')
     .optional()
     .matches(/^(05|\+9665)[0-9]{8}$/).withMessage('رقم الجوال غير صحيح'),
@@ -99,13 +117,13 @@ const validateProfileUpdate = [
     .optional()
     .isURL().withMessage('رابط الموقع غير صحيح'),
   
-  checkValidation
+  validate // ✅ استخدام validate
 ];
 
 // ============================================
 // التحقق من تغيير كلمة المرور
 // ============================================
-const validatePasswordChange = [
+export const validatePasswordChange = [
   body('currentPassword')
     .notEmpty().withMessage('كلمة المرور الحالية مطلوبة'),
   
@@ -114,13 +132,13 @@ const validatePasswordChange = [
     .isLength({ min: 8 }).withMessage('كلمة المرور يجب أن تكون 8 أحرف على الأقل')
     .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/).withMessage('كلمة المرور يجب أن تحتوي على حرف كبير وحرف صغير ورقم'),
   
-  checkValidation
+  validate // ✅ استخدام validate
 ];
 
 // ============================================
 // التحقق من إعادة تعيين كلمة المرور
 // ============================================
-const validatePasswordReset = [
+export const validatePasswordReset = [
   body('token')
     .notEmpty().withMessage('رمز إعادة التعيين مطلوب'),
   
@@ -128,13 +146,13 @@ const validatePasswordReset = [
     .notEmpty().withMessage('كلمة المرور الجديدة مطلوبة')
     .isLength({ min: 8 }).withMessage('كلمة المرور يجب أن تكون 8 أحرف على الأقل'),
   
-  checkValidation
+  validate // ✅ استخدام validate
 ];
 
 // ============================================
 // التحقق من إنشاء برنامج سياحي
 // ============================================
-const validateProgramCreation = [
+export const validateProgramCreation = [
   body('name')
     .notEmpty().withMessage('اسم البرنامج مطلوب')
     .isLength({ min: 3, max: 100 }).withMessage('اسم البرنامج يجب أن يكون بين 3 و 100 حرف'),
@@ -157,32 +175,33 @@ const validateProgramCreation = [
     .optional()
     .isInt({ min: 1, max: 100 }).withMessage('عدد المشاركين يجب أن يكون بين 1 و 100'),
   
-  checkValidation
+  validate // ✅ استخدام validate
 ];
 
 // ============================================
-// التحقق من معرف (ID)
+// التحقق من معرف (ID) - ملاحظة: PostgreSQL تستخدم أرقام وليس MongoID
 // ============================================
-const validateId = [
+export const validateId = [
   param('id')
-    .isMongoId().withMessage('معرف غير صالح'),
-  checkValidation
+    .isInt({ min: 1 }).withMessage('معرف غير صالح - يجب أن يكون رقماً صحيحاً موجباً'),
+  validate
 ];
 
 // ============================================
 // التحقق من البريد الإلكتروني
 // ============================================
-const validateEmail = [
+export const validateEmail = [
   body('email')
     .notEmpty().withMessage('البريد الإلكتروني مطلوب')
     .isEmail().withMessage('البريد الإلكتروني غير صحيح'),
-  checkValidation
+  validate
 ];
 
 // ============================================
-// تصدير جميع دوال التحقق
+// تصدير جميع دوال التحقق (بالإضافة إلى validate)
 // ============================================
-module.exports = {
+export default {
+  validate, // ✅ تمت إضافة validate
   validateGuideRegistration,
   validateGuideLogin,
   validateProfileUpdate,
