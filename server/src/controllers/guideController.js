@@ -1,16 +1,16 @@
-const Guide = require('../models/Guide');
-const GuideRegistration = require('../models/GuideRegistration');
-const Program = require('../models/Program');
-const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
-const { validationResult } = require('express-validator');
+// server/src/controllers/guideController.js
+import { pool } from '../config/database.js';
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
+import { validationResult } from 'express-validator';
+import notificationService from '../services/notificationService.js';
 
 // ============================================
 // @desc    Register a new guide (pending approval)
 // @route   POST /api/guides/register
 // @access  Public
 // ============================================
-const registerGuide = async (req, res) => {
+export const registerGuide = async (req, res) => {
   try {
     // Check for validation errors
     const errors = validationResult(req);
@@ -21,14 +21,16 @@ const registerGuide = async (req, res) => {
       });
     }
 
-    const { civilId, licenseNumber, email } = req.body;
+    const { civilId, licenseNumber, email, fullName, phone, experience, specialties } = req.body;
 
     // Check if already exists in approved guides
-    const existingGuide = await Guide.findOne({
-      $or: [{ civilId }, { licenseNumber }, { email }]
-    });
+    const existingGuide = await pool.query(
+      `SELECT id FROM app.guides 
+       WHERE civil_id = $1 OR license_number = $2 OR email = $3`,
+      [civilId, licenseNumber, email]
+    );
 
-    if (existingGuide) {
+    if (existingGuide.rows.length > 0) {
       return res.status(400).json({
         success: false,
         message: 'هذا المرشد مسجل بالفعل في النظام'
@@ -36,12 +38,13 @@ const registerGuide = async (req, res) => {
     }
 
     // Check if already has pending registration
-    const existingRegistration = await GuideRegistration.findOne({
-      $or: [{ civilId }, { licenseNumber }, { email }],
-      status: 'pending'
-    });
+    const existingRegistration = await pool.query(
+      `SELECT id FROM app.guide_registrations 
+       WHERE (civil_id = $1 OR license_number = $2 OR email = $3) AND status = 'pending'`,
+      [civilId, licenseNumber, email]
+    );
 
-    if (existingRegistration) {
+    if (existingRegistration.rows.length > 0) {
       return res.status(400).json({
         success: false,
         message: 'لديك طلب تسجيل قيد المراجعة بالفعل'
@@ -49,29 +52,52 @@ const registerGuide = async (req, res) => {
     }
 
     // Create new registration
-    const registration = new GuideRegistration({
-      ...req.body,
-      ipAddress: req.ip,
-      userAgent: req.get('user-agent')
+    const registrationResult = await pool.query(
+      `INSERT INTO app.guide_registrations (
+        full_name, civil_id, license_number, email, phone, experience,
+        specialties, ip_address, user_agent, status, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+      RETURNING id, status`,
+      [
+        fullName,
+        civilId,
+        licenseNumber,
+        email,
+        phone,
+        experience,
+        specialties || null,
+        req.ip,
+        req.get('user-agent'),
+        'pending'
+      ]
+    );
+
+    const registration = registrationResult.rows[0];
+
+    // إرسال إشعار للمشرفين داخل التطبيق
+    await notificationService.sendToAdmins({
+      type: 'NEW_GUIDE_REQUEST',
+      title: 'طلب تسجيل مرشد جديد',
+      message: `تم استلام طلب تسجيل جديد من ${fullName}`,
+      data: {
+        registrationId: registration.id,
+        guideName: fullName,
+        email: email
+      }
     });
-
-    await registration.save();
-
-    // TODO: Send email notification to admin
 
     res.status(201).json({
       success: true,
       message: 'تم إرسال طلب التسجيل بنجاح، سيتم مراجعته من قبل الإدارة خلال 24 ساعة',
-      requestId: registration._id,
+      requestId: registration.id,
       status: registration.status
     });
 
   } catch (error) {
-    console.error('Registration error:', error);
+    console.error('❌ Registration error:', error);
     res.status(500).json({
       success: false,
-      message: 'حدث خطأ في التسجيل',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      message: 'حدث خطأ في التسجيل'
     });
   }
 };
@@ -81,7 +107,7 @@ const registerGuide = async (req, res) => {
 // @route   POST /api/guides/login
 // @access  Public
 // ============================================
-const loginGuide = async (req, res) => {
+export const loginGuide = async (req, res) => {
   try {
     const { licenseNumber, email, password } = req.body;
 
@@ -93,22 +119,28 @@ const loginGuide = async (req, res) => {
       });
     }
 
-    // Find guide with password field
-    const guide = await Guide.findOne({ 
-      licenseNumber, 
-      email,
-      isActive: true 
-    }).select('+password');
+    // Find guide
+    const guideResult = await pool.query(
+      `SELECT id, full_name, email, license_number, phone, rating, reviews,
+              programs, verified, avatar, role, experience, specialties,
+              program_location, program_location_name, password_hash,
+              created_at, last_login
+       FROM app.guides 
+       WHERE license_number = $1 AND email = $2 AND is_active = true`,
+      [licenseNumber, email]
+    );
 
-    if (!guide) {
+    if (guideResult.rows.length === 0) {
       return res.status(401).json({
         success: false,
         message: 'بيانات الدخول غير صحيحة'
       });
     }
 
+    const guide = guideResult.rows[0];
+
     // Check password
-    const isPasswordMatch = await guide.comparePassword(password);
+    const isPasswordMatch = await bcrypt.compare(password, guide.password_hash);
 
     if (!isPasswordMatch) {
       return res.status(401).json({
@@ -118,13 +150,15 @@ const loginGuide = async (req, res) => {
     }
 
     // Update last login
-    guide.lastLogin = Date.now();
-    await guide.save({ validateBeforeSave: false });
+    await pool.query(
+      'UPDATE app.guides SET last_login = NOW() WHERE id = $1',
+      [guide.id]
+    );
 
     // Generate JWT token
     const token = jwt.sign(
       { 
-        id: guide._id, 
+        id: guide.id, 
         type: 'guide',
         role: guide.role 
       },
@@ -132,38 +166,30 @@ const loginGuide = async (req, res) => {
       { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
     );
 
-    // Generate refresh token
-    const refreshToken = jwt.sign(
-      { id: guide._id },
-      process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '30d' }
-    );
-
     res.json({
       success: true,
       user: {
-        id: guide._id,
-        name: guide.fullName,
+        id: guide.id,
+        name: guide.full_name,
         email: guide.email,
-        licenseNumber: guide.licenseNumber,
+        licenseNumber: guide.license_number,
         phone: guide.phone,
-        rating: guide.rating,
-        reviews: guide.reviews,
-        programs: guide.programs,
+        rating: parseFloat(guide.rating) || 0,
+        reviews: guide.reviews || 0,
+        programs: guide.programs || 0,
         verified: guide.verified,
         avatar: guide.avatar,
         role: guide.role,
         experience: guide.experience,
         specialties: guide.specialties,
-        programLocation: guide.programLocation,
-        programLocationName: guide.programLocationName
+        programLocation: guide.program_location,
+        programLocationName: guide.program_location_name
       },
-      token,
-      refreshToken
+      token
     });
 
   } catch (error) {
-    console.error('Login error:', error);
+    console.error('❌ Login error:', error);
     res.status(500).json({
       success: false,
       message: 'حدث خطأ في تسجيل الدخول'
@@ -176,41 +202,50 @@ const loginGuide = async (req, res) => {
 // @route   GET /api/guides/profile
 // @access  Private
 // ============================================
-const getGuideProfile = async (req, res) => {
+export const getGuideProfile = async (req, res) => {
   try {
-    const guide = await Guide.findById(req.user.id);
+    const guideResult = await pool.query(
+      `SELECT id, full_name, email, license_number, phone, rating, reviews,
+              programs, verified, avatar, experience, specialties,
+              program_location, program_location_name, created_at, last_login
+       FROM app.guides 
+       WHERE id = $1`,
+      [req.user.id]
+    );
 
-    if (!guide) {
+    if (guideResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
         message: 'المرشد غير موجود'
       });
     }
 
+    const guide = guideResult.rows[0];
+
     res.json({
       success: true,
       guide: {
-        id: guide._id,
-        fullName: guide.fullName,
+        id: guide.id,
+        fullName: guide.full_name,
         email: guide.email,
-        licenseNumber: guide.licenseNumber,
+        licenseNumber: guide.license_number,
         phone: guide.phone,
-        rating: guide.rating,
-        reviews: guide.reviews,
-        programs: guide.programs,
+        rating: parseFloat(guide.rating) || 0,
+        reviews: guide.reviews || 0,
+        programs: guide.programs || 0,
         verified: guide.verified,
         avatar: guide.avatar,
         experience: guide.experience,
         specialties: guide.specialties,
-        programLocation: guide.programLocation,
-        programLocationName: guide.programLocationName,
-        createdAt: guide.createdAt,
-        lastLogin: guide.lastLogin
+        programLocation: guide.program_location,
+        programLocationName: guide.program_location_name,
+        createdAt: guide.created_at,
+        lastLogin: guide.last_login
       }
     });
 
   } catch (error) {
-    console.error('Get profile error:', error);
+    console.error('❌ Get profile error:', error);
     res.status(500).json({
       success: false,
       message: 'حدث خطأ في تحميل الملف الشخصي'
@@ -223,191 +258,92 @@ const getGuideProfile = async (req, res) => {
 // @route   PUT /api/guides/profile
 // @access  Private
 // ============================================
-const updateGuideProfile = async (req, res) => {
+export const updateGuideProfile = async (req, res) => {
   try {
     const { phone, experience, specialties, programLocation, programLocationName } = req.body;
 
-    const guide = await Guide.findById(req.user.id);
+    // Build update query dynamically
+    const updates = [];
+    const values = [];
+    let paramIndex = 1;
 
-    if (!guide) {
+    if (phone) {
+      updates.push(`phone = $${paramIndex}`);
+      values.push(phone);
+      paramIndex++;
+    }
+
+    if (experience) {
+      updates.push(`experience = $${paramIndex}`);
+      values.push(experience);
+      paramIndex++;
+    }
+
+    if (specialties) {
+      updates.push(`specialties = $${paramIndex}`);
+      values.push(specialties);
+      paramIndex++;
+    }
+
+    if (programLocation) {
+      updates.push(`program_location = $${paramIndex}`);
+      values.push(programLocation);
+      paramIndex++;
+    }
+
+    if (programLocationName) {
+      updates.push(`program_location_name = $${paramIndex}`);
+      values.push(programLocationName);
+      paramIndex++;
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'لا توجد بيانات للتحديث'
+      });
+    }
+
+    values.push(req.user.id);
+
+    const updateResult = await pool.query(
+      `UPDATE app.guides 
+       SET ${updates.join(', ')}, updated_at = NOW()
+       WHERE id = $${paramIndex}
+       RETURNING id, full_name, email, phone, experience, specialties,
+                 program_location, program_location_name`,
+      values
+    );
+
+    if (updateResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
         message: 'المرشد غير موجود'
       });
     }
 
-    // Update fields
-    if (phone) guide.phone = phone;
-    if (experience) guide.experience = experience;
-    if (specialties) guide.specialties = specialties;
-    if (programLocation) guide.programLocation = programLocation;
-    if (programLocationName) guide.programLocationName = programLocationName;
-
-    await guide.save();
+    const guide = updateResult.rows[0];
 
     res.json({
       success: true,
       message: 'تم تحديث الملف الشخصي بنجاح',
       guide: {
-        id: guide._id,
-        fullName: guide.fullName,
+        id: guide.id,
+        fullName: guide.full_name,
         email: guide.email,
         phone: guide.phone,
         experience: guide.experience,
         specialties: guide.specialties,
-        programLocation: guide.programLocation,
-        programLocationName: guide.programLocationName
+        programLocation: guide.program_location,
+        programLocationName: guide.program_location_name
       }
     });
 
   } catch (error) {
-    console.error('Update profile error:', error);
+    console.error('❌ Update profile error:', error);
     res.status(500).json({
       success: false,
       message: 'حدث خطأ في تحديث الملف الشخصي'
-    });
-  }
-};
-
-// ============================================
-// @desc    Create demo guide (for testing)
-// @route   POST /api/guides/create-demo
-// @access  Public
-// ============================================
-const createDemoGuide = async (req, res) => {
-  try {
-    const demoGuides = [
-      {
-        fullName: 'محمد العتيبي',
-        civilId: '1234567890',
-        licenseNumber: 'TRL-1234-5678',
-        email: 'mohammed@example.com',
-        phone: '+966500000001',
-        password: 'Guide1234',
-        experience: '5',
-        specialties: 'تاريخ، تراث',
-        programLocation: 'https://maps.app.goo.gl/abc123',
-        programLocationName: 'الدرعية التاريخية',
-        rating: 4.9,
-        reviews: 24,
-        programs: 5,
-        verified: true
-      },
-      {
-        fullName: 'العنود نسيب',
-        civilId: '1234567891',
-        licenseNumber: 'TRL-8765-4321',
-        email: 'alanoud@example.com',
-        phone: '+966500000002',
-        password: 'Guide1234',
-        experience: '3',
-        specialties: 'طبيعة، مغامرات، تخييم',
-        programLocation: 'https://maps.app.goo.gl/def456',
-        programLocationName: 'منتزه السلام',
-        rating: 4.8,
-        reviews: 31,
-        programs: 7,
-        verified: true
-      },
-      {
-        fullName: 'أميرة الحربي',
-        civilId: '1234567892',
-        licenseNumber: 'TRL-5678-1234',
-        email: 'amira@example.com',
-        phone: '+966500000003',
-        password: 'Guide1234',
-        experience: '2',
-        specialties: 'طبيعة، مغامرات',
-        programLocation: 'https://maps.app.goo.gl/ghi789',
-        programLocationName: 'جبال طويق',
-        rating: 4.7,
-        reviews: 18,
-        programs: 3,
-        verified: true
-      }
-    ];
-
-    const results = [];
-
-    for (const demoGuide of demoGuides) {
-      // Check if exists
-      const existing = await Guide.findOne({
-        $or: [
-          { licenseNumber: demoGuide.licenseNumber },
-          { email: demoGuide.email }
-        ]
-      });
-
-      if (!existing) {
-        const guide = new Guide(demoGuide);
-        await guide.save();
-        results.push({ name: demoGuide.fullName, status: 'created' });
-      } else {
-        results.push({ name: demoGuide.fullName, status: 'already exists' });
-      }
-    }
-
-    res.json({
-      success: true,
-      message: 'تم إنشاء المرشدين التجريبيين',
-      results
-    });
-
-  } catch (error) {
-    console.error('Create demo guides error:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-};
-
-// ============================================
-// @desc    Refresh token
-// @route   POST /api/guides/refresh-token
-// @access  Public
-// ============================================
-const refreshToken = async (req, res) => {
-  try {
-    const { refreshToken } = req.body;
-
-    if (!refreshToken) {
-      return res.status(401).json({
-        success: false,
-        message: 'Refresh token مطلوب'
-      });
-    }
-
-    const decoded = jwt.verify(
-      refreshToken,
-      process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET
-    );
-
-    const guide = await Guide.findById(decoded.id);
-
-    if (!guide) {
-      return res.status(401).json({
-        success: false,
-        message: 'المرشد غير موجود'
-      });
-    }
-
-    const newToken = jwt.sign(
-      { id: guide._id, type: 'guide', role: guide.role },
-      process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
-    );
-
-    res.json({
-      success: true,
-      token: newToken
-    });
-
-  } catch (error) {
-    console.error('Refresh token error:', error);
-    res.status(401).json({
-      success: false,
-      message: 'Refresh token غير صالح'
     });
   }
 };
@@ -417,21 +353,26 @@ const refreshToken = async (req, res) => {
 // @route   POST /api/guides/change-password
 // @access  Private
 // ============================================
-const changePassword = async (req, res) => {
+export const changePassword = async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
 
-    const guide = await Guide.findById(req.user.id).select('+password');
+    const guideResult = await pool.query(
+      'SELECT id, password_hash FROM app.guides WHERE id = $1',
+      [req.user.id]
+    );
 
-    if (!guide) {
+    if (guideResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
         message: 'المرشد غير موجود'
       });
     }
 
+    const guide = guideResult.rows[0];
+
     // Check current password
-    const isPasswordMatch = await guide.comparePassword(currentPassword);
+    const isPasswordMatch = await bcrypt.compare(currentPassword, guide.password_hash);
 
     if (!isPasswordMatch) {
       return res.status(401).json({
@@ -440,9 +381,14 @@ const changePassword = async (req, res) => {
       });
     }
 
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
     // Update password
-    guide.password = newPassword;
-    await guide.save();
+    await pool.query(
+      'UPDATE app.guides SET password_hash = $1, updated_at = NOW() WHERE id = $2',
+      [hashedPassword, req.user.id]
+    );
 
     res.json({
       success: true,
@@ -450,7 +396,7 @@ const changePassword = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Change password error:', error);
+    console.error('❌ Change password error:', error);
     res.status(500).json({
       success: false,
       message: 'حدث خطأ في تغيير كلمة المرور'
@@ -458,12 +404,186 @@ const changePassword = async (req, res) => {
   }
 };
 
-module.exports = {
+// ============================================
+// @desc    Approve guide registration (Admin only)
+// @route   PUT /api/guides/approve/:registrationId
+// @access  Private (Admin)
+// ============================================
+export const approveGuideRegistration = async (req, res) => {
+  try {
+    const { registrationId } = req.params;
+    const adminId = req.user.id;
+
+    // Get registration details
+    const registrationResult = await pool.query(
+      'SELECT * FROM app.guide_registrations WHERE id = $1 AND status = $2',
+      [registrationId, 'pending']
+    );
+
+    if (registrationResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'طلب التسجيل غير موجود أو تمت معالجته مسبقاً'
+      });
+    }
+
+    const registration = registrationResult.rows[0];
+
+    // Start transaction
+    await pool.query('BEGIN');
+
+    // Hash a default password (user will change it on first login)
+    const defaultPassword = await bcrypt.hash('Guide@123456', 10);
+
+    // Create new guide
+    const guideResult = await pool.query(
+      `INSERT INTO app.guides (
+        full_name, civil_id, license_number, email, phone,
+        experience, specialties, password_hash, role, verified,
+        is_active, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+      RETURNING id`,
+      [
+        registration.full_name,
+        registration.civil_id,
+        registration.license_number,
+        registration.email,
+        registration.phone,
+        registration.experience,
+        registration.specialties,
+        defaultPassword,
+        'guide',
+        true,
+        true
+      ]
+    );
+
+    const newGuideId = guideResult.rows[0].id;
+
+    // Update registration status
+    await pool.query(
+      `UPDATE app.guide_registrations 
+       SET status = 'approved', processed_by = $1, processed_at = NOW()
+       WHERE id = $2`,
+      [adminId, registrationId]
+    );
+
+    await pool.query('COMMIT');
+
+    // Send notification to the new guide
+    await notificationService.sendToUser(registration.email, {
+      type: 'GUIDE_APPROVED',
+      title: 'تمت الموافقة على طلبك',
+      message: 'تهانينا! تمت الموافقة على طلب تسجيلك كمرشد سياحي. يمكنك الآن تسجيل الدخول باستخدام كلمة المرور الافتراضية (Guide@123456) وسيطلب منك تغييرها عند أول دخول.'
+    });
+
+    res.json({
+      success: true,
+      message: 'تمت الموافقة على طلب التسجيل بنجاح',
+      guideId: newGuideId
+    });
+
+  } catch (error) {
+    await pool.query('ROLLBACK');
+    console.error('❌ Approve registration error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'حدث خطأ في الموافقة على الطلب'
+    });
+  }
+};
+
+// ============================================
+// @desc    Reject guide registration (Admin only)
+// @route   PUT /api/guides/reject/:registrationId
+// @access  Private (Admin)
+// ============================================
+export const rejectGuideRegistration = async (req, res) => {
+  try {
+    const { registrationId } = req.params;
+    const { reason } = req.body;
+    const adminId = req.user.id;
+
+    const result = await pool.query(
+      `UPDATE app.guide_registrations 
+       SET status = 'rejected', 
+           rejection_reason = $1,
+           processed_by = $2, 
+           processed_at = NOW()
+       WHERE id = $3 AND status = 'pending'
+       RETURNING email, full_name`,
+      [reason, adminId, registrationId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'طلب التسجيل غير موجود أو تمت معالجته مسبقاً'
+      });
+    }
+
+    const registration = result.rows[0];
+
+    // Send notification to the applicant
+    await notificationService.sendToUser(registration.email, {
+      type: 'GUIDE_REJECTED',
+      title: 'نأسف، لم يتم الموافقة على طلبك',
+      message: `لم يتم الموافقة على طلب تسجيلك كمرشد سياحي. سبب الرفض: ${reason}`
+    });
+
+    res.json({
+      success: true,
+      message: 'تم رفض طلب التسجيل'
+    });
+
+  } catch (error) {
+    console.error('❌ Reject registration error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'حدث خطأ في رفض الطلب'
+    });
+  }
+};
+
+// ============================================
+// @desc    Get pending registrations (Admin only)
+// @route   GET /api/guides/pending-registrations
+// @access  Private (Admin)
+// ============================================
+export const getPendingRegistrations = async (req, res) => {
+  try {
+    const registrations = await pool.query(
+      `SELECT id, full_name, email, phone, civil_id, license_number,
+              experience, specialties, created_at
+       FROM app.guide_registrations
+       WHERE status = 'pending'
+       ORDER BY created_at DESC`
+    );
+
+    res.json({
+      success: true,
+      registrations: registrations.rows
+    });
+
+  } catch (error) {
+    console.error('❌ Get pending registrations error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'حدث خطأ في جلب الطلبات'
+    });
+  }
+};
+
+// ============================================
+// ✅ تصدير جميع الدوال
+// ============================================
+export default {
   registerGuide,
   loginGuide,
   getGuideProfile,
   updateGuideProfile,
-  createDemoGuide,
-  refreshToken,
-  changePassword
+  changePassword,
+  approveGuideRegistration,
+  rejectGuideRegistration,
+  getPendingRegistrations
 };
