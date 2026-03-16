@@ -1,6 +1,6 @@
 // server/src/routes/walletRoutes.js
 import express from 'express';
-import { authenticate, requireAdmin, requireGuide } from '../middleware/auth.middleware.js';
+import { protect, authorize } from '../middleware/authMiddleware.js'; // ✅ استخدام protect بدلاً من authenticate
 import * as walletController from '../controllers/wallet.controller.js';
 import { body } from 'express-validator';
 import { validate } from '../middleware/validation.middleware.js';
@@ -28,7 +28,7 @@ router.get('/public/:userId', async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ 
         success: false, 
-        message: 'Wallet not found' 
+        message: 'المحفظة غير موجودة' 
       });
     }
     
@@ -40,7 +40,7 @@ router.get('/public/:userId', async (req, res) => {
     console.error('❌ Error fetching wallet:', error);
     res.status(500).json({ 
       success: false, 
-      message: 'Server error' 
+      message: 'خطأ في الخادم' 
     });
   }
 });
@@ -64,7 +64,7 @@ const bankAccountValidation = [
 ];
 
 // جميع مسارات المحفظة تتطلب مصادقة
-router.use(authenticate);
+router.use(protect); // ✅ استخدام protect بدلاً من authenticate
 
 // ===================== مسارات المحفظة =====================
 
@@ -94,21 +94,21 @@ router.post('/deposit', depositValidation, validate, walletController.deposit);
  * @desc    طلب سحب (للمرشد فقط)
  * @access  Private (Guide)
  */
-router.post('/withdraw-request', requireGuide, withdrawValidation, validate, walletController.requestWithdraw);
+router.post('/withdraw-request', authorize('guide'), withdrawValidation, validate, walletController.requestWithdraw); // ✅ استخدام authorize
 
 /**
  * @route   PUT /api/wallet/withdraw-request/:requestId
  * @desc    معالجة طلب سحب (للمشرف فقط)
  * @access  Private (Admin)
  */
-router.put('/withdraw-request/:requestId', requireAdmin, walletController.processWithdrawRequest);
+router.put('/withdraw-request/:requestId', authorize('admin'), walletController.processWithdrawRequest); // ✅ استخدام authorize
 
 /**
  * @route   GET /api/wallet/withdraw-requests
  * @desc    الحصول على طلبات السحب (للمشرف)
  * @access  Private (Admin)
  */
-router.get('/withdraw-requests', requireAdmin, walletController.getWithdrawRequests);
+router.get('/withdraw-requests', authorize('admin'), walletController.getWithdrawRequests); // ✅ استخدام authorize
 
 // ===================== مسارات الحسابات البنكية =====================
 
