@@ -1,8 +1,5 @@
 // server/src/services/walletService.js
-import Wallet from '../models/Wallet.js';
-import Transaction from '../models/Transaction.js';
-import BankAccount from '../models/BankAccount.js';
-import WithdrawRequest from '../models/WithdrawRequest.js';
+import { pool } from '../config/database.js';
 import { v4 as uuidv4 } from 'uuid';
 
 class WalletService {
@@ -48,23 +45,29 @@ class WalletService {
    */
   async getBalance(userId) {
     try {
-      const wallet = await Wallet.findOne({ userId });
-      if (!wallet) {
+      const walletResult = await pool.query(
+        'SELECT * FROM app.wallets WHERE user_id = $1',
+        [userId]
+      );
+      
+      if (walletResult.rows.length === 0) {
         throw new Error('المحفظة غير موجودة');
       }
+
+      const wallet = walletResult.rows[0];
 
       return {
         success: true,
         data: {
-          balance: wallet.balance,
-          frozen: wallet.frozenBalance,
-          pending: wallet.pendingBalance,
-          total: wallet.balance + wallet.frozenBalance,
+          balance: parseFloat(wallet.balance),
+          frozen: parseFloat(wallet.frozen_balance),
+          pending: parseFloat(wallet.pending_balance),
+          total: parseFloat(wallet.balance) + parseFloat(wallet.frozen_balance),
           currency: wallet.currency,
-          dailyLimit: wallet.dailyLimit,
-          monthlyLimit: wallet.monthlyLimit,
-          dailyRemaining: wallet.dailyLimit - wallet.dailyWithdrawn,
-          monthlyRemaining: wallet.monthlyLimit - wallet.monthlyWithdrawn,
+          dailyLimit: parseFloat(wallet.daily_limit),
+          monthlyLimit: parseFloat(wallet.monthly_limit),
+          dailyRemaining: parseFloat(wallet.daily_limit) - parseFloat(wallet.daily_withdrawn || 0),
+          monthlyRemaining: parseFloat(wallet.monthly_limit) - parseFloat(wallet.monthly_withdrawn || 0),
           stats: wallet.stats
         }
       };
@@ -81,54 +84,85 @@ class WalletService {
    * @returns {Promise<Object>} نتيجة الإيداع
    */
   async deposit(userId, amount, paymentMethod) {
+    const client = await pool.connect();
+    
     try {
+      await client.query('BEGIN');
+
       // التحقق من صحة المبلغ
       const validation = this.validateAmount(amount);
       if (!validation.valid) {
         throw new Error(validation.error);
       }
 
-      const wallet = await Wallet.findOne({ userId });
-      if (!wallet) {
+      const walletResult = await client.query(
+        'SELECT * FROM app.wallets WHERE user_id = $1 FOR UPDATE',
+        [userId]
+      );
+      
+      if (walletResult.rows.length === 0) {
         throw new Error('المحفظة غير موجودة');
       }
+
+      const wallet = walletResult.rows[0];
 
       if (wallet.status !== 'active') {
         throw new Error('المحفظة غير نشطة');
       }
 
+      const newBalance = parseFloat(wallet.balance) + validation.amount;
+
       // إنشاء معاملة جديدة
-      const transaction = new Transaction({
-        transactionId: this.generateTransactionId(),
-        walletId: wallet._id,
-        userId,
-        type: 'DEPOSIT',
-        amount: validation.amount,
-        netAmount: validation.amount,
-        status: 'COMPLETED',
-        paymentMethod,
-        description: 'إيداع في المحفظة',
-        balanceAfter: wallet.balance + validation.amount
-      });
+      const transactionId = this.generateTransactionId();
+      await client.query(
+        `INSERT INTO app.transactions (
+          transaction_id, wallet_id, user_id, type, amount, net_amount,
+          status, payment_method, description, balance_after, metadata, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())`,
+        [
+          transactionId,
+          wallet.id,
+          userId,
+          'DEPOSIT',
+          validation.amount,
+          validation.amount,
+          'COMPLETED',
+          paymentMethod,
+          'إيداع في المحفظة',
+          newBalance,
+          JSON.stringify({})
+        ]
+      );
 
       // تحديث المحفظة
-      wallet.balance += validation.amount;
-      wallet.stats.totalDeposits += validation.amount;
-      wallet.stats.lastActivity = new Date();
+      const stats = wallet.stats || {};
+      stats.totalDeposits = (stats.totalDeposits || 0) + validation.amount;
+      stats.lastActivity = new Date();
 
-      await transaction.save();
-      await wallet.save();
+      await client.query(
+        `UPDATE app.wallets 
+         SET balance = $1,
+             stats = $2,
+             updated_at = NOW()
+         WHERE id = $3`,
+        [newBalance, JSON.stringify(stats), wallet.id]
+      );
+
+      await client.query('COMMIT');
 
       return {
         success: true,
         message: 'تم الإيداع بنجاح',
         data: {
-          transaction,
-          newBalance: wallet.balance
+          transactionId,
+          newBalance
         }
       };
     } catch (error) {
+      await client.query('ROLLBACK');
       return { success: false, error: error.message };
+    } finally {
+      client.release();
     }
   }
 
@@ -140,13 +174,23 @@ class WalletService {
    * @returns {Promise<Object>} نتيجة الطلب
    */
   async requestWithdraw(userId, amount, bankAccountId) {
+    const client = await pool.connect();
+    
     try {
-      const wallet = await Wallet.findOne({ userId });
-      if (!wallet) {
+      await client.query('BEGIN');
+
+      const walletResult = await client.query(
+        'SELECT * FROM app.wallets WHERE user_id = $1 FOR UPDATE',
+        [userId]
+      );
+      
+      if (walletResult.rows.length === 0) {
         throw new Error('المحفظة غير موجودة');
       }
 
-      if (wallet.userType !== 'guide') {
+      const wallet = walletResult.rows[0];
+
+      if (wallet.user_type !== 'guide') {
         throw new Error('فقط المرشدين يمكنهم سحب الأموال');
       }
 
@@ -155,18 +199,20 @@ class WalletService {
       }
 
       // التحقق من الحساب البنكي
-      const bankAccount = await BankAccount.findOne({ 
-        _id: bankAccountId, 
-        userId,
-        isVerified: true 
-      });
+      const bankAccountResult = await client.query(
+        'SELECT * FROM app.bank_accounts WHERE id = $1 AND user_id = $2 AND is_verified = true',
+        [bankAccountId, userId]
+      );
 
-      if (!bankAccount) {
+      if (bankAccountResult.rows.length === 0) {
         throw new Error('الحساب البنكي غير موجود أو غير موثق');
       }
 
+      const bankAccount = bankAccountResult.rows[0];
+      const currentBalance = parseFloat(wallet.balance);
+
       // التحقق من الرصيد
-      if (wallet.balance < amount) {
+      if (currentBalance < amount) {
         throw new Error('الرصيد غير كافٍ');
       }
 
@@ -176,13 +222,13 @@ class WalletService {
       }
 
       // التحقق من الحدود اليومية
-      const dailyCheck = this.checkDailyLimit(wallet, amount);
+      const dailyCheck = await this.checkDailyLimit(client, wallet, amount);
       if (!dailyCheck.allowed) {
         throw new Error(dailyCheck.message);
       }
 
       // التحقق من الحدود الشهرية
-      const monthlyCheck = this.checkMonthlyLimit(wallet, amount);
+      const monthlyCheck = await this.checkMonthlyLimit(client, wallet, amount);
       if (!monthlyCheck.allowed) {
         throw new Error(monthlyCheck.message);
       }
@@ -193,46 +239,65 @@ class WalletService {
         fee = amount * 0.01;
       }
 
+      const requestId = this.generateRequestId();
+
       // إنشاء طلب سحب
-      const withdrawRequest = new WithdrawRequest({
-        requestId: this.generateRequestId(),
-        userId,
-        walletId: wallet._id,
-        bankAccountId,
-        amount,
-        fee,
-        netAmount: amount - fee,
-        status: 'PENDING'
-      });
+      await client.query(
+        `INSERT INTO app.withdraw_requests (
+          request_id, user_id, wallet_id, bank_account_id, amount, fee,
+          net_amount, status, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
+        [
+          requestId,
+          userId,
+          wallet.id,
+          bankAccountId,
+          amount,
+          fee,
+          amount - fee,
+          'PENDING'
+        ]
+      );
 
       // إنشاء معاملة
-      const transaction = new Transaction({
-        transactionId: this.generateTransactionId(),
-        walletId: wallet._id,
-        userId,
-        type: 'WITHDRAW',
-        amount,
-        fee,
-        netAmount: amount - fee,
-        status: 'PENDING',
-        description: 'طلب سحب قيد المراجعة',
-        metadata: { requestId: withdrawRequest.requestId }
-      });
+      const transactionId = this.generateTransactionId();
+      await client.query(
+        `INSERT INTO app.transactions (
+          transaction_id, wallet_id, user_id, type, amount, fee, net_amount,
+          status, description, metadata, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
+        [
+          transactionId,
+          wallet.id,
+          userId,
+          'WITHDRAW',
+          amount,
+          fee,
+          amount - fee,
+          'PENDING',
+          'طلب سحب قيد المراجعة',
+          JSON.stringify({ requestId })
+        ]
+      );
 
       // تجميد المبلغ
-      wallet.balance -= amount;
-      wallet.frozenBalance += amount;
+      await client.query(
+        `UPDATE app.wallets 
+         SET balance = balance - $1,
+             frozen_balance = frozen_balance + $1,
+             updated_at = NOW()
+         WHERE id = $2`,
+        [amount, wallet.id]
+      );
 
-      await withdrawRequest.save();
-      await transaction.save();
-      await wallet.save();
+      await client.query('COMMIT');
 
       return {
         success: true,
         message: 'تم تقديم طلب السحب بنجاح',
         data: {
-          requestId: withdrawRequest.requestId,
-          transactionId: transaction.transactionId,
+          requestId,
+          transactionId,
           amount,
           fee,
           netAmount: amount - fee,
@@ -240,70 +305,84 @@ class WalletService {
         }
       };
     } catch (error) {
+      await client.query('ROLLBACK');
       return { success: false, error: error.message };
+    } finally {
+      client.release();
     }
   }
 
   /**
    * التحقق من الحد اليومي
+   * @param {Object} client - عميل PostgreSQL
    * @param {Object} wallet - المحفظة
    * @param {number} amount - المبلغ
-   * @returns {Object} نتيجة التحقق
+   * @returns {Promise<Object>} نتيجة التحقق
    */
-  checkDailyLimit(wallet, amount) {
-    const today = new Date().toDateString();
-    const lastWithdraw = wallet.lastWithdrawDate ? 
-      new Date(wallet.lastWithdrawDate).toDateString() : null;
-
-    let dailyWithdrawn = wallet.dailyWithdrawn;
+  async checkDailyLimit(client, wallet, amount) {
+    const today = new Date().toISOString().split('T')[0];
     
-    if (lastWithdraw !== today) {
-      dailyWithdrawn = 0;
-    }
+    const result = await client.query(
+      `SELECT COALESCE(SUM(amount), 0) as total
+       FROM app.withdraw_requests
+       WHERE wallet_id = $1 
+         AND status IN ('APPROVED', 'PENDING')
+         AND DATE(created_at) = $2`,
+      [wallet.id, today]
+    );
 
-    if (dailyWithdrawn + amount > wallet.dailyLimit) {
+    const dailyWithdrawn = parseFloat(result.rows[0].total);
+    const dailyLimit = parseFloat(wallet.daily_limit);
+
+    if (dailyWithdrawn + amount > dailyLimit) {
       return {
         allowed: false,
-        remaining: wallet.dailyLimit - dailyWithdrawn,
-        message: `تجاوزت الحد اليومي، المتبقي ${wallet.dailyLimit - dailyWithdrawn} ريال`
+        remaining: dailyLimit - dailyWithdrawn,
+        message: `تجاوزت الحد اليومي، المتبقي ${dailyLimit - dailyWithdrawn} ريال`
       };
     }
 
     return {
       allowed: true,
-      remaining: wallet.dailyLimit - (dailyWithdrawn + amount)
+      remaining: dailyLimit - (dailyWithdrawn + amount)
     };
   }
 
   /**
    * التحقق من الحد الشهري
+   * @param {Object} client - عميل PostgreSQL
    * @param {Object} wallet - المحفظة
    * @param {number} amount - المبلغ
-   * @returns {Object} نتيجة التحقق
+   * @returns {Promise<Object>} نتيجة التحقق
    */
-  checkMonthlyLimit(wallet, amount) {
+  async checkMonthlyLimit(client, wallet, amount) {
     const now = new Date();
-    const lastWithdraw = wallet.lastWithdrawDate ? new Date(wallet.lastWithdrawDate) : null;
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
 
-    let monthlyWithdrawn = wallet.monthlyWithdrawn;
+    const result = await client.query(
+      `SELECT COALESCE(SUM(amount), 0) as total
+       FROM app.withdraw_requests
+       WHERE wallet_id = $1 
+         AND status IN ('APPROVED', 'PENDING')
+         AND DATE(created_at) BETWEEN $2 AND $3`,
+      [wallet.id, firstDay, lastDay]
+    );
 
-    if (lastWithdraw && 
-        (lastWithdraw.getMonth() !== now.getMonth() || 
-         lastWithdraw.getFullYear() !== now.getFullYear())) {
-      monthlyWithdrawn = 0;
-    }
+    const monthlyWithdrawn = parseFloat(result.rows[0].total);
+    const monthlyLimit = parseFloat(wallet.monthly_limit);
 
-    if (monthlyWithdrawn + amount > wallet.monthlyLimit) {
+    if (monthlyWithdrawn + amount > monthlyLimit) {
       return {
         allowed: false,
-        remaining: wallet.monthlyLimit - monthlyWithdrawn,
-        message: `تجاوزت الحد الشهري، المتبقي ${wallet.monthlyLimit - monthlyWithdrawn} ريال`
+        remaining: monthlyLimit - monthlyWithdrawn,
+        message: `تجاوزت الحد الشهري، المتبقي ${monthlyLimit - monthlyWithdrawn} ريال`
       };
     }
 
     return {
       allowed: true,
-      remaining: wallet.monthlyLimit - (monthlyWithdrawn + amount)
+      remaining: monthlyLimit - (monthlyWithdrawn + amount)
     };
   }
 
@@ -315,65 +394,91 @@ class WalletService {
    * @returns {Promise<Object>} نتيجة المعالجة
    */
   async processWithdrawRequest(requestId, approved, notes = '') {
+    const client = await pool.connect();
+    
     try {
-      const request = await WithdrawRequest.findOne({ requestId })
-        .populate('walletId');
+      await client.query('BEGIN');
 
-      if (!request) {
+      const requestResult = await client.query(
+        'SELECT * FROM app.withdraw_requests WHERE request_id = $1 FOR UPDATE',
+        [requestId]
+      );
+
+      if (requestResult.rows.length === 0) {
         throw new Error('طلب السحب غير موجود');
       }
+
+      const request = requestResult.rows[0];
 
       if (request.status !== 'PENDING') {
         throw new Error('تم معالجة الطلب مسبقاً');
       }
 
-      const wallet = request.walletId;
-
       if (approved) {
         // الموافقة على السحب
-        request.status = 'APPROVED';
-        request.processedAt = new Date();
-        
+        await client.query(
+          `UPDATE app.withdraw_requests 
+           SET status = $1, processed_at = NOW(), notes = $2
+           WHERE request_id = $3`,
+          ['APPROVED', notes, requestId]
+        );
+
         // تحديث المحفظة
-        wallet.frozenBalance -= request.amount;
-        wallet.dailyWithdrawn += request.amount;
-        wallet.monthlyWithdrawn += request.amount;
-        wallet.lastWithdrawDate = new Date();
-        wallet.stats.totalWithdrawals += request.amount;
+        await client.query(
+          `UPDATE app.wallets 
+           SET frozen_balance = frozen_balance - $1,
+               daily_withdrawn = COALESCE(daily_withdrawn, 0) + $1,
+               monthly_withdrawn = COALESCE(monthly_withdrawn, 0) + $1,
+               last_withdraw_date = NOW(),
+               stats = jsonb_set(
+                 COALESCE(stats, '{}'::jsonb),
+                 '{totalWithdrawals}',
+                 COALESCE(stats->'totalWithdrawals', '0')::numeric + $1
+               ),
+               updated_at = NOW()
+           WHERE id = $2`,
+          [request.amount, request.wallet_id]
+        );
 
         // تحديث المعاملة
-        await Transaction.findOneAndUpdate(
-          { 'metadata.requestId': requestId },
-          { 
-            status: 'COMPLETED',
-            processedAt: new Date()
-          }
+        await client.query(
+          `UPDATE app.transactions 
+           SET status = 'COMPLETED', processed_at = NOW()
+           WHERE metadata->>'requestId' = $1`,
+          [requestId]
         );
 
       } else {
         // رفض السحب
-        request.status = 'REJECTED';
-        request.processedAt = new Date();
-        request.rejectionReason = notes;
+        await client.query(
+          `UPDATE app.withdraw_requests 
+           SET status = $1, processed_at = NOW(), rejection_reason = $2, notes = $3
+           WHERE request_id = $4`,
+          ['REJECTED', notes, notes, requestId]
+        );
 
         // إعادة المبلغ للمحفظة
-        wallet.balance += request.amount;
-        wallet.frozenBalance -= request.amount;
+        await client.query(
+          `UPDATE app.wallets 
+           SET balance = balance + $1,
+               frozen_balance = frozen_balance - $1,
+               updated_at = NOW()
+           WHERE id = $2`,
+          [request.amount, request.wallet_id]
+        );
 
         // تحديث المعاملة
-        await Transaction.findOneAndUpdate(
-          { 'metadata.requestId': requestId },
-          { 
-            status: 'FAILED',
-            processedAt: new Date(),
-            description: `تم رفض طلب السحب: ${notes}`
-          }
+        await client.query(
+          `UPDATE app.transactions 
+           SET status = 'FAILED', 
+               processed_at = NOW(),
+               description = CONCAT(description, ' - تم رفض طلب السحب: ', $1)
+           WHERE metadata->>'requestId' = $2`,
+          [notes, requestId]
         );
       }
 
-      request.notes = notes;
-      await request.save();
-      await wallet.save();
+      await client.query('COMMIT');
 
       return {
         success: true,
@@ -381,7 +486,10 @@ class WalletService {
         data: request
       };
     } catch (error) {
+      await client.query('ROLLBACK');
       return { success: false, error: error.message };
+    } finally {
+      client.release();
     }
   }
 
@@ -393,37 +501,66 @@ class WalletService {
    */
   async getTransactions(userId, filter = {}) {
     try {
-      const wallet = await Wallet.findOne({ userId });
-      if (!wallet) {
+      const walletResult = await pool.query(
+        'SELECT id FROM app.wallets WHERE user_id = $1',
+        [userId]
+      );
+
+      if (walletResult.rows.length === 0) {
         throw new Error('المحفظة غير موجودة');
       }
 
-      const query = { walletId: wallet._id };
-      
-      if (filter.type) query.type = filter.type;
-      if (filter.status) query.status = filter.status;
-      if (filter.startDate || filter.endDate) {
-        query.createdAt = {};
-        if (filter.startDate) query.createdAt.$gte = new Date(filter.startDate);
-        if (filter.endDate) query.createdAt.$lte = new Date(filter.endDate);
+      const walletId = walletResult.rows[0].id;
+
+      let query = 'SELECT * FROM app.transactions WHERE wallet_id = $1';
+      const queryParams = [walletId];
+      let paramIndex = 2;
+
+      if (filter.type) {
+        query += ` AND type = $${paramIndex}`;
+        queryParams.push(filter.type);
+        paramIndex++;
       }
 
-      const skip = (filter.page - 1) * filter.limit || 0;
+      if (filter.status) {
+        query += ` AND status = $${paramIndex}`;
+        queryParams.push(filter.status);
+        paramIndex++;
+      }
+
+      if (filter.startDate) {
+        query += ` AND created_at >= $${paramIndex}`;
+        queryParams.push(filter.startDate);
+        paramIndex++;
+      }
+
+      if (filter.endDate) {
+        query += ` AND created_at <= $${paramIndex}`;
+        queryParams.push(filter.endDate);
+        paramIndex++;
+      }
+
+      const page = filter.page || 1;
       const limit = filter.limit || 50;
+      const offset = (page - 1) * limit;
 
-      const transactions = await Transaction.find(query)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit);
+      // حساب العدد الإجمالي
+      const countQuery = query.replace('SELECT *', 'SELECT COUNT(*)');
+      const countResult = await pool.query(countQuery, queryParams);
+      const total = parseInt(countResult.rows[0].count);
 
-      const total = await Transaction.countDocuments(query);
+      // جلب المعاملات مع الترتيب
+      query += ' ORDER BY created_at DESC LIMIT $' + paramIndex + ' OFFSET $' + (paramIndex + 1);
+      queryParams.push(limit, offset);
+
+      const transactionsResult = await pool.query(query, queryParams);
 
       return {
         success: true,
         data: {
-          transactions,
+          transactions: transactionsResult.rows,
           pagination: {
-            page: filter.page || 1,
+            page,
             limit,
             total,
             pages: Math.ceil(total / limit)
@@ -437,42 +574,64 @@ class WalletService {
 
   /**
    * تجميد مبلغ للحجز
+   * @param {Object} client - عميل PostgreSQL
    * @param {string} userId - معرف المستخدم
    * @param {number} amount - المبلغ
    * @param {string} bookingId - معرف الحجز
    * @returns {Promise<Object>} نتيجة التجميد
    */
-  async holdAmount(userId, amount, bookingId) {
+  async holdAmount(client, userId, amount, bookingId) {
     try {
-      const wallet = await Wallet.findOne({ userId });
-      if (!wallet) {
+      const walletResult = await client.query(
+        'SELECT * FROM app.wallets WHERE user_id = $1 FOR UPDATE',
+        [userId]
+      );
+
+      if (walletResult.rows.length === 0) {
         throw new Error('المحفظة غير موجودة');
       }
 
-      if (wallet.balance < amount) {
+      const wallet = walletResult.rows[0];
+
+      if (parseFloat(wallet.balance) < amount) {
         throw new Error('الرصيد غير كافٍ للحجز');
       }
 
-      const transaction = new Transaction({
-        transactionId: this.generateTransactionId(),
-        walletId: wallet._id,
-        userId,
-        type: 'HOLD',
-        amount,
-        netAmount: amount,
-        status: 'COMPLETED',
-        description: `تجميد مبلغ للحجز ${bookingId}`,
-        referenceId: bookingId,
-        balanceAfter: wallet.balance - amount
-      });
+      const transactionId = this.generateTransactionId();
+      const newBalance = parseFloat(wallet.balance) - amount;
 
-      wallet.balance -= amount;
-      wallet.frozenBalance += amount;
+      await client.query(
+        `INSERT INTO app.transactions (
+          transaction_id, wallet_id, user_id, type, amount, net_amount,
+          status, description, reference_id, balance_after, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
+        [
+          transactionId,
+          wallet.id,
+          userId,
+          'HOLD',
+          amount,
+          amount,
+          'COMPLETED',
+          `تجميد مبلغ للحجز ${bookingId}`,
+          bookingId,
+          newBalance
+        ]
+      );
 
-      await transaction.save();
-      await wallet.save();
+      await client.query(
+        `UPDATE app.wallets 
+         SET balance = balance - $1,
+             frozen_balance = frozen_balance + $1,
+             updated_at = NOW()
+         WHERE id = $2`,
+        [amount, wallet.id]
+      );
 
-      return { success: true, transaction };
+      return { 
+        success: true, 
+        transactionId 
+      };
     } catch (error) {
       return { success: false, error: error.message };
     }
@@ -480,42 +639,64 @@ class WalletService {
 
   /**
    * إطلاق المبلغ المجمد
+   * @param {Object} client - عميل PostgreSQL
    * @param {string} userId - معرف المستخدم
    * @param {number} amount - المبلغ
    * @param {string} bookingId - معرف الحجز
    * @returns {Promise<Object>} نتيجة الإطلاق
    */
-  async releaseAmount(userId, amount, bookingId) {
+  async releaseAmount(client, userId, amount, bookingId) {
     try {
-      const wallet = await Wallet.findOne({ userId });
-      if (!wallet) {
+      const walletResult = await client.query(
+        'SELECT * FROM app.wallets WHERE user_id = $1 FOR UPDATE',
+        [userId]
+      );
+
+      if (walletResult.rows.length === 0) {
         throw new Error('المحفظة غير موجودة');
       }
 
-      if (wallet.frozenBalance < amount) {
+      const wallet = walletResult.rows[0];
+
+      if (parseFloat(wallet.frozen_balance) < amount) {
         throw new Error('المبلغ المجمد غير كافٍ');
       }
 
-      const transaction = new Transaction({
-        transactionId: this.generateTransactionId(),
-        walletId: wallet._id,
-        userId,
-        type: 'RELEASE',
-        amount,
-        netAmount: amount,
-        status: 'COMPLETED',
-        description: `إطلاق مبلغ مجمد للحجز ${bookingId}`,
-        referenceId: bookingId,
-        balanceAfter: wallet.balance + amount
-      });
+      const transactionId = this.generateTransactionId();
+      const newBalance = parseFloat(wallet.balance) + amount;
 
-      wallet.balance += amount;
-      wallet.frozenBalance -= amount;
+      await client.query(
+        `INSERT INTO app.transactions (
+          transaction_id, wallet_id, user_id, type, amount, net_amount,
+          status, description, reference_id, balance_after, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
+        [
+          transactionId,
+          wallet.id,
+          userId,
+          'RELEASE',
+          amount,
+          amount,
+          'COMPLETED',
+          `إطلاق مبلغ مجمد للحجز ${bookingId}`,
+          bookingId,
+          newBalance
+        ]
+      );
 
-      await transaction.save();
-      await wallet.save();
+      await client.query(
+        `UPDATE app.wallets 
+         SET balance = balance + $1,
+             frozen_balance = frozen_balance - $1,
+             updated_at = NOW()
+         WHERE id = $2`,
+        [amount, wallet.id]
+      );
 
-      return { success: true, transaction };
+      return { 
+        success: true, 
+        transactionId 
+      };
     } catch (error) {
       return { success: false, error: error.message };
     }
