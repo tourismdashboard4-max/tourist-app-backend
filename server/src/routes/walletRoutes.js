@@ -1,9 +1,9 @@
 // server/src/routes/walletRoutes.js
 import express from 'express';
-import { protect, authorize } from '../middleware/authMiddleware.js'; // ✅ استخدام protect بدلاً من authenticate
+import { protect, authorize } from '../middleware/authMiddleware.js';
 import * as walletController from '../controllers/wallet.controller.js';
 import { body } from 'express-validator';
-import { validate } from '../middleware/validation.middleware.js';
+import { validate } from '../middleware/validationMiddleware.js'; // ✅ تم التعديل هنا
 
 const router = express.Router();
 
@@ -64,7 +64,7 @@ const bankAccountValidation = [
 ];
 
 // جميع مسارات المحفظة تتطلب مصادقة
-router.use(protect); // ✅ استخدام protect بدلاً من authenticate
+router.use(protect);
 
 // ===================== مسارات المحفظة =====================
 
@@ -94,21 +94,21 @@ router.post('/deposit', depositValidation, validate, walletController.deposit);
  * @desc    طلب سحب (للمرشد فقط)
  * @access  Private (Guide)
  */
-router.post('/withdraw-request', authorize('guide'), withdrawValidation, validate, walletController.requestWithdraw); // ✅ استخدام authorize
+router.post('/withdraw-request', authorize('guide'), withdrawValidation, validate, walletController.requestWithdraw);
 
 /**
  * @route   PUT /api/wallet/withdraw-request/:requestId
  * @desc    معالجة طلب سحب (للمشرف فقط)
  * @access  Private (Admin)
  */
-router.put('/withdraw-request/:requestId', authorize('admin'), walletController.processWithdrawRequest); // ✅ استخدام authorize
+router.put('/withdraw-request/:requestId', authorize('admin'), walletController.processWithdrawRequest);
 
 /**
  * @route   GET /api/wallet/withdraw-requests
  * @desc    الحصول على طلبات السحب (للمشرف)
  * @access  Private (Admin)
  */
-router.get('/withdraw-requests', authorize('admin'), walletController.getWithdrawRequests); // ✅ استخدام authorize
+router.get('/withdraw-requests', authorize('admin'), walletController.getWithdrawRequests);
 
 // ===================== مسارات الحسابات البنكية =====================
 
