@@ -1,3 +1,4 @@
+// server/src/routes/authRoutes.js
 import express from 'express';
 import User from '../models/User.js';
 import OTP from '../models/OTP.js';
@@ -5,43 +6,11 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import { sendEmail } from '../utils/email.js';
 import { createExpiryDate, isOTPValid, getTimeRemaining } from '../../server.js';
+import { protect } from '../middleware/authMiddleware.js'; // ✅ استيراد protect من ملف middleware الموحد
 
 const router = express.Router();
 
-// ============================================
-// Middleware للتحقق من التوكن
-// ============================================
-const authenticate = async (req, res, next) => {
-  try {
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    
-    if (!token) {
-      return res.status(401).json({
-        success: false,
-        message: 'الرجاء تسجيل الدخول أولاً'
-      });
-    }
-
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
-    const user = await User.findById(decoded.id);
-    
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: 'المستخدم غير موجود'
-      });
-    }
-
-    req.user = user;
-    next();
-  } catch (error) {
-    console.error('❌ Auth error:', error);
-    res.status(401).json({
-      success: false,
-      message: 'انتهت صلاحية الجلسة، الرجاء تسجيل الدخول مرة أخرى'
-    });
-  }
-};
+// ✅ تم إزالة Middleware authenticate المحلي واستخدام protect المستورد بدلاً منه
 
 // ============================================
 // ✅ 1. إرسال رمز التحقق للتسجيل
@@ -142,8 +111,8 @@ router.post('/send-otp', async (req, res) => {
 // ============================================
 router.post('/verify-otp', async (req, res) => {
   try {
-    const { email, code } = req.body;
-    console.log('📧 Verify OTP request:', { email, code });
+    const { email, code, purpose = 'register' } = req.body;
+    console.log('📧 Verify OTP request:', { email, code, purpose });
     console.log('🕐 Server time:', new Date().toISOString());
 
     if (!email || !code) {
@@ -156,7 +125,7 @@ router.post('/verify-otp', async (req, res) => {
     const cleanEmail = email.toLowerCase().trim();
 
     // البحث عن الرمز الصالح
-    const otpRecord = await OTP.findValidOTP(cleanEmail, code, 'register');
+    const otpRecord = await OTP.findValidOTP(cleanEmail, code, purpose);
     
     console.log('🔍 OTP Record found:', otpRecord ? '✅ YES' : '❌ NO');
 
@@ -534,7 +503,7 @@ router.post('/reset-password', async (req, res) => {
 // ============================================
 // ✅ 7. الحصول على ملف المستخدم
 // ============================================
-router.get('/profile/:userId', authenticate, async (req, res) => {
+router.get('/profile/:userId', protect, async (req, res) => { // ✅ استخدام protect
   try {
     const user = await User.findById(req.params.userId);
     
@@ -571,7 +540,7 @@ router.get('/profile/:userId', authenticate, async (req, res) => {
 // ============================================
 // ✅ 8. تحديث الملف الشخصي
 // ============================================
-router.put('/profile/:userId', authenticate, async (req, res) => {
+router.put('/profile/:userId', protect, async (req, res) => { // ✅ استخدام protect
   try {
     const { fullName, avatar } = req.body;
     
@@ -610,7 +579,7 @@ router.put('/profile/:userId', authenticate, async (req, res) => {
 // ============================================
 // ✅ 9. إرسال رمز التحقق للجوال
 // ============================================
-router.post('/send-phone-otp', authenticate, async (req, res) => {
+router.post('/send-phone-otp', protect, async (req, res) => { // ✅ استخدام protect
   try {
     const userId = req.user.id;
     const { phone } = req.body;
@@ -683,7 +652,7 @@ router.post('/send-phone-otp', authenticate, async (req, res) => {
 // ============================================
 // ✅ 10. التحقق من رمز الجوال
 // ============================================
-router.post('/verify-phone-otp', authenticate, async (req, res) => {
+router.post('/verify-phone-otp', protect, async (req, res) => { // ✅ استخدام protect
   try {
     const userId = req.user.id;
     const { phone, code } = req.body;
