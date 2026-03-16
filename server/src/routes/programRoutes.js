@@ -1,6 +1,6 @@
 import express from 'express';
 import { protect, authorize } from '../middleware/authMiddleware.js';
-import { validate } from '../middleware/validation.middleware.js';
+import { validate } from '../middleware/validationMiddleware.js'; // ✅ تم التعديل هنا
 import { body } from 'express-validator';
 import { pool } from '../config/database.js';
 
