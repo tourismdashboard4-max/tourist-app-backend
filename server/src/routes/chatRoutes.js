@@ -1,8 +1,8 @@
 // server/src/routes/chatRoutes.js
 import express from 'express';
-import * as chatController from '../controllers/chatController.js';
+import * as chatController from '../controllers/chat.controller.js'; // ✅ تم التعديل هنا (chatController.js → chat.controller.js)
 import { protect } from '../middleware/authMiddleware.js';
-import { validate } from '../middleware/validation.middleware.js';
+import { validate } from '../middleware/validationMiddleware.js'; // ✅ تم التعديل هنا (validation.middleware.js → validationMiddleware.js)
 import { body } from 'express-validator';
 
 const router = express.Router();
