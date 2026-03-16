@@ -24,9 +24,10 @@ export const protect = async (req, res, next) => {
     // التحقق من صحة التوكن
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_jwt_secret');
     
-    // ✅ استخدم الأعمدة الموجودة فقط (بدون type)
+    // ✅ استخدام الأعمدة الموجودة بعد تحديث قاعدة البيانات
     const userResult = await pool.query(
-      `SELECT id, email, full_name, avatar, phone, verified, created_at 
+      `SELECT id, email, full_name, type, role, avatar, phone, verified, 
+              is_active, online_status, created_at, last_login
        FROM app.users 
        WHERE id = $1`,
       [decoded.id]
@@ -68,10 +69,9 @@ export const protect = async (req, res, next) => {
 };
 
 /**
- * التحقق من صلاحيات الأدوار (نسخة مؤقتة بدون صلاحيات)
- * ملاحظة: قاعدة البيانات لا تحتوي على عمود صلاحيات حالياً
+ * التحقق من صلاحيات الأدوار (معتمد على عمود type)
  */
-export const authorize = (...types) => {
+export const authorize = (...allowedTypes) => {
   return (req, res, next) => {
     if (!req.user) {
       return res.status(401).json({
@@ -80,8 +80,14 @@ export const authorize = (...types) => {
       });
     }
 
-    // ✅ مؤقتاً: نسمح للجميع بالوصول
-    // عندما نضيف عمود صلاحيات، سنفعل هذا الشرط
+    // ✅ تفعيل التحقق باستخدام عمود type
+    if (!allowedTypes.includes(req.user.type)) {
+      return res.status(403).json({
+        success: false,
+        message: 'غير مصرح بالدخول - صلاحيات غير كافية'
+      });
+    }
+
     next();
   };
 };
@@ -98,9 +104,9 @@ export const optionalAuth = async (req, res, next) => {
       
       if (token) {
         const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_jwt_secret');
-        // ✅ استخدم الأعمدة الموجودة فقط
+        // ✅ استخدام الأعمدة الكاملة
         const userResult = await pool.query(
-          'SELECT id, email, full_name FROM app.users WHERE id = $1',
+          'SELECT id, email, full_name, type FROM app.users WHERE id = $1',
           [decoded.id]
         );
         
@@ -131,8 +137,14 @@ export const isSelf = async (req, res, next) => {
       });
     }
 
-    // ✅ مؤقتاً: نسمح بالوصول للجميع
-    // عندما نضيف صلاحيات، سنفعل هذا الشرط
+    // ✅ تفعيل التحقق للمستخدم نفسه أو المشرف
+    if (parseInt(req.user.id) !== parseInt(userId) && req.user.type !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'غير مصرح بالدخول - يمكنك الوصول لبياناتك فقط'
+      });
+    }
+
     next();
   } catch (error) {
     console.error('❌ isSelf middleware error:', error);
