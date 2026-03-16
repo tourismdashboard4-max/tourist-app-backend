@@ -24,9 +24,9 @@ export const protect = async (req, res, next) => {
     // التحقق من صحة التوكن
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_jwt_secret');
     
-    // جلب بيانات المستخدم من PostgreSQL
+    // ✅ تعديل: استخدام "type" بدلاً من "role"
     const userResult = await pool.query(
-      `SELECT id, email, full_name, role, avatar, phone, created_at 
+      `SELECT id, email, full_name, type, avatar, phone, created_at 
        FROM app.users 
        WHERE id = $1`,
       [decoded.id]
@@ -70,7 +70,7 @@ export const protect = async (req, res, next) => {
 /**
  * التحقق من صلاحيات الأدوار
  */
-export const authorize = (...roles) => {
+export const authorize = (...types) => { // ✅ تغيير اسم المعامل إلى types
   return (req, res, next) => {
     if (!req.user) {
       return res.status(401).json({
@@ -79,7 +79,8 @@ export const authorize = (...roles) => {
       });
     }
 
-    if (!roles.includes(req.user.role)) {
+    // ✅ استخدام req.user.type بدلاً من req.user.role
+    if (!types.includes(req.user.type)) {
       return res.status(403).json({
         success: false,
         message: 'غير مصرح بالدخول - صلاحيات غير كافية'
@@ -102,8 +103,9 @@ export const optionalAuth = async (req, res, next) => {
       
       if (token) {
         const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_jwt_secret');
+        // ✅ استخدام type بدلاً من role
         const userResult = await pool.query(
-          'SELECT id, email, full_name, role FROM app.users WHERE id = $1',
+          'SELECT id, email, full_name, type FROM app.users WHERE id = $1',
           [decoded.id]
         );
         
@@ -134,8 +136,8 @@ export const isSelf = async (req, res, next) => {
       });
     }
 
-    // تحويل إلى رقم للمقارنة
-    if (parseInt(req.user.id) !== parseInt(userId) && req.user.role !== 'admin') {
+    // ✅ استخدام req.user.type بدلاً من req.user.role
+    if (parseInt(req.user.id) !== parseInt(userId) && req.user.type !== 'admin') {
       return res.status(403).json({
         success: false,
         message: 'غير مصرح بالدخول - يمكنك الوصول لبياناتك فقط'
