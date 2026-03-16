@@ -5,7 +5,7 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import { sendEmail } from '../utils/email.js';
 import { createExpiryDate, isOTPValid, getTimeRemaining } from '../../server.js';
-import { protect } from '../middleware/authMiddleware.js'; // ✅ استيراد protect
+import { protect } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
@@ -56,11 +56,12 @@ router.post('/send-otp', async (req, res) => {
     const expiresAt = createExpiryDate(10); // 10 دقائق
     console.log('⏰ OTP will expire at:', expiresAt.toISOString());
 
+    // ✅ تم إزالة عمود type من الاستعلام
     await pool.query(
       `INSERT INTO app.otps (
-        identifier, email, type, code, purpose, expires_at, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-      [cleanEmail, cleanEmail, 'email', code, 'register', expiresAt]
+        identifier, email, code, purpose, expires_at, created_at
+      ) VALUES ($1, $2, $3, $4, $5, NOW())`,
+      [cleanEmail, cleanEmail, code, 'register', expiresAt]
     );
 
     // إرسال البريد الإلكتروني
@@ -301,7 +302,7 @@ router.post('/login', async (req, res) => {
     // البحث عن المستخدم
     const userResult = await pool.query(
       `SELECT id, full_name, email, password_hash, avatar, phone, role,
-              created_at, last_login
+              created_at, last_login, login_count
        FROM app.users 
        WHERE email = $1`,
       [email.toLowerCase().trim()]
@@ -327,9 +328,11 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    // تحديث آخر تسجيل دخول
+    // تحديث آخر تسجيل دخول وعدد المرات
     await pool.query(
-      'UPDATE app.users SET last_login = NOW() WHERE id = $1',
+      `UPDATE app.users 
+       SET last_login = NOW(), login_count = COALESCE(login_count, 0) + 1 
+       WHERE id = $1`,
       [user.id]
     );
 
@@ -364,7 +367,8 @@ router.post('/login', async (req, res) => {
         role: user.role,
         type: 'user',
         createdAt: user.created_at,
-        lastLogin: user.last_login
+        lastLogin: user.last_login,
+        loginCount: user.login_count
       },
       wallet: wallet ? {
         id: wallet.id,
@@ -390,7 +394,7 @@ router.post('/login', async (req, res) => {
 router.post('/forgot-password', async (req, res) => {
   try {
     const { email } = req.body;
-    console.log('🔄 طلب نسيت كلمة المرور لـ:', email);
+    console.log('🔄 Forgot password request for:', email);
 
     if (!email) {
       return res.status(400).json({ 
@@ -428,12 +432,12 @@ router.post('/forgot-password', async (req, res) => {
     // إنشاء وقت انتهاء الصلاحية (10 دقائق)
     const expiresAt = createExpiryDate(10);
 
-    // حفظ الرمز الجديد
+    // ✅ تم إزالة عمود type من الاستعلام
     await pool.query(
       `INSERT INTO app.otps (
-        identifier, email, type, code, purpose, expires_at, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-      [cleanEmail, cleanEmail, 'email', code, 'reset-password', expiresAt]
+        identifier, email, code, purpose, expires_at, created_at
+      ) VALUES ($1, $2, $3, $4, $5, NOW())`,
+      [cleanEmail, cleanEmail, code, 'reset-password', expiresAt]
     );
 
     console.log(`🔄 Reset code for ${cleanEmail}: ${code}`);
@@ -532,7 +536,7 @@ router.post('/reset-password', async (req, res) => {
 // ============================================
 // ✅ 7. الحصول على ملف المستخدم
 // ============================================
-router.get('/profile/:userId', protect, async (req, res) => { // ✅ استخدام protect
+router.get('/profile/:userId', protect, async (req, res) => {
   try {
     const userResult = await pool.query(
       `SELECT id, full_name, email, avatar, phone, created_at, last_login, login_count
