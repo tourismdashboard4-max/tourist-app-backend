@@ -1,8 +1,8 @@
 // server/src/routes/bookingRoutes.js
 import express from 'express';
 import * as bookingController from '../controllers/booking.controller.js';
-import { protect, authorize } from '../middleware/authMiddleware.js'; // ✅ استيراد protect و authorize من ملف middleware الموحد
-import { validate } from '../middleware/validation.middleware.js';
+import { protect, authorize } from '../middleware/authMiddleware.js';
+import { validate } from '../middleware/validationMiddleware.js'; // ✅ تم التعديل هنا
 import { body } from 'express-validator';
 
 const router = express.Router();
@@ -21,7 +21,6 @@ const ratingValidation = [
   body('rating').isInt({ min: 1, max: 5 }).withMessage('التقييم يجب أن يكون بين 1 و 5')
 ];
 
-// ✅ استخدام protect لجميع المسارات المحمية (بدلاً من authenticate)
 // جميع مسارات الحجوزات تتطلب مصادقة
 router.use(protect);
 
@@ -60,21 +59,21 @@ router.get('/:bookingId', bookingController.getBookingById);
  * @desc    تأكيد حجز (للمرشد فقط)
  * @access  Private (Guide)
  */
-router.put('/:bookingId/confirm', authorize('guide'), bookingController.confirmBooking); // ✅ استخدام authorize
+router.put('/:bookingId/confirm', authorize('guide'), bookingController.confirmBooking);
 
 /**
  * @route   PUT /api/bookings/:bookingId/start
  * @desc    بدء حجز (للمرشد فقط)
  * @access  Private (Guide)
  */
-router.put('/:bookingId/start', authorize('guide'), bookingController.startBooking); // ✅ استخدام authorize
+router.put('/:bookingId/start', authorize('guide'), bookingController.startBooking);
 
 /**
  * @route   PUT /api/bookings/:bookingId/complete
  * @desc    إكمال حجز (للمرشد فقط)
  * @access  Private (Guide)
  */
-router.put('/:bookingId/complete', authorize('guide'), bookingController.completeBooking); // ✅ استخدام authorize
+router.put('/:bookingId/complete', authorize('guide'), bookingController.completeBooking);
 
 /**
  * @route   PUT /api/bookings/:bookingId/cancel
