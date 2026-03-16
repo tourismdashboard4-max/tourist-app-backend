@@ -1,6 +1,7 @@
+// server/src/services/socketService.js
 import { Server as SocketIOServer } from 'socket.io';
 import jwt from 'jsonwebtoken';
-import User from '../models/User.js';
+import { pool } from '../config/database.js';
 
 class SocketService {
   constructor() {
@@ -32,15 +33,23 @@ class SocketService {
         }
 
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        const user = await User.findById(decoded.id).select('-password');
         
-        if (!user) {
+        // البحث عن المستخدم في PostgreSQL
+        const userResult = await pool.query(
+          `SELECT id, full_name as "fullName", email, avatar, type 
+           FROM app.users 
+           WHERE id = $1`,
+          [decoded.id]
+        );
+        
+        if (userResult.rows.length === 0) {
           return next(new Error('المستخدم غير موجود'));
         }
 
-        socket.user = user;
+        socket.user = userResult.rows[0];
         next();
       } catch (error) {
+        console.error('❌ Socket auth error:', error);
         next(new Error('توثيق غير صالح'));
       }
     });
@@ -57,7 +66,7 @@ class SocketService {
    * @param {Object} socket - كائن socket
    */
   handleConnection(socket) {
-    const userId = socket.user._id.toString();
+    const userId = socket.user.id.toString();
     
     console.log(`🔌 مستخدم متصل: ${socket.user.fullName} (${userId})`);
 
@@ -127,7 +136,7 @@ class SocketService {
   handleTyping(socket, data) {
     const { conversationId, isTyping } = data;
     socket.to(`conversation:${conversationId}`).emit('typing', {
-      userId: socket.user._id,
+      userId: socket.user.id,
       isTyping
     });
   }
@@ -141,7 +150,7 @@ class SocketService {
     const { conversationId, messageId } = data;
     socket.to(`conversation:${conversationId}`).emit('message-read', {
       messageId,
-      userId: socket.user._id,
+      userId: socket.user.id,
       readAt: new Date()
     });
   }
