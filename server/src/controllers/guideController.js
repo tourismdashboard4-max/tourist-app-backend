@@ -6,6 +6,88 @@ import { validationResult } from 'express-validator';
 import notificationService from '../services/notificationService.js';
 
 // ============================================
+// @desc    Request upgrade to guide
+// @route   POST /api/guides/upgrade
+// @access  Private
+// ============================================
+export const requestUpgrade = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { fullName, civilId, licenseNumber, phone, experience, specialties } = req.body;
+    const files = req.files;
+
+    // التحقق من عدم وجود طلب سابق
+    const existingRequest = await pool.query(
+      `SELECT id FROM app.guide_registrations 
+       WHERE user_id = $1 AND status = 'pending'`,
+      [userId]
+    );
+
+    if (existingRequest.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'لديك طلب ترقية قيد المراجعة بالفعل'
+      });
+    }
+
+    // معالجة الملفات
+    const documents = {};
+    if (files) {
+      if (files.licenseDocument) {
+        documents.license_document = files.licenseDocument[0].path;
+      }
+      if (files.idDocument) {
+        documents.id_document = files.idDocument[0].path;
+      }
+    }
+
+    // إنشاء طلب الترقية
+    const result = await pool.query(
+      `INSERT INTO app.guide_registrations (
+        user_id, full_name, civil_id, license_number, phone,
+        experience, specialties, documents, status, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+      RETURNING id`,
+      [
+        userId,
+        fullName,
+        civilId,
+        licenseNumber,
+        phone,
+        experience,
+        specialties || null,
+        JSON.stringify(documents),
+        'pending'
+      ]
+    );
+
+    // إرسال إشعار للمشرفين
+    await notificationService.sendToAdmins({
+      type: 'NEW_GUIDE_REQUEST',
+      title: 'طلب ترقية جديد',
+      message: `تم استلام طلب ترقية من ${fullName}`,
+      data: {
+        requestId: result.rows[0].id,
+        userId
+      }
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'تم إرسال طلب الترقية بنجاح',
+      requestId: result.rows[0].id
+    });
+
+  } catch (error) {
+    console.error('❌ Upgrade request error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'فشل إرسال طلب الترقية'
+    });
+  }
+};
+
+// ============================================
 // @desc    Register a new guide (pending approval)
 // @route   POST /api/guides/register
 // @access  Public
@@ -578,6 +660,7 @@ export const getPendingRegistrations = async (req, res) => {
 // ✅ تصدير جميع الدوال
 // ============================================
 export default {
+  requestUpgrade,
   registerGuide,
   loginGuide,
   getGuideProfile,
