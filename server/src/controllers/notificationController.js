@@ -3,7 +3,8 @@ import notificationService from '../services/notificationService.js';
 
 export const getUserNotifications = async (req, res) => {
   try {
-    const userId = req.user._id;
+    // ✅ PostgreSQL تستخدم id وليس _id
+    const userId = req.user.id;
     const { 
       page = 1, 
       limit = 20, 
@@ -29,7 +30,7 @@ export const getUserNotifications = async (req, res) => {
       ...result
     });
   } catch (error) {
-    console.error('Error in getUserNotifications:', error);
+    console.error('❌ Error in getUserNotifications:', error);
     res.status(500).json({
       success: false,
       message: 'حدث خطأ أثناء جلب الإشعارات',
@@ -40,7 +41,7 @@ export const getUserNotifications = async (req, res) => {
 
 export const getUnreadCount = async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = req.user.id;
     const count = await notificationService.getUnreadCount(userId);
 
     res.json({
@@ -48,7 +49,7 @@ export const getUnreadCount = async (req, res) => {
       count
     });
   } catch (error) {
-    console.error('Error in getUnreadCount:', error);
+    console.error('❌ Error in getUnreadCount:', error);
     res.status(500).json({
       success: false,
       message: 'حدث خطأ أثناء جلب عدد الإشعارات',
@@ -59,7 +60,7 @@ export const getUnreadCount = async (req, res) => {
 
 export const markAsRead = async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = req.user.id;
     const { notificationId } = req.params;
 
     const notification = await notificationService.markAsRead(userId, notificationId);
@@ -77,7 +78,7 @@ export const markAsRead = async (req, res) => {
       notification
     });
   } catch (error) {
-    console.error('Error in markAsRead:', error);
+    console.error('❌ Error in markAsRead:', error);
     res.status(500).json({
       success: false,
       message: 'حدث خطأ أثناء تحديث الإشعار',
@@ -88,7 +89,7 @@ export const markAsRead = async (req, res) => {
 
 export const markAllAsRead = async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = req.user.id;
     const result = await notificationService.markAllAsRead(userId);
 
     res.json({
@@ -97,7 +98,7 @@ export const markAllAsRead = async (req, res) => {
       modifiedCount: result.modifiedCount
     });
   } catch (error) {
-    console.error('Error in markAllAsRead:', error);
+    console.error('❌ Error in markAllAsRead:', error);
     res.status(500).json({
       success: false,
       message: 'حدث خطأ أثناء تحديث الإشعارات',
@@ -108,7 +109,7 @@ export const markAllAsRead = async (req, res) => {
 
 export const deleteNotification = async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = req.user.id;
     const { notificationId } = req.params;
 
     const notification = await notificationService.deleteNotification(userId, notificationId);
@@ -125,7 +126,7 @@ export const deleteNotification = async (req, res) => {
       message: 'تم حذف الإشعار بنجاح'
     });
   } catch (error) {
-    console.error('Error in deleteNotification:', error);
+    console.error('❌ Error in deleteNotification:', error);
     res.status(500).json({
       success: false,
       message: 'حدث خطأ أثناء حذف الإشعار',
@@ -136,7 +137,7 @@ export const deleteNotification = async (req, res) => {
 
 export const deleteAllNotifications = async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = req.user.id;
     const result = await notificationService.deleteAllNotifications(userId);
 
     res.json({
@@ -145,7 +146,7 @@ export const deleteAllNotifications = async (req, res) => {
       deletedCount: result.modifiedCount
     });
   } catch (error) {
-    console.error('Error in deleteAllNotifications:', error);
+    console.error('❌ Error in deleteAllNotifications:', error);
     res.status(500).json({
       success: false,
       message: 'حدث خطأ أثناء حذف الإشعارات',
@@ -157,7 +158,7 @@ export const deleteAllNotifications = async (req, res) => {
 // دالة لإنشاء إشعار تجريبي (للتطوير)
 export const createTestNotification = async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = req.user.id;
     const { title, message, type = 'system', priority = 'medium' } = req.body;
 
     const notification = await notificationService.create(userId, {
@@ -173,7 +174,7 @@ export const createTestNotification = async (req, res) => {
       notification
     });
   } catch (error) {
-    console.error('Error in createTestNotification:', error);
+    console.error('❌ Error in createTestNotification:', error);
     res.status(500).json({
       success: false,
       message: 'حدث خطأ أثناء إنشاء الإشعار',
