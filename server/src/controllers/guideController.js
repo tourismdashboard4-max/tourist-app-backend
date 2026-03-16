@@ -16,7 +16,7 @@ export const requestUpgrade = async (req, res) => {
     const { fullName, civilId, licenseNumber, phone, experience, specialties } = req.body;
     const files = req.files;
 
-    // ✅ التحقق من عدم وجود طلب سابق - باستخدام guide_upgrade_requests
+    // ✅ التحقق من عدم وجود طلب سابق
     const existingRequest = await pool.query(
       `SELECT id FROM app.guide_upgrade_requests 
        WHERE user_id = $1 AND status = 'pending'`,
@@ -41,7 +41,7 @@ export const requestUpgrade = async (req, res) => {
       }
     }
 
-    // ✅ إنشاء طلب الترقية - باستخدام guide_upgrade_requests
+    // ✅ إنشاء طلب الترقية
     const result = await pool.query(
       `INSERT INTO app.guide_upgrade_requests (
         user_id, full_name, civil_id, license_number, phone,
@@ -61,16 +61,31 @@ export const requestUpgrade = async (req, res) => {
       ]
     );
 
-    // إرسال إشعار للمشرفين
-    await notificationService.sendToAdmins({
-      type: 'NEW_GUIDE_REQUEST',
-      title: 'طلب ترقية جديد',
-      message: `تم استلام طلب ترقية من ${fullName}`,
-      data: {
-        requestId: result.rows[0].id,
-        userId
+    // ✅ إرسال إشعار للمشرفين - بدون استخدام sendToAdmins
+    try {
+      // البحث عن المشرفين
+      const admins = await pool.query(
+        "SELECT id FROM app.users WHERE type = 'admin' OR role = 'admin'"
+      );
+      
+      // إرسال إشعار لكل مشرف
+      for (const admin of admins.rows) {
+        await notificationService.create(admin.id, {
+          type: 'NEW_GUIDE_REQUEST',
+          title: 'طلب ترقية جديد',
+          message: `تم استلام طلب ترقية من ${fullName}`,
+          data: {
+            requestId: result.rows[0].id,
+            userId
+          }
+        });
       }
-    });
+      
+      console.log(`✅ تم إرسال إشعارات إلى ${admins.rows.length} مشرف`);
+    } catch (notifError) {
+      console.error('⚠️ تعذر إرسال الإشعارات للمشرفين:', notifError);
+      // لا نريد فشل الطلب بسبب فشل الإشعارات
+    }
 
     res.status(201).json({
       success: true,
@@ -119,7 +134,7 @@ export const registerGuide = async (req, res) => {
       });
     }
 
-    // ✅ Check if already has pending registration - باستخدام guide_upgrade_requests
+    // Check if already has pending registration
     const existingRegistration = await pool.query(
       `SELECT id FROM app.guide_upgrade_requests 
        WHERE (civil_id = $1 OR license_number = $2 OR email = $3) AND status = 'pending'`,
@@ -133,7 +148,7 @@ export const registerGuide = async (req, res) => {
       });
     }
 
-    // ✅ Create new registration - باستخدام guide_upgrade_requests
+    // Create new registration
     const registrationResult = await pool.query(
       `INSERT INTO app.guide_upgrade_requests (
         full_name, civil_id, license_number, email, phone, experience,
@@ -156,17 +171,29 @@ export const registerGuide = async (req, res) => {
 
     const registration = registrationResult.rows[0];
 
-    // إرسال إشعار للمشرفين داخل التطبيق
-    await notificationService.sendToAdmins({
-      type: 'NEW_GUIDE_REQUEST',
-      title: 'طلب تسجيل مرشد جديد',
-      message: `تم استلام طلب تسجيل جديد من ${fullName}`,
-      data: {
-        registrationId: registration.id,
-        guideName: fullName,
-        email: email
+    // ✅ إرسال إشعار للمشرفين - بدون استخدام sendToAdmins
+    try {
+      const admins = await pool.query(
+        "SELECT id FROM app.users WHERE type = 'admin' OR role = 'admin'"
+      );
+      
+      for (const admin of admins.rows) {
+        await notificationService.create(admin.id, {
+          type: 'NEW_GUIDE_REQUEST',
+          title: 'طلب تسجيل مرشد جديد',
+          message: `تم استلام طلب تسجيل جديد من ${fullName}`,
+          data: {
+            registrationId: registration.id,
+            guideName: fullName,
+            email: email
+          }
+        });
       }
-    });
+      
+      console.log(`✅ تم إرسال إشعارات إلى ${admins.rows.length} مشرف`);
+    } catch (notifError) {
+      console.error('⚠️ تعذر إرسال الإشعارات للمشرفين:', notifError);
+    }
 
     res.status(201).json({
       success: true,
@@ -496,7 +523,7 @@ export const approveGuideRegistration = async (req, res) => {
     const { registrationId } = req.params;
     const adminId = req.user.id;
 
-    // ✅ Get registration details - باستخدام guide_upgrade_requests
+    // Get registration details
     const registrationResult = await pool.query(
       'SELECT * FROM app.guide_upgrade_requests WHERE id = $1 AND status = $2',
       [registrationId, 'pending']
@@ -542,7 +569,7 @@ export const approveGuideRegistration = async (req, res) => {
 
     const newGuideId = guideResult.rows[0].id;
 
-    // ✅ Update registration status - باستخدام guide_upgrade_requests
+    // Update registration status
     await pool.query(
       `UPDATE app.guide_upgrade_requests 
        SET status = 'approved', processed_by = $1, processed_at = NOW()
@@ -586,7 +613,6 @@ export const rejectGuideRegistration = async (req, res) => {
     const { reason } = req.body;
     const adminId = req.user.id;
 
-    // ✅ باستخدام guide_upgrade_requests
     const result = await pool.query(
       `UPDATE app.guide_upgrade_requests 
        SET status = 'rejected', 
@@ -635,7 +661,6 @@ export const rejectGuideRegistration = async (req, res) => {
 // ============================================
 export const getPendingRegistrations = async (req, res) => {
   try {
-    // ✅ باستخدام guide_upgrade_requests
     const registrations = await pool.query(
       `SELECT id, full_name, email, phone, civil_id, license_number,
               experience, specialties, created_at
