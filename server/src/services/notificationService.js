@@ -510,6 +510,84 @@ class NotificationService {
       data: systemData.data
     });
   }
+
+  /**
+   * إرسال إشعار بمحادثة دعم جديدة - تمت الإضافة حديثاً
+   * @param {string} chatId - معرف المحادثة
+   * @param {string} userId - معرف المستخدم
+   * @param {string} supportId - معرف موظف الدعم (اختياري)
+   * @param {string} message - نص الرسالة
+   * @returns {Promise<boolean>} نجاح أو فشل
+   */
+  async sendNewChatNotification(chatId, userId, supportId, message) {
+    try {
+      console.log(`📨 [sendNewChatNotification] Sending notification for chat: ${chatId}`);
+      
+      // 1️⃣ إشعار للمستخدم
+      await this.create(userId, {
+        title: '💬 محادثة دعم جديدة',
+        message: message || 'تم إنشاء محادثة دعم جديدة. سيتم الرد عليك في أقرب وقت.',
+        type: 'chat',
+        priority: 'high',
+        data: { 
+          chatId,
+          type: 'support'
+        },
+        actionUrl: `/chat/${chatId}`
+      });
+
+      // 2️⃣ إذا كان هناك موظف دعم، أرسل له إشعاراً أيضاً
+      if (supportId) {
+        // الحصول على معلومات المستخدم
+        const userResult = await pool.query(
+          'SELECT full_name, email FROM app.users WHERE id = $1',
+          [userId]
+        );
+        
+        const userName = userResult.rows[0]?.full_name || 'مستخدم جديد';
+        
+        await this.create(supportId, {
+          title: '🆕 طلب دعم جديد',
+          message: `مستخدم ${userName} يحتاج إلى مساعدة`,
+          type: 'support',
+          priority: 'high',
+          data: { 
+            chatId,
+            userId,
+            userName: userName
+          },
+          actionUrl: `/support/chats/${chatId}`
+        });
+      }
+
+      // 3️⃣ إرسال WebSocket notification
+      const io = getIO();
+      if (io) {
+        // إشعار للمستخدم
+        io.to(`user-${userId}`).emit('new_chat_notification', {
+          chatId,
+          message: 'تم إنشاء محادثة دعم جديدة',
+          type: 'support'
+        });
+
+        // إشعار لموظفي الدعم
+        if (supportId) {
+          io.to(`support-${supportId}`).emit('new_support_request', {
+            chatId,
+            userId,
+            message: 'طلب دعم جديد'
+          });
+        }
+      }
+
+      console.log(`✅ [sendNewChatNotification] Notification sent successfully for chat: ${chatId}`);
+      return true;
+      
+    } catch (error) {
+      console.error('❌ [sendNewChatNotification] Error:', error);
+      return false;
+    }
+  }
 }
 
 export default new NotificationService();
