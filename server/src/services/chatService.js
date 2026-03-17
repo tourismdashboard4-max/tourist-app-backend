@@ -83,7 +83,7 @@ class ChatService {
   }
 
   /**
-   * إنشاء محادثة دعم
+   * إنشاء محادثة دعم (معدلة - تم إزالة metadata)
    * @param {string} userId - معرف المستخدم
    * @param {string} subject - موضوع المحادثة
    * @returns {Promise<Object>} المحادثة المنشأة
@@ -105,7 +105,7 @@ class ChatService {
       if (supportUserResult.rows.length === 0) {
         console.log('⚠️ حساب الدعم غير موجود، سيتم إنشاؤه تلقائياً');
         
-        // ✅ إنشاء حساب دعم تلقائياً - تم إزالة updated_at
+        // إنشاء حساب دعم تلقائياً - تم إزالة updated_at
         const newSupportUserResult = await client.query(
           `INSERT INTO app.users (
             full_name, email, password_hash, type, role, created_at
@@ -141,12 +141,12 @@ class ChatService {
       if (chatResult.rows.length === 0) {
         const chatId = `CHAT-SUPPORT-${Date.now()}-${uuidv4().slice(0, 6)}`;
 
-        // إنشاء محادثة جديدة
+        // ✅ إنشاء محادثة جديدة - بدون metadata
         chatResult = await client.query(
           `INSERT INTO app.chats (
             chat_id, participants, type, is_active, settings, stats,
-            metadata, created_at, updated_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+            created_at, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
           RETURNING *`,
           [
             chatId,
@@ -160,9 +160,6 @@ class ChatService {
             JSON.stringify({
               totalMessages: 0,
               unreadCount: 0
-            }),
-            JSON.stringify({
-              subject: subject || 'استفسار دعم فني'
             })
           ]
         );
