@@ -56,7 +56,6 @@ router.post('/send-otp', async (req, res) => {
     const expiresAt = createExpiryDate(10); // 10 دقائق
     console.log('⏰ OTP will expire at:', expiresAt.toISOString());
 
-    // ✅ تم إزالة عمود type من الاستعلام
     await pool.query(
       `INSERT INTO app.otps (
         identifier, email, code, purpose, expires_at, created_at
@@ -182,7 +181,7 @@ router.post('/verify-otp', async (req, res) => {
 });
 
 // ============================================
-// ✅ 3. إنشاء مستخدم جديد
+// ✅ 3. إنشاء مستخدم جديد (معدل - تم إزالة user_type)
 // ============================================
 router.post('/register', async (req, res) => {
   try {
@@ -238,16 +237,15 @@ router.post('/register', async (req, res) => {
       { expiresIn: '30d' }
     );
 
-    // إنشاء محفظة للمستخدم
+    // ✅ إنشاء محفظة للمستخدم - تم إزالة user_type
     const walletResult = await pool.query(
       `INSERT INTO app.wallets (
-        wallet_number, user_id, user_type, balance, currency, status, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, NOW())
+        wallet_number, user_id, balance, currency, status, created_at
+      ) VALUES ($1, $2, $3, $4, $5, NOW())
       RETURNING id, wallet_number, balance`,
       [
         `WLT-${Date.now()}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`,
         user.id,
-        'tourist',
         0,
         'SAR',
         'active'
@@ -432,7 +430,6 @@ router.post('/forgot-password', async (req, res) => {
     // إنشاء وقت انتهاء الصلاحية (10 دقائق)
     const expiresAt = createExpiryDate(10);
 
-    // ✅ تم إزالة عمود type من الاستعلام
     await pool.query(
       `INSERT INTO app.otps (
         identifier, email, code, purpose, expires_at, created_at
@@ -573,6 +570,144 @@ router.get('/profile/:userId', protect, async (req, res) => {
     res.status(500).json({ 
       success: false, 
       message: 'حدث خطأ في تحميل الملف الشخصي' 
+    });
+  }
+});
+
+// ============================================
+// ✅ إرسال رمز التحقق للجوال
+// ============================================
+router.post('/send-phone-otp', protect, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { phone } = req.body;
+
+    console.log('📤 Send phone OTP request:', { userId, phone });
+
+    if (!phone) {
+      return res.status(400).json({
+        success: false,
+        message: 'رقم الجوال مطلوب'
+      });
+    }
+
+    // التحقق من صيغة الرقم السعودي
+    const saudiPhoneRegex = /^(05|5)[0-9]{8}$|^\+9665[0-9]{8}$/;
+    const cleanPhone = phone.replace(/\s/g, '');
+    
+    if (!saudiPhoneRegex.test(cleanPhone)) {
+      return res.status(400).json({
+        success: false,
+        message: 'رقم الجوال غير صحيح. الرجاء إدخال رقم سعودي صحيح'
+      });
+    }
+
+    // التحقق من عدم استخدام الرقم من قبل مستخدم آخر
+    const existingUser = await pool.query(
+      'SELECT id FROM app.users WHERE phone = $1',
+      [cleanPhone]
+    );
+    
+    if (existingUser.rows.length > 0 && existingUser.rows[0].id !== userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'رقم الجوال مستخدم بالفعل'
+      });
+    }
+
+    // إنشاء رمز تحقق عشوائي
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    
+    // إنشاء وقت انتهاء الصلاحية
+    const expiresAt = createExpiryDate(10);
+    
+    // حفظ الرمز في قاعدة البيانات
+    await pool.query(
+      `INSERT INTO app.otps (
+        identifier, phone, code, purpose, user_id, expires_at, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+      [cleanPhone, cleanPhone, code, 'phone-verification', userId, expiresAt]
+    );
+
+    console.log(`📱 Phone OTP for user ${userId}: ${code}`);
+
+    res.json({
+      success: true,
+      message: 'تم إرسال رمز التحقق إلى جوالك',
+      expiresIn: 600,
+      devCode: process.env.NODE_ENV === 'development' ? code : undefined
+    });
+
+  } catch (error) {
+    console.error('❌ Send phone OTP error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'فشل إرسال رمز التحقق'
+    });
+  }
+});
+
+// ============================================
+// ✅ التحقق من رمز الجوال
+// ============================================
+router.post('/verify-phone-otp', protect, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { code } = req.body;
+
+    console.log('📤 Verify phone OTP request:', { userId, code });
+
+    if (!code) {
+      return res.status(400).json({
+        success: false,
+        message: 'رمز التحقق مطلوب'
+      });
+    }
+
+    // البحث عن الرمز الصحيح
+    const otpResult = await pool.query(
+      `SELECT * FROM app.otps 
+       WHERE user_id = $1 AND code = $2 AND purpose = $3 
+         AND verified = false AND expires_at > NOW()
+       ORDER BY created_at DESC LIMIT 1`,
+      [userId, code, 'phone-verification']
+    );
+
+    const otpRecord = otpResult.rows[0];
+
+    if (!otpRecord) {
+      return res.status(400).json({
+        success: false,
+        message: 'رمز التحقق غير صحيح أو منتهي الصلاحية'
+      });
+    }
+
+    // تحديث رقم الجوال في ملف المستخدم
+    const phone = otpRecord.identifier;
+    
+    await pool.query(
+      `UPDATE app.users 
+       SET phone = $1, phone_verified = true, updated_at = NOW()
+       WHERE id = $2`,
+      [phone, userId]
+    );
+
+    // إلغاء الرمز بعد الاستخدام
+    await pool.query(
+      'UPDATE app.otps SET verified = true WHERE id = $1',
+      [otpRecord.id]
+    );
+
+    res.json({
+      success: true,
+      message: 'تم التحقق من رقم الجوال بنجاح'
+    });
+
+  } catch (error) {
+    console.error('❌ Verify phone OTP error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'فشل التحقق'
     });
   }
 });
