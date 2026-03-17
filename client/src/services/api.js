@@ -189,7 +189,7 @@ export const api = {
           email, 
           code, 
           newPassword,
-          purpose: 'reset-password' // ✅ إضافة الغرض
+          purpose: 'reset-password'
         })
       });
 
@@ -643,7 +643,7 @@ export const api = {
   },
 
   // ============================================
-  // 🔔 NOTIFICATION SERVICES - الإشعارات
+  // 🔔 NOTIFICATION SERVICES - الإشعارات (مع تحسين التشخيص)
   // ============================================
 
   // ✅ الحصول على إشعارات المستخدم
@@ -651,8 +651,16 @@ export const api = {
     try {
       const token = localStorage.getItem('token');
       const queryParams = new URLSearchParams(params).toString();
+      const url = `${API_BASE_URL}/api/notifications${queryParams ? `?${queryParams}` : ''}`;
       
-      const response = await fetch(`${API_BASE_URL}/api/notifications?${queryParams}`, {
+      console.log('🔍 [getUserNotifications] ==========');
+      console.log('🔍 URL:', url);
+      console.log('🔍 Token exists:', !!token);
+      console.log('🔍 Token (first 20 chars):', token?.substring(0, 20) + '...');
+      console.log('🔍 Params:', params);
+      console.log('🔍 Query string:', queryParams);
+      
+      const response = await fetch(url, {
         method: 'GET',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -660,15 +668,25 @@ export const api = {
         }
       });
 
+      console.log('🔍 Response status:', response.status);
+      console.log('🔍 Response ok:', response.ok);
+      console.log('🔍 Response headers:', {
+        'content-type': response.headers.get('content-type'),
+      });
+      
       const data = await response.json();
+      console.log('🔍 Response data:', JSON.stringify(data, null, 2));
+      console.log('🔍 =================================');
       
       if (!response.ok) {
-        throw new Error(data.message || 'فشل تحميل الإشعارات');
+        throw new Error(data.message || `فشل تحميل الإشعارات (${response.status})`);
       }
 
       return data;
     } catch (error) {
       console.error('❌ Get notifications error:', error);
+      console.error('❌ Error name:', error.name);
+      console.error('❌ Error message:', error.message);
       throw error;
     }
   },
@@ -677,8 +695,12 @@ export const api = {
   async getNotificationStats() {
     try {
       const token = localStorage.getItem('token');
+      const url = `${API_BASE_URL}/api/notifications/stats`;
       
-      const response = await fetch(`${API_BASE_URL}/api/notifications/stats`, {
+      console.log('📊 [getNotificationStats] ==========');
+      console.log('📊 URL:', url);
+      
+      const response = await fetch(url, {
         method: 'GET',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -686,7 +708,11 @@ export const api = {
         }
       });
 
+      console.log('📊 Response status:', response.status);
+      
       const data = await response.json();
+      console.log('📊 Response data:', data);
+      console.log('📊 =================================');
       
       if (!response.ok) {
         throw new Error(data.message || 'فشل تحميل الإحصائيات');
@@ -703,8 +729,13 @@ export const api = {
   async markNotificationAsRead(notificationId) {
     try {
       const token = localStorage.getItem('token');
+      const url = `${API_BASE_URL}/api/notifications/${notificationId}/read`;
       
-      const response = await fetch(`${API_BASE_URL}/api/notifications/${notificationId}/read`, {
+      console.log('📝 [markNotificationAsRead] ==========');
+      console.log('📝 URL:', url);
+      console.log('📝 Notification ID:', notificationId);
+      
+      const response = await fetch(url, {
         method: 'PUT',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -712,7 +743,11 @@ export const api = {
         }
       });
 
+      console.log('📝 Response status:', response.status);
+      
       const data = await response.json();
+      console.log('📝 Response data:', data);
+      console.log('📝 =================================');
       
       if (!response.ok) {
         throw new Error(data.message || 'فشل تحديث الإشعار');
@@ -729,8 +764,12 @@ export const api = {
   async markAllNotificationsAsRead() {
     try {
       const token = localStorage.getItem('token');
+      const url = `${API_BASE_URL}/api/notifications/read-all`;
       
-      const response = await fetch(`${API_BASE_URL}/api/notifications/read-all`, {
+      console.log('📝 [markAllNotificationsAsRead] ==========');
+      console.log('📝 URL:', url);
+      
+      const response = await fetch(url, {
         method: 'PUT',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -738,7 +777,11 @@ export const api = {
         }
       });
 
+      console.log('📝 Response status:', response.status);
+      
       const data = await response.json();
+      console.log('📝 Response data:', data);
+      console.log('📝 =================================');
       
       if (!response.ok) {
         throw new Error(data.message || 'فشل تحديث الإشعارات');
@@ -755,8 +798,13 @@ export const api = {
   async deleteNotification(notificationId) {
     try {
       const token = localStorage.getItem('token');
+      const url = `${API_BASE_URL}/api/notifications/${notificationId}`;
       
-      const response = await fetch(`${API_BASE_URL}/api/notifications/${notificationId}`, {
+      console.log('🗑️ [deleteNotification] ==========');
+      console.log('🗑️ URL:', url);
+      console.log('🗑️ Notification ID:', notificationId);
+      
+      const response = await fetch(url, {
         method: 'DELETE',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -764,7 +812,11 @@ export const api = {
         }
       });
 
+      console.log('🗑️ Response status:', response.status);
+      
       const data = await response.json();
+      console.log('🗑️ Response data:', data);
+      console.log('🗑️ =================================');
       
       if (!response.ok) {
         throw new Error(data.message || 'فشل حذف الإشعار');
@@ -781,8 +833,13 @@ export const api = {
   async deleteMultipleNotifications(notificationIds) {
     try {
       const token = localStorage.getItem('token');
+      const url = `${API_BASE_URL}/api/notifications/delete-multiple`;
       
-      const response = await fetch(`${API_BASE_URL}/api/notifications/delete-multiple`, {
+      console.log('🗑️ [deleteMultipleNotifications] ==========');
+      console.log('🗑️ URL:', url);
+      console.log('🗑️ Notification IDs:', notificationIds);
+      
+      const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -791,7 +848,11 @@ export const api = {
         body: JSON.stringify({ notificationIds })
       });
 
+      console.log('🗑️ Response status:', response.status);
+      
       const data = await response.json();
+      console.log('🗑️ Response data:', data);
+      console.log('🗑️ =================================');
       
       if (!response.ok) {
         throw new Error(data.message || 'فشل حذف الإشعارات');
@@ -808,8 +869,14 @@ export const api = {
   async replyToNotification(notificationId, message) {
     try {
       const token = localStorage.getItem('token');
+      const url = `${API_BASE_URL}/api/notifications/reply`;
       
-      const response = await fetch(`${API_BASE_URL}/api/notifications/reply`, {
+      console.log('💬 [replyToNotification] ==========');
+      console.log('💬 URL:', url);
+      console.log('💬 Notification ID:', notificationId);
+      console.log('💬 Message:', message);
+      
+      const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -818,7 +885,11 @@ export const api = {
         body: JSON.stringify({ notificationId, message })
       });
 
+      console.log('💬 Response status:', response.status);
+      
       const data = await response.json();
+      console.log('💬 Response data:', data);
+      console.log('💬 =================================');
       
       if (!response.ok) {
         throw new Error(data.message || 'فشل إرسال الرد');
@@ -832,36 +903,51 @@ export const api = {
   },
 
   // ============================================
-  // 💬 CHAT SERVICES - خدمات المحادثات
+  // 💬 CHAT SERVICES - خدمات المحادثات (محسنة)
   // ============================================
 
-  // ✅ الحصول على جميع محادثات المستخدم
+  // ✅ الحصول على جميع محادثات المستخدم - نسخة محسنة مع معالجة الأخطاء
   async getUserConversations() {
     try {
       const token = localStorage.getItem('token');
       
+      if (!token) {
+        console.log('⚠️ No token found for getUserConversations');
+        return { success: false, conversations: [] };
+      }
+      
+      console.log('📤 Fetching user conversations...');
+      
       const response = await fetch(`${API_BASE_URL}/api/chats`, {
         method: 'GET',
         headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         }
       });
 
       const data = await response.json();
+      console.log('📥 Conversations response:', data);
       
       if (!response.ok) {
-        throw new Error(data.message || 'فشل تحميل المحادثات');
+        console.error('❌ Conversations error response:', data);
+        // بدلاً من رمي خطأ، نعيد مصفوفة فارغة
+        return { success: false, conversations: [], error: data.message };
       }
 
-      return data;
+      // التأكد من أن البيانات بالصيغة الصحيحة
+      return {
+        success: true,
+        conversations: data.conversations || data.data?.conversations || []
+      };
     } catch (error) {
       console.error('❌ Get conversations error:', error);
-      throw error;
+      // لا نريد إيقاف التطبيق بسبب فشل جلب المحادثات
+      return { success: false, conversations: [], error: error.message };
     }
   },
 
-  // ✅ بدء محادثة دعم جديدة - نسخة معدلة تقبل object
+  // ✅ بدء محادثة دعم جديدة - نسخة محسنة مع معالجة أفضل للأخطاء
   async startSupportChat(data) {
     // إذا كان data عبارة عن string (للتوافق مع الكود القديم)
     if (typeof data === 'string') {
@@ -871,12 +957,16 @@ export const api = {
     try {
       const token = localStorage.getItem('token');
       
+      if (!token) {
+        throw new Error('No authentication token found');
+      }
+      
       console.log('📤 Starting support chat with data:', data);
       
       const response = await fetch(`${API_BASE_URL}/api/chats/support`, {
         method: 'POST',
         headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify(data)
@@ -886,7 +976,15 @@ export const api = {
       console.log('📥 Support chat response:', responseData);
       
       if (!response.ok) {
-        throw new Error(responseData.message || 'فشل بدء محادثة الدعم');
+        // رسالة خطأ مخصصة
+        let errorMessage = responseData.message || 'فشل بدء محادثة الدعم';
+        
+        // إذا كان الخطأ يتعلق بعمود status، نعرض رسالة مناسبة
+        if (errorMessage.includes('status') || errorMessage.includes('column')) {
+          errorMessage = 'خدمة الدعم الفني قيد التحديث، يرجى المحاولة لاحقاً';
+        }
+        
+        throw new Error(errorMessage);
       }
 
       return responseData;
@@ -901,10 +999,14 @@ export const api = {
     try {
       const token = localStorage.getItem('token');
       
+      if (!token) {
+        throw new Error('No authentication token found');
+      }
+      
       const response = await fetch(`${API_BASE_URL}/api/chats`, {
         method: 'POST',
         headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({ participantId, type, bookingId })
@@ -928,12 +1030,16 @@ export const api = {
     try {
       const token = localStorage.getItem('token');
       
+      if (!token) {
+        throw new Error('No authentication token found');
+      }
+      
       const response = await fetch(
         `${API_BASE_URL}/api/chats/${conversationId}/messages?page=${page}&limit=${limit}`,
         {
           method: 'GET',
           headers: {
-            'Authorization': token ? `Bearer ${token}` : '',
+            'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
           }
         }
@@ -957,10 +1063,14 @@ export const api = {
     try {
       const token = localStorage.getItem('token');
       
+      if (!token) {
+        throw new Error('No authentication token found');
+      }
+      
       const response = await fetch(`${API_BASE_URL}/api/chats/message/text`, {
         method: 'POST',
         headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({ chatId, content })
@@ -984,10 +1094,14 @@ export const api = {
     try {
       const token = localStorage.getItem('token');
       
+      if (!token) {
+        throw new Error('No authentication token found');
+      }
+      
       const response = await fetch(`${API_BASE_URL}/api/chats/message/image`, {
         method: 'POST',
         headers: {
-          'Authorization': token ? `Bearer ${token}` : ''
+          'Authorization': `Bearer ${token}`
         },
         body: formData
       });
@@ -1010,10 +1124,14 @@ export const api = {
     try {
       const token = localStorage.getItem('token');
       
+      if (!token) {
+        throw new Error('No authentication token found');
+      }
+      
       const response = await fetch(`${API_BASE_URL}/api/chats/message/file`, {
         method: 'POST',
         headers: {
-          'Authorization': token ? `Bearer ${token}` : ''
+          'Authorization': `Bearer ${token}`
         },
         body: formData
       });
@@ -1036,10 +1154,14 @@ export const api = {
     try {
       const token = localStorage.getItem('token');
       
+      if (!token) {
+        throw new Error('No authentication token found');
+      }
+      
       const response = await fetch(`${API_BASE_URL}/api/chats/${conversationId}/rate`, {
         method: 'POST',
         headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({ rating })
@@ -1063,10 +1185,14 @@ export const api = {
     try {
       const token = localStorage.getItem('token');
       
+      if (!token) {
+        throw new Error('No authentication token found');
+      }
+      
       const response = await fetch(`${API_BASE_URL}/api/chats/message/${messageId}/read`, {
         method: 'PUT',
         headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         }
       });
