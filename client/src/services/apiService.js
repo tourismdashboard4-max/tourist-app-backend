@@ -1,398 +1,269 @@
-// client/src/services/apiService.js
-import axios from 'axios';
+// ===================== Chat APIs =====================
+/**
+ * جلب جميع محادثات المستخدم
+ * @returns {Promise<Object>} قائمة المحادثات
+ */
+async getUserConversations() {
+  try {
+    const response = await this.api.get('/api/chats');
+    console.log('📥 Conversations response:', response.data);
+    
+    // تحويل البيانات إلى الشكل المطلوب
+    const conversations = response.data?.conversations || response.data?.data?.conversations || [];
+    
+    return {
+      success: true,
+      conversations: conversations
+    };
+  } catch (error) {
+    console.error('❌ Error fetching conversations:', error);
+    return { 
+      success: false, 
+      conversations: [],
+      error: error.response?.data?.message || 'فشل تحميل المحادثات'
+    };
+  }
+},
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5002';
+/**
+ * جلب رسائل محادثة محددة
+ * @param {string} conversationId - معرف المحادثة
+ * @param {number} page - رقم الصفحة
+ * @param {number} limit - عدد الرسائل
+ * @returns {Promise<Object>} الرسائل
+ */
+async getConversationMessages(conversationId, page = 1, limit = 50) {
+  try {
+    console.log(`📤 Fetching messages for conversation: ${conversationId}, page: ${page}`);
+    
+    const response = await this.api.get(
+      `/api/chats/${conversationId}/messages?page=${page}&limit=${limit}`
+    );
 
-class ApiService {
-  constructor() {
-    this.api = axios.create({
-      baseURL: API_BASE_URL,
+    console.log('📥 Messages response:', response.data);
+    
+    const messages = response.data?.messages || response.data?.data?.messages || [];
+    const pagination = response.data?.pagination || response.data?.data?.pagination || {};
+    
+    return {
+      success: true,
+      messages: messages,
+      hasMore: pagination.currentPage < pagination.totalPages,
+      pagination: pagination
+    };
+  } catch (error) {
+    console.error('❌ Error fetching messages:', error);
+    return { 
+      success: false, 
+      messages: [], 
+      hasMore: false,
+      error: error.response?.data?.message || 'فشل تحميل الرسائل'
+    };
+  }
+},
+
+/**
+ * إرسال رسالة نصية
+ * @param {string} conversationId - معرف المحادثة
+ * @param {string} content - نص الرسالة
+ * @returns {Promise<Object>} نتيجة الإرسال
+ */
+async sendMessage(conversationId, content) {
+  try {
+    console.log(`📤 Sending message to conversation: ${conversationId}`);
+    
+    const response = await this.api.post('/api/chats/message', {
+      chatId: conversationId,
+      content: content,
+      type: 'text'
+    });
+
+    console.log('📥 Send message response:', response.data);
+    
+    return {
+      success: true,
+      message: response.data.message || response.data,
+      data: response.data
+    };
+  } catch (error) {
+    console.error('❌ Error sending message:', error);
+    return { 
+      success: false, 
+      error: error.response?.data?.message || 'فشل إرسال الرسالة'
+    };
+  }
+},
+
+/**
+ * جلب معلومات محادثة محددة
+ * @param {string} conversationId - معرف المحادثة
+ * @returns {Promise<Object>} معلومات المحادثة
+ */
+async getConversation(conversationId) {
+  try {
+    console.log(`📤 Fetching conversation details: ${conversationId}`);
+    
+    const response = await this.api.get(`/api/chats/${conversationId}`);
+
+    console.log('📥 Conversation details response:', response.data);
+    
+    const conversation = response.data?.conversation || response.data?.data || response.data;
+    
+    return {
+      success: true,
+      conversation: conversation
+    };
+  } catch (error) {
+    console.error('❌ Error fetching conversation:', error);
+    return { 
+      success: false, 
+      conversation: null,
+      error: error.response?.data?.message || 'فشل تحميل معلومات المحادثة'
+    };
+  }
+},
+
+/**
+ * إرسال رسالة ملف
+ * @param {FormData} formData - بيانات الملف
+ * @returns {Promise<Object>} نتيجة الإرسال
+ */
+async sendFileMessage(formData) {
+  try {
+    console.log('📤 Sending file message');
+    
+    const token = localStorage.getItem('token');
+    const response = await axios.post(`${API_BASE_URL}/api/chats/message/file`, formData, {
       headers: {
-        'Content-Type': 'application/json',
+        'Content-Type': 'multipart/form-data',
+        'Authorization': token ? `Bearer ${token}` : ''
       },
       withCredentials: true
     });
 
-    // Interceptor للطلبات
-    this.api.interceptors.request.use(
-      (config) => {
-        const token = localStorage.getItem('token');
-        if (token) {
-          config.headers.Authorization = `Bearer ${token}`;
-        }
-        console.log(`📤 ${config.method.toUpperCase()} ${config.url}`);
-        return config;
-      },
-      (error) => Promise.reject(error)
-    );
-
-    // Interceptor للردود
-    this.api.interceptors.response.use(
-      (response) => {
-        console.log(`📥 ${response.status} ${response.config.url}`);
-        return response;
-      },
-      async (error) => {
-        console.error(`❌ ${error.config?.method?.toUpperCase()} ${error.config?.url}`, error.response?.status);
-        
-        const originalRequest = error.config;
-
-        // تجديد التوكن إذا انتهت صلاحيته
-        if (error.response?.status === 401 && !originalRequest?._retry) {
-          originalRequest._retry = true;
-          try {
-            const refreshToken = localStorage.getItem('refreshToken');
-            const response = await this.api.post('/api/auth/refresh', { refreshToken });
-            if (response.data.token) {
-              localStorage.setItem('token', response.data.token);
-              originalRequest.headers.Authorization = `Bearer ${response.data.token}`;
-              return this.api(originalRequest);
-            }
-          } catch (refreshError) {
-            // توجيه لصفحة تسجيل الدخول
-            localStorage.clear();
-            window.location.href = '/login';
-          }
-        }
-        return Promise.reject(error);
-      }
-    );
-  }
-
-  // ===================== Auth APIs =====================
-  async register(userData) {
-    return this.api.post('/api/auth/register', userData);
-  }
-
-  async login(email, password) {
-    return this.api.post('/api/auth/login', { email, password });
-  }
-
-  async logout() {
-    return this.api.post('/api/auth/logout');
-  }
-
-  async getCurrentUser() {
-    return this.api.get('/api/auth/me');
-  }
-
-  async updateProfile(data) {
-    return this.api.put('/api/auth/profile', data);
-  }
-
-  async changePassword(data) {
-    return this.api.put('/api/auth/change-password', data);
-  }
-
-  // 📧 OTP APIs
-  async sendOTP(email) {
-    return this.api.post('/api/auth/send-otp', { email });
-  }
-
-  async verifyOTP(email, code, fullName, password) {
-    return this.api.post('/api/auth/verify-otp', { email, code, fullName, password });
-  }
-
-  async forgotPassword(email) {
-    return this.api.post('/api/auth/forgot-password', { email });
-  }
-
-  async resetPassword(email, code, newPassword) {
-    return this.api.post('/api/auth/reset-password', { email, code, newPassword });
-  }
-
-  // ===================== User Profile APIs =====================
-  async getUserProfile(userId) {
-    return this.api.get(`/api/auth/profile/${userId}`);
-  }
-
-  async updateUserProfile(userId, userData) {
-    return this.api.put(`/api/auth/profile/${userId}`, userData);
-  }
-
-  // ===================== Avatar Upload =====================
-  async uploadAvatar(userId, formData) {
-    try {
-      console.log('📤 Uploading avatar to:', `/api/auth/profile/${userId}/avatar`);
-      const response = await this.api.post(`/api/auth/profile/${userId}/avatar`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
-      return response;
-    } catch (error) {
-      console.error('❌ Upload avatar error:', error);
-      
-      // محاكاة للاختبار
-      return new Promise((resolve) => {
-        setTimeout(() => {
-          const fakeAvatarUrl = `https://ui-avatars.com/api/?name=User+${userId}&background=3b82f6&color=fff&size=200`;
-          resolve({
-            data: {
-              success: true,
-              avatar: fakeAvatarUrl,
-              message: 'تم رفع الصورة بنجاح (محاكاة)'
-            },
-            status: 200
-          });
-        }, 1000);
-      });
-    }
-  }
-
-  // ===================== Phone Verification APIs =====================
-  async sendPhoneVerification(userId, phoneNumber) {
-    try {
-      console.log('📤 Sending phone verification to:', `/api/auth/verify-phone/send`);
-      const response = await this.api.post('/api/auth/verify-phone/send', { userId, phoneNumber });
-      return response;
-    } catch (error) {
-      console.error('❌ Send phone verification error:', error);
-      
-      // محاكاة للاختبار
-      return new Promise((resolve) => {
-        setTimeout(() => {
-          localStorage.setItem(`otp_${phoneNumber}`, '123456');
-          console.log('✅ Test OTP for', phoneNumber, 'is 123456');
-          resolve({
-            data: {
-              success: true,
-              message: 'تم إرسال رمز التحقق (محاكاة)'
-            },
-            status: 200
-          });
-        }, 1000);
-      });
-    }
-  }
-
-  async verifyPhoneCode(userId, phoneNumber, code) {
-    try {
-      console.log('📤 Verifying phone code:', `/api/auth/verify-phone/verify`);
-      const response = await this.api.post('/api/auth/verify-phone/verify', { userId, phoneNumber, code });
-      return response;
-    } catch (error) {
-      console.error('❌ Verify phone code error:', error);
-      
-      // محاكاة للاختبار
-      return new Promise((resolve, reject) => {
-        setTimeout(() => {
-          const savedCode = localStorage.getItem(`otp_${phoneNumber}`);
-          if (code === '123456' || code === savedCode) {
-            resolve({
-              data: {
-                success: true,
-                message: 'تم التحقق بنجاح (محاكاة)'
-              },
-              status: 200
-            });
-          } else {
-            reject({
-              response: {
-                data: { message: 'رمز التحقق غير صحيح' },
-                status: 400
-              }
-            });
-          }
-        }, 1000);
-      });
-    }
-  }
-
-  async resendPhoneVerification(userId, phoneNumber) {
-    try {
-      console.log('📤 Resending phone verification:', `/api/auth/verify-phone/resend`);
-      const response = await this.api.post('/api/auth/verify-phone/resend', { userId, phoneNumber });
-      return response;
-    } catch (error) {
-      console.error('❌ Resend verification error:', error);
-      return this.sendPhoneVerification(userId, phoneNumber);
-    }
-  }
-
-  async updateUserPhone(userId, phoneNumber) {
-    try {
-      console.log('📤 Updating phone number:', `/api/users/${userId}/phone`);
-      const response = await this.api.put(`/api/users/${userId}/phone`, { 
-        phone: phoneNumber, 
-        verified: true 
-      });
-      return response;
-    } catch (error) {
-      console.error('❌ Update phone error:', error);
-      
-      // محاكاة للاختبار
-      return new Promise((resolve) => {
-        setTimeout(() => {
-          resolve({
-            data: {
-              success: true,
-              message: 'تم تحديث رقم الجوال بنجاح (محاكاة)'
-            },
-            status: 200
-          });
-        }, 500);
-      });
-    }
-  }
-
-  // ===================== Guide APIs =====================
-  async registerGuide(guideData) {
-    try {
-      const response = await this.api.post('/api/guides/register', guideData);
-      return response;
-    } catch (error) {
-      console.error('❌ Guide registration error:', error);
-      throw error;
-    }
-  }
-
-  async loginGuide(email, password) {
-    try {
-      const response = await this.api.post('/api/guides/login', { email, password });
-      return response;
-    } catch (error) {
-      console.error('❌ Guide login error:', error);
-      throw error;
-    }
-  }
-
-  // ✅ NEW: طلب ترقية إلى مرشد (مع رفع الملفات)
-  async upgradeToGuide(formData) {
-    try {
-      console.log('📤 Sending upgrade request to /api/guides/upgrade');
-      
-      // استخدام axios مباشرة للحفاظ على FormData
-      const token = localStorage.getItem('token');
-      const response = await axios.post(`${API_BASE_URL}/api/guides/upgrade`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-          'Authorization': token ? `Bearer ${token}` : ''
-        },
-        withCredentials: true
-      });
-      
-      console.log('📥 Upgrade response:', response.data);
-      
+    console.log('📥 File message response:', response.data);
+    
+    return {
+      success: true,
+      message: response.data.message || 'تم رفع الملف بنجاح',
+      data: response.data
+    };
+  } catch (error) {
+    console.error('❌ Error sending file:', error);
+    
+    // محاكاة للاختبار
+    if (!error.response) {
+      console.log('🔄 Using mock file upload');
       return {
         success: true,
-        requestId: response.data.requestId || `REQ-${Date.now()}`,
-        message: response.data.message || 'تم إرسال طلب الترقية بنجاح',
-        data: response.data
-      };
-    } catch (error) {
-      console.error('❌ Upgrade request error:', error);
-      
-      // محاكاة للاختبار (إذا كان السيرفر غير متاح)
-      if (!error.response) {
-        console.log('🔄 Using mock response (server not available)');
-        return {
-          success: true,
-          requestId: `REQ-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-          message: 'تم إرسال طلب الترقية بنجاح (محاكاة)',
-          data: {
-            requestId: `REQ-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-            status: 'pending',
-            receivedAt: new Date().toISOString()
-          }
-        };
-      }
-      
-      return {
-        success: false,
-        message: error.response?.data?.message || 'فشل إرسال طلب الترقية',
-        statusCode: error.response?.status
-      };
-    }
-  }
-
-  // ✅ NEW: الحصول على حالة طلب الترقية
-  async getUpgradeStatus(userId) {
-    try {
-      const response = await this.api.get(`/api/guides/upgrade-status/${userId}`);
-      return response.data;
-    } catch (error) {
-      console.error('❌ Get upgrade status error:', error);
-      
-      // محاكاة للاختبار
-      return {
-        success: true,
+        message: 'تم رفع الملف بنجاح (محاكاة)',
         data: {
-          status: 'pending',
-          requestId: localStorage.getItem('lastRequestId') || 'REQ-123456',
-          createdAt: new Date().toISOString(),
-          estimatedTime: '24 ساعة'
+          id: `msg-${Date.now()}`,
+          type: 'file',
+          url: URL.createObjectURL(formData.get('file'))
         }
       };
     }
+    
+    return { 
+      success: false, 
+      error: error.response?.data?.message || 'فشل رفع الملف'
+    };
   }
+},
 
-  // ===================== Wallet APIs =====================
-  async getWallet(userId) {
-    return this.api.get(`/api/wallet/${userId}`);
+/**
+ * حذف رسالة
+ * @param {string} messageId - معرف الرسالة
+ * @returns {Promise<Object>} نتيجة الحذف
+ */
+async deleteMessage(messageId) {
+  try {
+    console.log(`📤 Deleting message: ${messageId}`);
+    
+    const response = await this.api.delete(`/api/chats/message/${messageId}`);
+
+    console.log('📥 Delete message response:', response.data);
+    
+    return {
+      success: true,
+      message: response.data.message || 'تم حذف الرسالة'
+    };
+  } catch (error) {
+    console.error('❌ Error deleting message:', error);
+    return { 
+      success: false, 
+      error: error.response?.data?.message || 'فشل حذف الرسالة'
+    };
   }
+},
 
-  async getTransactions(userId, params = {}) {
-    return this.api.get(`/api/wallet/${userId}/transactions`, { params });
+/**
+ * تحديث حالة القراءة للمحادثة
+ * @param {string} conversationId - معرف المحادثة
+ * @returns {Promise<Object>} نتيجة التحديث
+ */
+async markConversationAsRead(conversationId) {
+  try {
+    console.log(`📤 Marking conversation as read: ${conversationId}`);
+    
+    const response = await this.api.put(`/api/chats/${conversationId}/read`);
+
+    return {
+      success: true,
+      data: response.data
+    };
+  } catch (error) {
+    console.error('❌ Error marking as read:', error);
+    return { 
+      success: false, 
+      error: error.response?.data?.message || 'فشل تحديث حالة القراءة'
+    };
   }
+},
 
-  async createWallet(data) {
-    return this.api.post('/api/wallet/create', data);
+/**
+ * بدء محادثة دعم جديدة
+ * @param {Object} data - بيانات المحادثة
+ * @returns {Promise<Object>} نتيجة الإنشاء
+ */
+async startSupportChat(data) {
+  try {
+    console.log('📤 Starting support chat with data:', data);
+    
+    const response = await this.api.post('/api/chats/support', {
+      subject: data.subject || 'استفسار',
+      manual: data.manual || false
+    });
+
+    console.log('📥 Support chat response:', response.data);
+    
+    return {
+      success: true,
+      message: response.data.message || 'تم بدء محادثة الدعم',
+      chat: response.data.chat || response.data
+    };
+  } catch (error) {
+    console.error('❌ Error starting support chat:', error);
+    
+    // محاكاة للاختبار
+    if (!error.response) {
+      console.log('🔄 Using mock support chat');
+      return {
+        success: true,
+        message: 'تم بدء محادثة الدعم (محاكاة)',
+        chat: {
+          id: `CHAT-SUPPORT-${Date.now()}`,
+          type: 'support',
+          participants: [2, 3],
+          created_at: new Date().toISOString()
+        }
+      };
+    }
+    
+    return { 
+      success: false, 
+      message: error.response?.data?.message || 'فشل بدء محادثة الدعم'
+    };
   }
-
-  async deposit(data) {
-    return this.api.post('/api/wallet/deposit', data);
-  }
-
-  async withdrawRequest(data) {
-    return this.api.post('/api/wallet/withdraw-request', data);
-  }
-
-  // ===================== Notification APIs =====================
-  async getNotifications(params = {}) {
-    return this.api.get('/api/notifications', { params });
-  }
-
-  async markNotificationAsRead(notificationId) {
-    return this.api.put(`/api/notifications/${notificationId}/read`);
-  }
-
-  async markAllNotificationsAsRead() {
-    return this.api.put('/api/notifications/read-all');
-  }
-
-  // ===================== Helper Functions =====================
-  validateSaudiPhone(phoneNumber) {
-    const cleanPhone = phoneNumber.replace(/\s/g, '');
-    const patterns = [
-      /^05[0-9]{8}$/,
-      /^5[0-9]{8}$/,
-      /^\+9665[0-9]{8}$/,
-      /^009665[0-9]{8}$/,
-      /^9665[0-9]{8}$/
-    ];
-    return patterns.some(pattern => pattern.test(cleanPhone));
-  }
-
-  normalizePhoneNumber(phoneNumber) {
-    const cleanPhone = phoneNumber.replace(/\s/g, '');
-    if (cleanPhone.startsWith('+966')) return '0' + cleanPhone.slice(4);
-    if (cleanPhone.startsWith('00966')) return '0' + cleanPhone.slice(5);
-    if (cleanPhone.startsWith('966')) return '0' + cleanPhone.slice(3);
-    if (cleanPhone.startsWith('5')) return '0' + cleanPhone;
-    return cleanPhone;
-  }
-
-  isAuthenticated() {
-    return !!localStorage.getItem('token');
-  }
-
-  getCurrentUser() {
-    const userStr = localStorage.getItem('user');
-    return userStr ? JSON.parse(userStr) : null;
-  }
-
-  getToken() {
-    return localStorage.getItem('token');
-  }
-}
-
-export default new ApiService();
+},
