@@ -3,8 +3,9 @@ import { pool } from '../config/database.js';
 import { getIO } from '../config/socket.js';
 
 class NotificationService {
+  
   /**
-   * إنشاء إشعار جديد
+   * إنشاء إشعار جديد - متوافق مع هيكل قاعدة البيانات
    * @param {string} userId - معرف المستخدم
    * @param {Object} data - بيانات الإشعار
    * @returns {Promise<Object>} الإشعار المنشأ
@@ -15,22 +16,18 @@ class NotificationService {
     try {
       await client.query('BEGIN');
 
-      const notificationId = `NOTIF-${Date.now()}-${Math.random().toString(36).substr(2, 8).toUpperCase()}`;
-
-      // إنشاء الإشعار
+      // ✅ استخدام الأعمدة الموجودة فقط في قاعدة البيانات
       const notificationResult = await client.query(
         `INSERT INTO app.notifications (
-          notification_id, user_id, title, message, type, priority,
-          data, action_url, is_read, read_at, is_deleted, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+          user_id, title, message, type, 
+          data, action_url, is_read, read_at, is_deleted, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
         RETURNING *`,
         [
-          notificationId,
           userId,
           data.title || 'إشعار جديد',
           data.message,
           data.type || 'system',
-          data.priority || 'low',
           data.data ? JSON.stringify(data.data) : null,
           data.actionUrl || null,
           false,
@@ -49,7 +46,6 @@ class NotificationService {
       // إرسال الإشعار عبر WebSocket
       const io = getIO();
       if (io) {
-        // إرسال للمستخدم المحدد
         io.to(`user-${userId}`).emit('new_notification', {
           notification,
           unreadCount
@@ -86,21 +82,17 @@ class NotificationService {
       const notifications = [];
 
       for (const userId of userIds) {
-        const notificationId = `NOTIF-${Date.now()}-${Math.random().toString(36).substr(2, 8).toUpperCase()}-${userId}`;
-
         const result = await client.query(
           `INSERT INTO app.notifications (
-            notification_id, user_id, title, message, type, priority,
-            data, action_url, is_read, read_at, is_deleted, created_at, updated_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+            user_id, title, message, type, 
+            data, action_url, is_read, read_at, is_deleted, created_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
           RETURNING *`,
           [
-            notificationId,
             userId,
             data.title || 'إشعار جديد',
             data.message,
             data.type || 'system',
-            data.priority || 'low',
             data.data ? JSON.stringify(data.data) : null,
             data.actionUrl || null,
             false,
@@ -158,18 +150,6 @@ class NotificationService {
       if (filters.isRead !== undefined && filters.isRead !== 'all') {
         query += ` AND is_read = $${paramIndex}`;
         queryParams.push(filters.isRead === 'read');
-        paramIndex++;
-      }
-
-      if (filters.startDate) {
-        query += ` AND created_at >= $${paramIndex}`;
-        queryParams.push(filters.startDate);
-        paramIndex++;
-      }
-
-      if (filters.endDate) {
-        query += ` AND created_at <= $${paramIndex}`;
-        queryParams.push(filters.endDate);
         paramIndex++;
       }
 
@@ -231,7 +211,7 @@ class NotificationService {
   /**
    * تحديث إشعار كمقروء
    * @param {string} userId - معرف المستخدم
-   * @param {string} notificationId - معرف الإشعار
+   * @param {string} notificationId - معرف الإشعار (id في قاعدة البيانات)
    * @returns {Promise<Object>} الإشعار المحدث
    */
   async markAsRead(userId, notificationId) {
@@ -242,8 +222,8 @@ class NotificationService {
 
       const result = await client.query(
         `UPDATE app.notifications 
-         SET is_read = true, read_at = NOW(), updated_at = NOW()
-         WHERE notification_id = $1 AND user_id = $2
+         SET is_read = true, read_at = NOW()
+         WHERE id = $1 AND user_id = $2
          RETURNING *`,
         [notificationId, userId]
       );
@@ -288,7 +268,7 @@ class NotificationService {
 
       const result = await client.query(
         `UPDATE app.notifications 
-         SET is_read = true, read_at = NOW(), updated_at = NOW()
+         SET is_read = true, read_at = NOW()
          WHERE user_id = $1 AND is_read = false AND is_deleted = false`,
         [userId]
       );
@@ -316,7 +296,7 @@ class NotificationService {
   /**
    * حذف إشعار
    * @param {string} userId - معرف المستخدم
-   * @param {string} notificationId - معرف الإشعار
+   * @param {string} notificationId - معرف الإشعار (id في قاعدة البيانات)
    * @returns {Promise<Object>} الإشعار المحذوف
    */
   async deleteNotification(userId, notificationId) {
@@ -327,8 +307,8 @@ class NotificationService {
 
       const result = await client.query(
         `UPDATE app.notifications 
-         SET is_deleted = true, updated_at = NOW()
-         WHERE notification_id = $1 AND user_id = $2
+         SET is_deleted = true, deleted_at = NOW()
+         WHERE id = $1 AND user_id = $2
          RETURNING *`,
         [notificationId, userId]
       );
@@ -373,7 +353,7 @@ class NotificationService {
 
       const result = await client.query(
         `UPDATE app.notifications 
-         SET is_deleted = true, updated_at = NOW()
+         SET is_deleted = true, deleted_at = NOW()
          WHERE user_id = $1 AND is_deleted = false`,
         [userId]
       );
@@ -395,6 +375,63 @@ class NotificationService {
       throw error;
     } finally {
       client.release();
+    }
+  }
+
+  /**
+   * إرسال إشعار بمحادثة دعم جديدة
+   * @param {string} chatId - معرف المحادثة
+   * @param {string} userId - معرف المستخدم
+   * @param {string} supportId - معرف موظف الدعم (اختياري)
+   * @param {string} message - نص الرسالة
+   * @returns {Promise<boolean>} نجاح أو فشل
+   */
+  async sendNewChatNotification(chatId, userId, supportId, message) {
+    try {
+      console.log(`📨 [sendNewChatNotification] Sending notification for chat: ${chatId}`);
+      
+      // 1️⃣ إشعار للمستخدم
+      await this.create(userId, {
+        title: '💬 محادثة دعم جديدة',
+        message: message || 'تم إنشاء محادثة دعم جديدة. سيتم الرد عليك في أقرب وقت.',
+        type: 'chat',
+        priority: 'high',
+        data: { 
+          chatId,
+          type: 'support'
+        },
+        actionUrl: `/chat/${chatId}`
+      });
+
+      // 2️⃣ إذا كان هناك موظف دعم، أرسل له إشعاراً أيضاً
+      if (supportId) {
+        const userResult = await pool.query(
+          'SELECT full_name, email FROM app.users WHERE id = $1',
+          [userId]
+        );
+        
+        const userName = userResult.rows[0]?.full_name || 'مستخدم جديد';
+        
+        await this.create(supportId, {
+          title: '🆕 طلب دعم جديد',
+          message: `مستخدم ${userName} يحتاج إلى مساعدة`,
+          type: 'support',
+          priority: 'high',
+          data: { 
+            chatId,
+            userId,
+            userName
+          },
+          actionUrl: `/support/chats/${chatId}`
+        });
+      }
+
+      console.log(`✅ [sendNewChatNotification] Notification sent successfully for chat: ${chatId}`);
+      return true;
+      
+    } catch (error) {
+      console.error('❌ [sendNewChatNotification] Error:', error);
+      return false;
     }
   }
 
@@ -456,137 +493,6 @@ class NotificationService {
       },
       actionUrl: `/chat/${chatData.chatId}`
     });
-  }
-
-  /**
-   * إنشاء إشعار ترقية
-   * @param {string} userId - معرف المستخدم
-   * @param {Object} upgradeData - بيانات الترقية
-   * @returns {Promise<Object>} الإشعار المنشأ
-   */
-  async createUpgradeNotification(userId, upgradeData) {
-    return this.create(userId, {
-      title: 'طلب ترقية',
-      message: upgradeData.message,
-      type: 'upgrade',
-      priority: 'high',
-      data: { 
-        requestId: upgradeData.requestId,
-        status: upgradeData.status 
-      },
-      actionUrl: '/profile/upgrade-status'
-    });
-  }
-
-  /**
-   * إنشاء إشعار مرشد
-   * @param {string} userId - معرف المستخدم
-   * @param {Object} guideData - بيانات المرشد
-   * @returns {Promise<Object>} الإشعار المنشأ
-   */
-  async createGuideNotification(userId, guideData) {
-    return this.create(userId, {
-      title: 'تحديث للمرشدين',
-      message: guideData.message,
-      type: 'guide',
-      priority: 'medium',
-      data: guideData.data,
-      actionUrl: guideData.actionUrl
-    });
-  }
-
-  /**
-   * إنشاء إشعار نظام
-   * @param {string} userId - معرف المستخدم
-   * @param {Object} systemData - بيانات النظام
-   * @returns {Promise<Object>} الإشعار المنشأ
-   */
-  async createSystemNotification(userId, systemData) {
-    return this.create(userId, {
-      title: systemData.title || 'إشعار النظام',
-      message: systemData.message,
-      type: 'system',
-      priority: systemData.priority || 'low',
-      data: systemData.data
-    });
-  }
-
-  /**
-   * إرسال إشعار بمحادثة دعم جديدة - تمت الإضافة حديثاً
-   * @param {string} chatId - معرف المحادثة
-   * @param {string} userId - معرف المستخدم
-   * @param {string} supportId - معرف موظف الدعم (اختياري)
-   * @param {string} message - نص الرسالة
-   * @returns {Promise<boolean>} نجاح أو فشل
-   */
-  async sendNewChatNotification(chatId, userId, supportId, message) {
-    try {
-      console.log(`📨 [sendNewChatNotification] Sending notification for chat: ${chatId}`);
-      
-      // 1️⃣ إشعار للمستخدم
-      await this.create(userId, {
-        title: '💬 محادثة دعم جديدة',
-        message: message || 'تم إنشاء محادثة دعم جديدة. سيتم الرد عليك في أقرب وقت.',
-        type: 'chat',
-        priority: 'high',
-        data: { 
-          chatId,
-          type: 'support'
-        },
-        actionUrl: `/chat/${chatId}`
-      });
-
-      // 2️⃣ إذا كان هناك موظف دعم، أرسل له إشعاراً أيضاً
-      if (supportId) {
-        // الحصول على معلومات المستخدم
-        const userResult = await pool.query(
-          'SELECT full_name, email FROM app.users WHERE id = $1',
-          [userId]
-        );
-        
-        const userName = userResult.rows[0]?.full_name || 'مستخدم جديد';
-        
-        await this.create(supportId, {
-          title: '🆕 طلب دعم جديد',
-          message: `مستخدم ${userName} يحتاج إلى مساعدة`,
-          type: 'support',
-          priority: 'high',
-          data: { 
-            chatId,
-            userId,
-            userName: userName
-          },
-          actionUrl: `/support/chats/${chatId}`
-        });
-      }
-
-      // 3️⃣ إرسال WebSocket notification
-      const io = getIO();
-      if (io) {
-        // إشعار للمستخدم
-        io.to(`user-${userId}`).emit('new_chat_notification', {
-          chatId,
-          message: 'تم إنشاء محادثة دعم جديدة',
-          type: 'support'
-        });
-
-        // إشعار لموظفي الدعم
-        if (supportId) {
-          io.to(`support-${supportId}`).emit('new_support_request', {
-            chatId,
-            userId,
-            message: 'طلب دعم جديد'
-          });
-        }
-      }
-
-      console.log(`✅ [sendNewChatNotification] Notification sent successfully for chat: ${chatId}`);
-      return true;
-      
-    } catch (error) {
-      console.error('❌ [sendNewChatNotification] Error:', error);
-      return false;
-    }
   }
 }
 
