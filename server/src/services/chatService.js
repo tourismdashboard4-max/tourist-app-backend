@@ -1,6 +1,6 @@
 // server/src/services/chatService.js
 import { pool } from '../config/database.js';
-import * as NotificationService from './notificationService.js';
+import notificationService from './notificationService.js';  // ✅ استيراد افتراضي (default)
 import * as SocketService from './socketService.js';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -67,9 +67,18 @@ class ChatService {
 
       await client.query('COMMIT');
 
-      // إشعار المشاركين بالمحادثة الجديدة
+      // ✅ إشعار المشاركين بالمحادثة الجديدة - استدعاء صحيح
       for (const participantId of participants) {
-        await NotificationService.sendNewChatNotification(participantId, chat);
+        if (participantId) {
+          await notificationService.create(participantId, {
+            title: 'محادثة جديدة',
+            message: 'تم إنشاء محادثة جديدة',
+            type: 'chat',
+            priority: 'medium',
+            data: { chatId, type },
+            actionUrl: `/chat/${chatId}`
+          });
+        }
       }
 
       return chat;
@@ -83,7 +92,7 @@ class ChatService {
   }
 
   /**
-   * إنشاء محادثة دعم (معدلة - تم إزالة metadata)
+   * إنشاء محادثة دعم (معدلة - استخدام الدالة الصحيحة)
    * @param {string} userId - معرف المستخدم
    * @param {string} subject - موضوع المحادثة
    * @returns {Promise<Object>} المحادثة المنشأة
@@ -105,7 +114,7 @@ class ChatService {
       if (supportUserResult.rows.length === 0) {
         console.log('⚠️ حساب الدعم غير موجود، سيتم إنشاؤه تلقائياً');
         
-        // إنشاء حساب دعم تلقائياً - تم إزالة updated_at
+        // إنشاء حساب دعم تلقائياً
         const newSupportUserResult = await client.query(
           `INSERT INTO app.users (
             full_name, email, password_hash, type, role, created_at
@@ -141,7 +150,7 @@ class ChatService {
       if (chatResult.rows.length === 0) {
         const chatId = `CHAT-SUPPORT-${Date.now()}-${uuidv4().slice(0, 6)}`;
 
-        // ✅ إنشاء محادثة جديدة - بدون metadata
+        // إنشاء محادثة جديدة
         chatResult = await client.query(
           `INSERT INTO app.chats (
             chat_id, participants, type, is_active, settings, stats,
@@ -167,7 +176,7 @@ class ChatService {
         chat = chatResult.rows[0];
         console.log(`✅ تم إنشاء محادثة دعم جديدة: ${chat.chat_id}`);
 
-        // إرسال إشعار للدعم
+        // الحصول على معلومات المستخدم
         const userResult = await client.query(
           'SELECT full_name, email FROM app.users WHERE id = $1',
           [userId]
@@ -175,14 +184,24 @@ class ChatService {
         
         const user = userResult.rows[0];
         
-        // إرسال إشعار للدعم
-        await NotificationService.sendNewChatNotification(supportUserId, {
-          ...chat,
-          userInfo: {
-            name: user?.full_name || 'مستخدم',
-            email: user?.email || ''
-          }
+        // ✅ إرسال إشعار للدعم باستخدام الدالة المخصصة
+        await notificationService.sendNewChatNotification(
+          chat.chat_id,
+          userId,
+          supportUserId,
+          subject || 'طلب دعم جديد'
+        );
+
+        // ✅ إرسال إشعار للمستخدم بتأكيد إنشاء المحادثة
+        await notificationService.create(userId, {
+          title: 'تم إنشاء محادثة الدعم',
+          message: 'سيتم الرد عليك في أقرب وقت ممكن',
+          type: 'chat',
+          priority: 'high',
+          data: { chatId: chat.chat_id },
+          actionUrl: `/chat/${chat.chat_id}`
         });
+
       } else {
         chat = chatResult.rows[0];
       }
@@ -458,14 +477,17 @@ class ChatService {
       // إرسال الرسالة عبر WebSocket
       SocketService.emitToConversation(chatId, 'new-message', populatedMessage);
 
-      // إرسال إشعارات للمشاركين الآخرين
+      // ✅ إرسال إشعارات للمشاركين الآخرين (بدون دالة غير موجودة)
       for (const participantId of chat.participants) {
         if (participantId !== parseInt(senderId)) {
-          await NotificationService.sendNewMessageNotification(
-            participantId,
-            populatedMessage,
-            chat
-          );
+          await notificationService.create(participantId, {
+            title: 'رسالة جديدة',
+            message: content?.substring(0, 100) || 'لديك رسالة جديدة',
+            type: 'chat',
+            priority: 'medium',
+            data: { chatId, messageId, senderId },
+            actionUrl: `/chat/${chatId}`
+          });
         }
       }
 
