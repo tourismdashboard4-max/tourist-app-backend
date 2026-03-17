@@ -105,11 +105,11 @@ class ChatService {
       if (supportUserResult.rows.length === 0) {
         console.log('⚠️ حساب الدعم غير موجود، سيتم إنشاؤه تلقائياً');
         
-        // إنشاء حساب دعم تلقائياً إذا لم يكن موجوداً - ✅ تم إزالة عمود status
+        // ✅ إنشاء حساب دعم تلقائياً - تم إزالة updated_at
         const newSupportUserResult = await client.query(
           `INSERT INTO app.users (
-            full_name, email, password_hash, type, role, created_at, updated_at
-          ) VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+            full_name, email, password_hash, type, role, created_at
+          ) VALUES ($1, $2, $3, $4, $5, NOW())
           RETURNING id`,
           [
             'الدعم الفني',
