@@ -105,20 +105,18 @@ class ChatService {
       if (supportUserResult.rows.length === 0) {
         console.log('⚠️ حساب الدعم غير موجود، سيتم إنشاؤه تلقائياً');
         
-        // إنشاء حساب دعم تلقائياً إذا لم يكن موجوداً
+        // إنشاء حساب دعم تلقائياً إذا لم يكن موجوداً - ✅ تم إزالة عمود status
         const newSupportUserResult = await client.query(
           `INSERT INTO app.users (
-            full_name, email, password_hash, type, role, status,
-            created_at, updated_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+            full_name, email, password_hash, type, role, created_at, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
           RETURNING id`,
           [
             'الدعم الفني',
             'y7g5mggnbr@privaterelay.appleid.com',
             '$2b$10$YourHashedPasswordHere', // كلمة مرور مشفرة
             'admin',
-            'support',
-            'active'
+            'support'
           ]
         );
         
@@ -180,11 +178,12 @@ class ChatService {
         
         const user = userResult.rows[0];
         
+        // إرسال إشعار للدعم
         await NotificationService.sendNewChatNotification(supportUserId, {
           ...chat,
           userInfo: {
-            name: user.full_name,
-            email: user.email
+            name: user?.full_name || 'مستخدم',
+            email: user?.email || ''
           }
         });
       } else {
@@ -280,7 +279,6 @@ class ChatService {
    */
   calculateUnreadCount(conversation, userId) {
     // يمكن تنفيذ هذه الدالة بناءً على آخر قراءة للمستخدم
-    // حالياً نعيد 0 كمؤقت
     return 0;
   }
 
@@ -327,7 +325,7 @@ class ChatService {
       const total = parseInt(totalResult.rows[0].count);
 
       return {
-        messages: messagesResult.rows.reverse(), // نعرض الأقدم أولاً
+        messages: messagesResult.rows.reverse(),
         pagination: {
           page,
           limit,
@@ -522,12 +520,10 @@ class ChatService {
       await client.query(
         `UPDATE app.messages 
          SET read_by = $1,
-             status = CASE WHEN $2 THEN 'read'::message_status ELSE status END,
              updated_at = NOW()
-         WHERE message_id = $3`,
+         WHERE message_id = $2`,
         [
           JSON.stringify(readBy),
-          false, // يمكن تحديث هذا الشرط لاحقاً
           messageId
         ]
       );
