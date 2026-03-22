@@ -1,46 +1,32 @@
-import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
+
+// استخدام مفتاح Resend من متغيرات البيئة في Render
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 export const sendEmail = async ({ to, subject, html }) => {
   try {
-    console.log('📧 Preparing to send email to:', to);
-    console.log('📧 Using email configuration:', {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS ? '***' : 'not set',
-      host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-      port: process.env.EMAIL_PORT || '587'
+    console.log(`📧 Preparing to send email to: ${to}`);
+    console.log(`📧 Using Resend API (Key: ${process.env.RESEND_API_KEY ? '✅ موجود' : '❌ غير موجود'})`);
+
+    // استخدام البريد الافتراضي من Resend للتجربة (يمكن تغييره لاحقاً)
+    const fromEmail = 'onboarding@resend.dev';
+
+    const { data, error } = await resend.emails.send({
+      from: `Tourist App <${fromEmail}>`,
+      to: [to],
+      subject: subject,
+      html: html,
     });
 
-    // إنشاء ناقل البريد مع إعدادات SMTP الكاملة
-    const transporter = nodemailer.createTransport({
-      host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-      port: parseInt(process.env.EMAIL_PORT || '587'),
-      secure: false, // true for 465, false for other ports
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS, // ✅ تم التصحيح: EMAIL_PASS وليس EMAIL_PASSWORD
-      },
-      tls: {
-        rejectUnauthorized: false // مهم لبعض الخوادم
-      }
-    });
+    if (error) {
+      console.error('❌ Resend API Error:', error);
+      throw new Error(error.message);
+    }
 
-    const mailOptions = {
-      from: `"تطبيق السائح" <${process.env.EMAIL_USER}>`,
-      to,
-      subject,
-      html,
-    };
-
-    console.log('📧 Sending email...');
-    const info = await transporter.sendMail(mailOptions);
-    console.log('✅ Email sent successfully!');
-    console.log('📧 Message ID:', info.messageId);
-    console.log('📧 Response:', info.response);
-
-    return info;
+    console.log(`✅ Email sent successfully! ID: ${data?.id}`);
+    return data;
   } catch (error) {
     console.error('❌ Email sending failed:', error.message);
-    console.error('❌ Full error:', error);
     throw error;
   }
 };
