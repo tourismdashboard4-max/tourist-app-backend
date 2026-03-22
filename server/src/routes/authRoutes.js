@@ -107,7 +107,7 @@ router.post('/send-otp', async (req, res) => {
 });
 
 // ============================================
-// ✅ 2. التحقق من الرمز (معدل - يدعم جميع الأغراض)
+// ✅ 2. التحقق من الرمز (النسخة النهائية - تعمل مع كل الأغراض)
 // ============================================
 router.post('/verify-otp', async (req, res) => {
   try {
@@ -123,33 +123,23 @@ router.post('/verify-otp', async (req, res) => {
 
     const cleanEmail = email.toLowerCase().trim();
 
-    let otpResult;
-    
-    // إذا تم تحديد الغرض، ابحث بهذا الغرض فقط
-    if (purpose) {
-      otpResult = await pool.query(
-        `SELECT * FROM app.otps 
-         WHERE identifier = $1 AND code = $2 AND purpose = $3 
-           AND verified = false AND expires_at > NOW()
-         ORDER BY created_at DESC LIMIT 1`,
-        [cleanEmail, code, purpose]
-      );
-    } else {
-      // إذا لم يتم تحديد الغرض، ابحث في جميع الأغراض (للتسجيل أو إعادة تعيين كلمة المرور)
-      otpResult = await pool.query(
-        `SELECT * FROM app.otps 
-         WHERE identifier = $1 AND code = $2 
-           AND verified = false AND expires_at > NOW()
-           AND purpose IN ('register', 'reset-password')
-         ORDER BY created_at DESC LIMIT 1`,
-        [cleanEmail, code]
-      );
-    }
+    // ✅ البحث عن الرمز بغض النظر عن الـ purpose
+    // نبحث في جميع الأغراض
+    const otpResult = await pool.query(
+      `SELECT * FROM app.otps 
+       WHERE identifier = $1 AND code = $2 
+         AND verified = false AND expires_at > NOW()
+       ORDER BY created_at DESC LIMIT 1`,
+      [cleanEmail, code]
+    );
     
     const otpRecord = otpResult.rows[0];
     console.log('🔍 OTP Record found:', otpRecord ? '✅ YES' : '❌ NO');
+    
     if (otpRecord) {
       console.log('📋 OTP Purpose:', otpRecord.purpose);
+      console.log('⏰ Expires at:', otpRecord.expires_at);
+      console.log('🕐 Current time:', new Date().toISOString());
     }
 
     if (!otpRecord) {
@@ -159,18 +149,28 @@ router.post('/verify-otp', async (req, res) => {
       });
     }
 
-    // التحقق من وجود المستخدم (للتسجيل فقط)
+    // ✅ معالجة حسب نوع الغرض الفعلي في قاعدة البيانات
+    if (otpRecord.purpose === 'reset-password') {
+      // هذا رمز لإعادة تعيين كلمة المرور
+      return res.json({
+        success: true,
+        isNewUser: false,
+        purpose: 'reset-password',
+        message: 'رمز التحقق صحيح'
+      });
+    }
+    
     if (otpRecord.purpose === 'register') {
+      // هذا رمز للتسجيل
       const userResult = await pool.query(
         'SELECT id FROM app.users WHERE email = $1',
         [cleanEmail]
       );
       
       const user = userResult.rows[0];
-      console.log('👤 User exists:', user ? '✅ YES' : '❌ NO (new user)');
 
       if (!user) {
-        // مستخدم جديد - نغير حالة الرمز
+        // مستخدم جديد
         await pool.query(
           'UPDATE app.otps SET verified = true WHERE id = $1',
           [otpRecord.id]
@@ -182,11 +182,16 @@ router.post('/verify-otp', async (req, res) => {
           purpose: 'register',
           message: 'رمز التحقق صحيح، أكمل بياناتك'
         });
+      } else {
+        // مستخدم موجود يحاول التسجيل مرة أخرى
+        return res.status(400).json({
+          success: false,
+          message: 'البريد الإلكتروني مسجل بالفعل'
+        });
       }
     }
 
-    // للرموز الأخرى (reset-password, phone-verification, etc.)
-    // نعيد الرمز نفسه للتحقق منه في endpoint منفصل
+    // لأي غرض آخر (phone-verification, etc.)
     res.json({
       success: true,
       isNewUser: false,
