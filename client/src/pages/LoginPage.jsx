@@ -107,10 +107,17 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
 
     setLoading(true);
     try {
-      console.log('📤 Verifying OTP with data:', { email, otp, mode });
+      console.log('📤 Verifying OTP with data:', { email, otp, mode, step });
       
-      // ✅ تحديد الغرض بناءً على الوضع الحالي
-      const purpose = mode === 'forgot' ? 'reset-password' : 'register';
+      // ✅ تحديد الغرض بناءً على الوضع الحالي والخطوة
+      let purpose = 'register';
+      if (mode === 'forgot') {
+        purpose = 'reset-password';
+      } else if (mode === 'register') {
+        purpose = 'register';
+      }
+      
+      console.log('🎯 Sending with purpose:', purpose);
       
       // ✅ إرسال الغرض مع الطلب
       const response = await api.verifyOTP(email, otp, purpose);
