@@ -107,11 +107,11 @@ router.post('/send-otp', async (req, res) => {
 });
 
 // ============================================
-// ✅ 2. التحقق من الرمز
+// ✅ 2. التحقق من الرمز (معدل - يدعم جميع الأغراض)
 // ============================================
 router.post('/verify-otp', async (req, res) => {
   try {
-    const { email, code, purpose = 'register' } = req.body;
+    const { email, code, purpose } = req.body;
     console.log('📧 Verify OTP request:', { email, code, purpose });
 
     if (!email || !code) {
@@ -123,17 +123,34 @@ router.post('/verify-otp', async (req, res) => {
 
     const cleanEmail = email.toLowerCase().trim();
 
-    // البحث عن الرمز الصالح
-    const otpResult = await pool.query(
-      `SELECT * FROM app.otps 
-       WHERE identifier = $1 AND code = $2 AND purpose = $3 
-         AND verified = false AND expires_at > NOW()
-       ORDER BY created_at DESC LIMIT 1`,
-      [cleanEmail, code, purpose]
-    );
+    let otpResult;
+    
+    // إذا تم تحديد الغرض، ابحث بهذا الغرض فقط
+    if (purpose) {
+      otpResult = await pool.query(
+        `SELECT * FROM app.otps 
+         WHERE identifier = $1 AND code = $2 AND purpose = $3 
+           AND verified = false AND expires_at > NOW()
+         ORDER BY created_at DESC LIMIT 1`,
+        [cleanEmail, code, purpose]
+      );
+    } else {
+      // إذا لم يتم تحديد الغرض، ابحث في جميع الأغراض (للتسجيل أو إعادة تعيين كلمة المرور)
+      otpResult = await pool.query(
+        `SELECT * FROM app.otps 
+         WHERE identifier = $1 AND code = $2 
+           AND verified = false AND expires_at > NOW()
+           AND purpose IN ('register', 'reset-password')
+         ORDER BY created_at DESC LIMIT 1`,
+        [cleanEmail, code]
+      );
+    }
     
     const otpRecord = otpResult.rows[0];
     console.log('🔍 OTP Record found:', otpRecord ? '✅ YES' : '❌ NO');
+    if (otpRecord) {
+      console.log('📋 OTP Purpose:', otpRecord.purpose);
+    }
 
     if (!otpRecord) {
       return res.status(400).json({
@@ -142,32 +159,38 @@ router.post('/verify-otp', async (req, res) => {
       });
     }
 
-    // التحقق من وجود المستخدم
-    const userResult = await pool.query(
-      'SELECT id FROM app.users WHERE email = $1',
-      [cleanEmail]
-    );
-    
-    const user = userResult.rows[0];
-    console.log('👤 User exists:', user ? '✅ YES' : '❌ NO (new user)');
-
-    if (!user) {
-      // مستخدم جديد - نغير حالة الرمز
-      await pool.query(
-        'UPDATE app.otps SET verified = true WHERE id = $1',
-        [otpRecord.id]
+    // التحقق من وجود المستخدم (للتسجيل فقط)
+    if (otpRecord.purpose === 'register') {
+      const userResult = await pool.query(
+        'SELECT id FROM app.users WHERE email = $1',
+        [cleanEmail]
       );
       
-      return res.json({
-        success: true,
-        isNewUser: true,
-        message: 'رمز التحقق صحيح، أكمل بياناتك'
-      });
+      const user = userResult.rows[0];
+      console.log('👤 User exists:', user ? '✅ YES' : '❌ NO (new user)');
+
+      if (!user) {
+        // مستخدم جديد - نغير حالة الرمز
+        await pool.query(
+          'UPDATE app.otps SET verified = true WHERE id = $1',
+          [otpRecord.id]
+        );
+        
+        return res.json({
+          success: true,
+          isNewUser: true,
+          purpose: 'register',
+          message: 'رمز التحقق صحيح، أكمل بياناتك'
+        });
+      }
     }
 
+    // للرموز الأخرى (reset-password, phone-verification, etc.)
+    // نعيد الرمز نفسه للتحقق منه في endpoint منفصل
     res.json({
       success: true,
       isNewUser: false,
+      purpose: otpRecord.purpose,
       message: 'رمز التحقق صحيح'
     });
 
@@ -181,7 +204,7 @@ router.post('/verify-otp', async (req, res) => {
 });
 
 // ============================================
-// ✅ 3. إنشاء مستخدم جديد (معدل - تم إزالة user_type)
+// ✅ 3. إنشاء مستخدم جديد
 // ============================================
 router.post('/register', async (req, res) => {
   try {
@@ -237,7 +260,7 @@ router.post('/register', async (req, res) => {
       { expiresIn: '30d' }
     );
 
-    // ✅ إنشاء محفظة للمستخدم - تم إزالة user_type
+    // إنشاء محفظة للمستخدم
     const walletResult = await pool.query(
       `INSERT INTO app.wallets (
         wallet_number, user_id, balance, currency, status, created_at
@@ -444,8 +467,24 @@ router.post('/forgot-password', async (req, res) => {
       await sendEmail({
         to: cleanEmail,
         subject: '🔄 رمز التحقق لتغيير كلمة المرور - تطبيق السائح',
-        html: `<div>رمز التحقق الخاص بك هو: <strong>${code}</strong></div>`
+        html: `
+          <div dir="rtl" style="font-family: 'Cairo', sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f9f9f9; border-radius: 10px;">
+            <div style="text-align: center; margin-bottom: 30px;">
+              <h1 style="color: #10b981; font-size: 28px;">🌍 تطبيق السائح</h1>
+            </div>
+            <div style="background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+              <h2 style="color: #333; margin-bottom: 20px;">إعادة تعيين كلمة المرور</h2>
+              <p style="color: #666; font-size: 16px; line-height: 1.6;">رمز التحقق الخاص بك هو:</p>
+              <div style="background-color: #f0f9ff; padding: 20px; border-radius: 8px; text-align: center; margin: 20px 0;">
+                <span style="font-size: 48px; font-weight: bold; color: #3b82f6; letter-spacing: 5px;">${code}</span>
+              </div>
+              <p style="color: #666; font-size: 14px;">هذا الرمز صالح لمدة <strong>10 دقائق</strong></p>
+              <p style="color: #999; font-size: 12px; margin-top: 20px;">إذا لم تطلب إعادة تعيين كلمة المرور، يمكنك تجاهل هذه الرسالة.</p>
+            </div>
+          </div>
+        `
       });
+      console.log(`✅ Reset email sent successfully to ${cleanEmail}`);
     } catch (emailError) {
       console.error('❌ Failed to send email:', emailError);
     }
