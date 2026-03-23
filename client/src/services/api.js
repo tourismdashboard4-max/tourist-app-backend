@@ -6,7 +6,6 @@ export const api = {
   // 📧 OTP SERVICES - رموز التحقق
   // ============================================
   
-  // ✅ إرسال رمز التحقق للبريد الإلكتروني
   async sendOTP(email) {
     try {
       console.log('📤 Sending OTP request for:', email);
@@ -33,7 +32,6 @@ export const api = {
     }
   },
 
-  // ✅ التحقق من الرمز فقط
   async verifyOTP(email, code, purpose = 'register') {
     try {
       console.log('📤 Verifying OTP with data:', { email, code, purpose });
@@ -60,7 +58,6 @@ export const api = {
     }
   },
 
-  // ✅ تسجيل مستخدم جديد بعد إدخال البيانات
   async register(email, fullName, password) {
     try {
       console.log('📤 Registering new user:', { email, fullName });
@@ -87,7 +84,6 @@ export const api = {
     }
   },
 
-  // ✅ إعادة إرسال الرمز
   async resendOTP(email) {
     try {
       const response = await fetch(`${API_BASE_URL}/api/auth/resend-otp`, {
@@ -115,7 +111,6 @@ export const api = {
   // 👤 USER SERVICES - المستخدمين العاديين
   // ============================================
   
-  // ✅ تسجيل دخول مستخدم عادي
   async login(email, password) {
     try {
       console.log('📤 Login attempt for:', email);
@@ -148,7 +143,6 @@ export const api = {
     }
   },
 
-  // ✅ استعادة كلمة المرور (إرسال رمز)
   async forgotPassword(email) {
     try {
       console.log('📤 Forgot password request for:', email);
@@ -175,7 +169,6 @@ export const api = {
     }
   },
 
-  // ✅ إعادة تعيين كلمة المرور (معدلة مع purpose)
   async resetPassword(email, code, newPassword) {
     try {
       console.log('📤 Reset password request:', { email, code, newPassword });
@@ -207,7 +200,6 @@ export const api = {
     }
   },
 
-  // ✅ الحصول على ملف المستخدم الشخصي
   async getUserProfile(userId) {
     try {
       const token = localStorage.getItem('token');
@@ -233,7 +225,6 @@ export const api = {
     }
   },
 
-  // ✅ تحديث الملف الشخصي
   async updateUserProfile(userId, updates) {
     try {
       const token = localStorage.getItem('token');
@@ -260,7 +251,6 @@ export const api = {
     }
   },
 
-  // ✅ رفع الصورة الشخصية (FormData)
   async uploadAvatar(userId, formData) {
     try {
       const token = localStorage.getItem('token');
@@ -290,7 +280,6 @@ export const api = {
   // 📱 PHONE VERIFICATION SERVICES - التحقق من الجوال
   // ============================================
 
-  // ✅ إرسال رمز التحقق للجوال
   async sendPhoneVerification(userId, phone) {
     try {
       const token = localStorage.getItem('token');
@@ -318,7 +307,6 @@ export const api = {
     }
   },
 
-  // ✅ التحقق من رمز الجوال
   async verifyPhoneCode(userId, phone, code) {
     try {
       const token = localStorage.getItem('token');
@@ -346,7 +334,6 @@ export const api = {
     }
   },
 
-  // ✅ تحديث رقم الجوال
   async updatePhone(userId, phone) {
     try {
       const token = localStorage.getItem('token');
@@ -378,7 +365,6 @@ export const api = {
   // 🧑‍🏫 GUIDE SERVICES - المرشدين السياحيين
   // ============================================
   
-  // ✅ تسجيل مرشد جديد
   async guideRegister(formData) {
     try {
       console.log('📤 Registering new guide:', formData);
@@ -417,7 +403,6 @@ export const api = {
     }
   },
 
-  // ✅ تسجيل دخول المرشد
   async guideLogin(licenseNumber, email, password) {
     try {
       console.log('📤 Guide login attempt:', email);
@@ -454,7 +439,6 @@ export const api = {
     }
   },
 
-  // ✅ الحصول على برامج المرشد
   async getGuidePrograms(guideId, token) {
     try {
       const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}/programs`, {
@@ -478,7 +462,6 @@ export const api = {
     }
   },
 
-  // ✅ إضافة برنامج سياحي جديد
   async addTourProgram(guideId, token, programData) {
     try {
       const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}/programs`, {
@@ -503,7 +486,6 @@ export const api = {
     }
   },
 
-  // ✅ تفعيل/إيقاف برنامج
   async toggleProgramStatus(guideId, programId, token, status) {
     try {
       const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}/programs/${programId}`, {
@@ -528,7 +510,6 @@ export const api = {
     }
   },
 
-  // ✅ الحصول على معلومات المرشد
   async getGuideProfile(guideId, token) {
     try {
       const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}`, {
@@ -552,7 +533,6 @@ export const api = {
     }
   },
 
-  // ✅ تحديث بيانات المرشد
   async updateGuideProfile(guideId, token, updates) {
     try {
       const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}`, {
@@ -577,7 +557,6 @@ export const api = {
     }
   },
 
-  // ✅ الحصول على حالة طلب الترقية
   async getUpgradeStatus(userId) {
     try {
       const token = localStorage.getItem('token');
@@ -603,7 +582,6 @@ export const api = {
     }
   },
 
-  // ✅ التحقق من صحة التوكن
   async verifyToken(token) {
     try {
       if (!token) {
@@ -634,7 +612,6 @@ export const api = {
     }
   },
 
-  // ✅ تسجيل الخروج
   logout() {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
@@ -643,10 +620,9 @@ export const api = {
   },
 
   // ============================================
-  // 🔔 NOTIFICATION SERVICES - الإشعارات (مع تحسين التشخيص)
+  // 🔔 NOTIFICATION SERVICES - الإشعارات
   // ============================================
 
-  // ✅ الحصول على إشعارات المستخدم
   async getUserNotifications(params = {}) {
     try {
       const token = localStorage.getItem('token');
@@ -656,9 +632,6 @@ export const api = {
       console.log('🔍 [getUserNotifications] ==========');
       console.log('🔍 URL:', url);
       console.log('🔍 Token exists:', !!token);
-      console.log('🔍 Token (first 20 chars):', token?.substring(0, 20) + '...');
-      console.log('🔍 Params:', params);
-      console.log('🔍 Query string:', queryParams);
       
       const response = await fetch(url, {
         method: 'GET',
@@ -669,10 +642,6 @@ export const api = {
       });
 
       console.log('🔍 Response status:', response.status);
-      console.log('🔍 Response ok:', response.ok);
-      console.log('🔍 Response headers:', {
-        'content-type': response.headers.get('content-type'),
-      });
       
       const data = await response.json();
       console.log('🔍 Response data:', JSON.stringify(data, null, 2));
@@ -685,20 +654,14 @@ export const api = {
       return data;
     } catch (error) {
       console.error('❌ Get notifications error:', error);
-      console.error('❌ Error name:', error.name);
-      console.error('❌ Error message:', error.message);
       throw error;
     }
   },
 
-  // ✅ الحصول على إحصائيات الإشعارات
   async getNotificationStats() {
     try {
       const token = localStorage.getItem('token');
       const url = `${API_BASE_URL}/api/notifications/stats`;
-      
-      console.log('📊 [getNotificationStats] ==========');
-      console.log('📊 URL:', url);
       
       const response = await fetch(url, {
         method: 'GET',
@@ -708,11 +671,7 @@ export const api = {
         }
       });
 
-      console.log('📊 Response status:', response.status);
-      
       const data = await response.json();
-      console.log('📊 Response data:', data);
-      console.log('📊 =================================');
       
       if (!response.ok) {
         throw new Error(data.message || 'فشل تحميل الإحصائيات');
@@ -725,15 +684,10 @@ export const api = {
     }
   },
 
-  // ✅ تحديث إشعار كمقروء
   async markNotificationAsRead(notificationId) {
     try {
       const token = localStorage.getItem('token');
       const url = `${API_BASE_URL}/api/notifications/${notificationId}/read`;
-      
-      console.log('📝 [markNotificationAsRead] ==========');
-      console.log('📝 URL:', url);
-      console.log('📝 Notification ID:', notificationId);
       
       const response = await fetch(url, {
         method: 'PUT',
@@ -743,11 +697,7 @@ export const api = {
         }
       });
 
-      console.log('📝 Response status:', response.status);
-      
       const data = await response.json();
-      console.log('📝 Response data:', data);
-      console.log('📝 =================================');
       
       if (!response.ok) {
         throw new Error(data.message || 'فشل تحديث الإشعار');
@@ -760,14 +710,10 @@ export const api = {
     }
   },
 
-  // ✅ تحديث جميع الإشعارات كمقروءة
   async markAllNotificationsAsRead() {
     try {
       const token = localStorage.getItem('token');
       const url = `${API_BASE_URL}/api/notifications/read-all`;
-      
-      console.log('📝 [markAllNotificationsAsRead] ==========');
-      console.log('📝 URL:', url);
       
       const response = await fetch(url, {
         method: 'PUT',
@@ -777,11 +723,7 @@ export const api = {
         }
       });
 
-      console.log('📝 Response status:', response.status);
-      
       const data = await response.json();
-      console.log('📝 Response data:', data);
-      console.log('📝 =================================');
       
       if (!response.ok) {
         throw new Error(data.message || 'فشل تحديث الإشعارات');
@@ -794,15 +736,10 @@ export const api = {
     }
   },
 
-  // ✅ حذف إشعار
   async deleteNotification(notificationId) {
     try {
       const token = localStorage.getItem('token');
       const url = `${API_BASE_URL}/api/notifications/${notificationId}`;
-      
-      console.log('🗑️ [deleteNotification] ==========');
-      console.log('🗑️ URL:', url);
-      console.log('🗑️ Notification ID:', notificationId);
       
       const response = await fetch(url, {
         method: 'DELETE',
@@ -812,11 +749,7 @@ export const api = {
         }
       });
 
-      console.log('🗑️ Response status:', response.status);
-      
       const data = await response.json();
-      console.log('🗑️ Response data:', data);
-      console.log('🗑️ =================================');
       
       if (!response.ok) {
         throw new Error(data.message || 'فشل حذف الإشعار');
@@ -829,15 +762,10 @@ export const api = {
     }
   },
 
-  // ✅ حذف إشعارات متعددة
   async deleteMultipleNotifications(notificationIds) {
     try {
       const token = localStorage.getItem('token');
       const url = `${API_BASE_URL}/api/notifications/delete-multiple`;
-      
-      console.log('🗑️ [deleteMultipleNotifications] ==========');
-      console.log('🗑️ URL:', url);
-      console.log('🗑️ Notification IDs:', notificationIds);
       
       const response = await fetch(url, {
         method: 'POST',
@@ -848,11 +776,7 @@ export const api = {
         body: JSON.stringify({ notificationIds })
       });
 
-      console.log('🗑️ Response status:', response.status);
-      
       const data = await response.json();
-      console.log('🗑️ Response data:', data);
-      console.log('🗑️ =================================');
       
       if (!response.ok) {
         throw new Error(data.message || 'فشل حذف الإشعارات');
@@ -865,16 +789,10 @@ export const api = {
     }
   },
 
-  // ✅ الرد على إشعار
   async replyToNotification(notificationId, message) {
     try {
       const token = localStorage.getItem('token');
       const url = `${API_BASE_URL}/api/notifications/reply`;
-      
-      console.log('💬 [replyToNotification] ==========');
-      console.log('💬 URL:', url);
-      console.log('💬 Notification ID:', notificationId);
-      console.log('💬 Message:', message);
       
       const response = await fetch(url, {
         method: 'POST',
@@ -885,11 +803,7 @@ export const api = {
         body: JSON.stringify({ notificationId, message })
       });
 
-      console.log('💬 Response status:', response.status);
-      
       const data = await response.json();
-      console.log('💬 Response data:', data);
-      console.log('💬 =================================');
       
       if (!response.ok) {
         throw new Error(data.message || 'فشل إرسال الرد');
@@ -903,10 +817,9 @@ export const api = {
   },
 
   // ============================================
-  // 💬 CHAT SERVICES - خدمات المحادثات (محسنة)
+  // 💬 CHAT SERVICES - خدمات المحادثات
   // ============================================
 
-  // ✅ الحصول على جميع محادثات المستخدم - نسخة محسنة مع معالجة الأخطاء
   async getUserConversations() {
     try {
       const token = localStorage.getItem('token');
@@ -931,25 +844,20 @@ export const api = {
       
       if (!response.ok) {
         console.error('❌ Conversations error response:', data);
-        // بدلاً من رمي خطأ، نعيد مصفوفة فارغة
         return { success: false, conversations: [], error: data.message };
       }
 
-      // التأكد من أن البيانات بالصيغة الصحيحة
       return {
         success: true,
         conversations: data.conversations || data.data?.conversations || []
       };
     } catch (error) {
       console.error('❌ Get conversations error:', error);
-      // لا نريد إيقاف التطبيق بسبب فشل جلب المحادثات
       return { success: false, conversations: [], error: error.message };
     }
   },
 
-  // ✅ بدء محادثة دعم جديدة - نسخة محسنة مع معالجة أفضل للأخطاء
   async startSupportChat(data) {
-    // إذا كان data عبارة عن string (للتوافق مع الكود القديم)
     if (typeof data === 'string') {
       data = { subject: data, manual: false };
     }
@@ -976,14 +884,10 @@ export const api = {
       console.log('📥 Support chat response:', responseData);
       
       if (!response.ok) {
-        // رسالة خطأ مخصصة
         let errorMessage = responseData.message || 'فشل بدء محادثة الدعم';
-        
-        // إذا كان الخطأ يتعلق بعمود status، نعرض رسالة مناسبة
         if (errorMessage.includes('status') || errorMessage.includes('column')) {
           errorMessage = 'خدمة الدعم الفني قيد التحديث، يرجى المحاولة لاحقاً';
         }
-        
         throw new Error(errorMessage);
       }
 
@@ -994,7 +898,6 @@ export const api = {
     }
   },
 
-  // ✅ إنشاء محادثة جديدة
   async createConversation(participantId, type = 'direct', bookingId = null) {
     try {
       const token = localStorage.getItem('token');
@@ -1025,7 +928,6 @@ export const api = {
     }
   },
 
-  // ✅ الحصول على رسائل محادثة
   async getConversationMessages(conversationId, page = 1, limit = 50) {
     try {
       const token = localStorage.getItem('token');
@@ -1058,7 +960,6 @@ export const api = {
     }
   },
 
-  // ✅ إرسال رسالة نصية
   async sendTextMessage(chatId, content) {
     try {
       const token = localStorage.getItem('token');
@@ -1089,7 +990,6 @@ export const api = {
     }
   },
 
-  // ✅ إرسال رسالة صورة - إضافة جديدة
   async sendImageMessage(formData, onProgress) {
     try {
       const token = localStorage.getItem('token');
@@ -1119,7 +1019,6 @@ export const api = {
     }
   },
 
-  // ✅ إرسال رسالة ملف - إضافة جديدة
   async sendFileMessage(formData) {
     try {
       const token = localStorage.getItem('token');
@@ -1149,7 +1048,6 @@ export const api = {
     }
   },
 
-  // ✅ تقييم المحادثة - إضافة جديدة
   async rateConversation(conversationId, rating) {
     try {
       const token = localStorage.getItem('token');
@@ -1180,7 +1078,6 @@ export const api = {
     }
   },
 
-  // ✅ تحديث حالة القراءة
   async markMessageAsRead(messageId) {
     try {
       const token = localStorage.getItem('token');
@@ -1206,6 +1103,508 @@ export const api = {
       return data;
     } catch (error) {
       console.error('❌ Mark as read error:', error);
+      throw error;
+    }
+  },
+
+  // ============================================
+  // 🎫 SUPPORT TICKETS - تذاكر الدعم الفني (مع Fallback للتخزين المحلي)
+  // ============================================
+
+  async createSupportTicket(data) {
+    try {
+      const token = localStorage.getItem('token');
+      
+      console.log('📤 Creating support ticket with data:', data);
+      
+      const response = await fetch(`${API_BASE_URL}/api/support/tickets`, {
+        method: 'POST',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(data)
+      });
+
+      const responseData = await response.json();
+      console.log('📥 Create ticket response:', responseData);
+      
+      if (!response.ok) {
+        throw new Error(responseData.message || 'فشل إنشاء تذكرة الدعم');
+      }
+
+      return responseData;
+    } catch (error) {
+      console.error('❌ Create support ticket error:', error);
+      throw this.createLocalTicket(data);
+    }
+  },
+
+  async getSupportTickets(params = {}) {
+    try {
+      const token = localStorage.getItem('token');
+      const queryParams = new URLSearchParams(params).toString();
+      const url = `${API_BASE_URL}/api/support/tickets${queryParams ? `?${queryParams}` : ''}`;
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const responseData = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(responseData.message || 'فشل تحميل التذاكر');
+      }
+
+      return responseData;
+    } catch (error) {
+      console.error('❌ Get support tickets error:', error);
+      return this.getLocalTickets(params);
+    }
+  },
+
+  async getSupportTicket(ticketId) {
+    try {
+      const token = localStorage.getItem('token');
+      
+      const response = await fetch(`${API_BASE_URL}/api/support/tickets/${ticketId}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const responseData = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(responseData.message || 'فشل تحميل التذكرة');
+      }
+
+      return responseData;
+    } catch (error) {
+      console.error('❌ Get support ticket error:', error);
+      return this.getLocalTicket(ticketId);
+    }
+  },
+
+  async sendSupportMessage(ticketId, message, attachments = []) {
+    try {
+      const token = localStorage.getItem('token');
+      
+      console.log('📤 Sending support message to ticket:', ticketId);
+      console.log('📤 Message:', message);
+      
+      const response = await fetch(`${API_BASE_URL}/api/support/tickets/${ticketId}/messages`, {
+        method: 'POST',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ message, attachments })
+      });
+
+      const responseData = await response.json();
+      console.log('📥 Send message response:', responseData);
+      
+      if (!response.ok) {
+        throw new Error(responseData.message || 'فشل إرسال الرسالة');
+      }
+
+      return responseData;
+    } catch (error) {
+      console.error('❌ Send message error:', error);
+      return this.saveLocalMessage(ticketId, message);
+    }
+  },
+
+  async getSupportMessages(ticketId) {
+    try {
+      const token = localStorage.getItem('token');
+      
+      const response = await fetch(`${API_BASE_URL}/api/support/tickets/${ticketId}/messages`, {
+        method: 'GET',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const responseData = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(responseData.message || 'فشل تحميل الرسائل');
+      }
+
+      return responseData;
+    } catch (error) {
+      console.error('❌ Get messages error:', error);
+      return this.getLocalMessages(ticketId);
+    }
+  },
+
+  async updateTicketStatus(ticketId, status) {
+    try {
+      const token = localStorage.getItem('token');
+      
+      const response = await fetch(`${API_BASE_URL}/api/support/tickets/${ticketId}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ status })
+      });
+
+      const responseData = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(responseData.message || 'فشل تحديث حالة التذكرة');
+      }
+
+      return responseData;
+    } catch (error) {
+      console.error('❌ Update ticket status error:', error);
+      throw error;
+    }
+  },
+
+  // ============================================
+  // 💾 LOCAL STORAGE FUNCTIONS (Fallback)
+  // ============================================
+
+  createLocalTicket(data) {
+    const userStr = localStorage.getItem('user');
+    const user = userStr ? JSON.parse(userStr) : null;
+    
+    const newTicket = {
+      id: Date.now(),
+      user_id: user?.id || data.user_id,
+      user_name: user?.fullName || user?.name || 'مستخدم',
+      subject: data.subject || 'طلب دعم جديد',
+      type: data.type || 'general',
+      priority: data.priority || 'normal',
+      status: 'open',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      fromLocal: true
+    };
+    
+    const ticketsKey = 'support_tickets_local';
+    const existingTickets = localStorage.getItem(ticketsKey);
+    let allTickets = existingTickets ? JSON.parse(existingTickets) : [];
+    allTickets.unshift(newTicket);
+    localStorage.setItem(ticketsKey, JSON.stringify(allTickets));
+    
+    localStorage.setItem(`support_messages_${newTicket.id}`, JSON.stringify([]));
+    
+    return {
+      success: true,
+      ticket: newTicket,
+      fromLocal: true
+    };
+  },
+
+  getLocalTickets(params = {}) {
+    const ticketsKey = 'support_tickets_local';
+    const tickets = localStorage.getItem(ticketsKey);
+    let allTickets = tickets ? JSON.parse(tickets) : [];
+    
+    if (params.user_id) {
+      allTickets = allTickets.filter(t => t.user_id == params.user_id);
+    }
+    if (params.status) {
+      allTickets = allTickets.filter(t => t.status === params.status);
+    }
+    
+    return {
+      success: true,
+      tickets: allTickets,
+      fromLocal: true
+    };
+  },
+
+  getLocalTicket(ticketId) {
+    const ticketsKey = 'support_tickets_local';
+    const tickets = localStorage.getItem(ticketsKey);
+    let allTickets = tickets ? JSON.parse(tickets) : [];
+    const ticket = allTickets.find(t => t.id == ticketId);
+    
+    return {
+      success: true,
+      ticket: ticket || null,
+      fromLocal: true
+    };
+  },
+
+  getLocalMessages(ticketId) {
+    const messagesKey = `support_messages_${ticketId}`;
+    const messages = localStorage.getItem(messagesKey);
+    const allMessages = messages ? JSON.parse(messages) : [];
+    
+    return {
+      success: true,
+      messages: allMessages,
+      fromLocal: true
+    };
+  },
+
+  saveLocalMessage(ticketId, message) {
+    const userStr = localStorage.getItem('user');
+    const user = userStr ? JSON.parse(userStr) : null;
+    
+    const newMessage = {
+      id: Date.now(),
+      ticket_id: ticketId,
+      message: message,
+      is_from_user: true,
+      sender_name: user?.fullName || user?.name || 'أنت',
+      created_at: new Date().toISOString(),
+      status: 'sent',
+      fromLocal: true
+    };
+    
+    const messagesKey = `support_messages_${ticketId}`;
+    const existingMessages = localStorage.getItem(messagesKey);
+    let allMessages = existingMessages ? JSON.parse(existingMessages) : [];
+    allMessages.push(newMessage);
+    localStorage.setItem(messagesKey, JSON.stringify(allMessages));
+    
+    // تحديث التذكرة
+    const ticketsKey = 'support_tickets_local';
+    const existingTickets = localStorage.getItem(ticketsKey);
+    if (existingTickets) {
+      let allTickets = JSON.parse(existingTickets);
+      const ticketIndex = allTickets.findIndex(t => t.id == ticketId);
+      if (ticketIndex !== -1) {
+        allTickets[ticketIndex].updated_at = new Date().toISOString();
+        allTickets[ticketIndex].last_message = message;
+        localStorage.setItem(ticketsKey, JSON.stringify(allTickets));
+      }
+    }
+    
+    return {
+      success: true,
+      message: newMessage,
+      fromLocal: true
+    };
+  },
+
+  // دالة مساعدة لإنشاء محادثة دعم جديدة مع Fallback
+  async createSupportChat(userId, userName, message) {
+    try {
+      const ticketResponse = await this.createSupportTicket({
+        user_id: userId,
+        subject: 'طلب دعم جديد',
+        type: 'general',
+        priority: 'normal'
+      });
+      
+      if (ticketResponse.success) {
+        const ticketId = ticketResponse.ticket.id;
+        await this.sendSupportMessage(ticketId, message);
+        return ticketResponse;
+      }
+    } catch (error) {
+      console.log('⚠️ Creating support chat locally');
+      
+      const newTicket = this.createLocalTicket({
+        user_id: userId,
+        subject: 'طلب دعم جديد',
+        type: 'general',
+        priority: 'normal'
+      });
+      
+      if (newTicket.success) {
+        this.saveLocalMessage(newTicket.ticket.id, message);
+        
+        // محاولة إرسال إشعار للمسؤول
+        try {
+          await this.sendNotification({
+            userId: 3,
+            title: '🆕 طلب دعم جديد',
+            message: `${userName} يحتاج إلى مساعدة`,
+            type: 'support',
+            action_url: `/support/chats/${newTicket.ticket.id}`,
+            data: {
+              ticketId: newTicket.ticket.id,
+              userId: userId,
+              userName: userName,
+              message: message
+            }
+          });
+        } catch (notifError) {
+          console.log('Could not send notification to admin');
+        }
+      }
+      
+      return newTicket;
+    }
+  },
+
+  async sendNotification(data) {
+    try {
+      const token = localStorage.getItem('token');
+      
+      const response = await fetch(`${API_BASE_URL}/api/notifications/send`, {
+        method: 'POST',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(data)
+      });
+
+      const result = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(result.message || 'فشل إرسال الإشعار');
+      }
+
+      return result;
+    } catch (error) {
+      console.error('❌ Send notification error:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  // ============================================
+  // 📝 UPGRADE REQUESTS - طلبات الترقية
+  // ============================================
+
+  async createUpgradeRequest(data) {
+    try {
+      const token = localStorage.getItem('token');
+      
+      console.log('📤 Creating upgrade request with data:', data);
+      
+      const response = await fetch(`${API_BASE_URL}/api/upgrade-requests`, {
+        method: 'POST',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(data)
+      });
+
+      const responseData = await response.json();
+      console.log('📥 Create upgrade request response:', responseData);
+      
+      if (!response.ok) {
+        throw new Error(responseData.message || 'فشل إنشاء طلب الترقية');
+      }
+
+      return responseData;
+    } catch (error) {
+      console.error('❌ Create upgrade request error:', error);
+      throw error;
+    }
+  },
+
+  async getUpgradeRequests(params = {}) {
+    try {
+      const token = localStorage.getItem('token');
+      const queryParams = new URLSearchParams(params).toString();
+      const url = `${API_BASE_URL}/api/upgrade-requests${queryParams ? `?${queryParams}` : ''}`;
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const responseData = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(responseData.message || 'فشل تحميل طلبات الترقية');
+      }
+
+      return responseData;
+    } catch (error) {
+      console.error('❌ Get upgrade requests error:', error);
+      throw error;
+    }
+  },
+
+  async approveUpgradeRequest(requestId, adminNotes = '') {
+    try {
+      const token = localStorage.getItem('token');
+      
+      const response = await fetch(`${API_BASE_URL}/api/upgrade-requests/${requestId}/approve`, {
+        method: 'POST',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ adminNotes })
+      });
+
+      const responseData = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(responseData.message || 'فشل الموافقة على الطلب');
+      }
+
+      return responseData;
+    } catch (error) {
+      console.error('❌ Approve upgrade request error:', error);
+      throw error;
+    }
+  },
+
+  async rejectUpgradeRequest(requestId, reason) {
+    try {
+      const token = localStorage.getItem('token');
+      
+      const response = await fetch(`${API_BASE_URL}/api/upgrade-requests/${requestId}/reject`, {
+        method: 'POST',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ reason })
+      });
+
+      const responseData = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(responseData.message || 'فشل رفض الطلب');
+      }
+
+      return responseData;
+    } catch (error) {
+      console.error('❌ Reject upgrade request error:', error);
+      throw error;
+    }
+  },
+
+  async getUserUpgradeRequestStatus() {
+    try {
+      const token = localStorage.getItem('token');
+      
+      const response = await fetch(`${API_BASE_URL}/api/upgrade-requests/my-status`, {
+        method: 'GET',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const responseData = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(responseData.message || 'فشل تحميل حالة الطلب');
+      }
+
+      return responseData;
+    } catch (error) {
+      console.error('❌ Get upgrade request status error:', error);
       throw error;
     }
   }
