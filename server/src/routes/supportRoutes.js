@@ -6,137 +6,140 @@ import { protect } from '../middleware/authMiddleware.js';
 const router = express.Router();
 
 // ============================================
-// ✅ الحصول على محادثات المستخدم
+// ✅ الحصول على تذاكر المستخدم (محادثات)
 // ============================================
-router.get('/conversations', protect, async (req, res) => {
+router.get('/tickets', protect, async (req, res) => {
   try {
     const userId = req.user.id;
     const { status, page = 1, limit = 20 } = req.query;
     const offset = (page - 1) * limit;
 
     let query = `
-      SELECT c.*, 
+      SELECT t.*, 
              COUNT(m.id) as messages_count,
              MAX(m.created_at) as last_message,
-             (SELECT COUNT(*) FROM app.support_messages WHERE conversation_id = c.id AND is_read = false AND is_from_user = false) as unread_count
-      FROM app.support_conversations c
-      LEFT JOIN app.support_messages m ON c.id = m.conversation_id
-      WHERE c.user_id = $1
+             (SELECT COUNT(*) FROM app.support_messages WHERE ticket_id = t.id AND is_read = false AND is_from_user = false) as unread_count
+      FROM app.support_tickets t
+      LEFT JOIN app.support_messages m ON t.id = m.ticket_id
+      WHERE t.user_id = $1
     `;
     const params = [userId];
     let paramIndex = 2;
 
     if (status) {
-      query += ` AND c.status = $${paramIndex}`;
+      query += ` AND t.status = $${paramIndex}`;
       params.push(status);
       paramIndex++;
     }
 
     query += `
-      GROUP BY c.id
-      ORDER BY c.updated_at DESC
+      GROUP BY t.id
+      ORDER BY t.updated_at DESC
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
     `;
     params.push(limit, offset);
 
-    const conversationsResult = await pool.query(query, params);
+    const ticketsResult = await pool.query(query, params);
 
     res.json({
       success: true,
-      conversations: conversationsResult.rows,
+      tickets: ticketsResult.rows,
       pagination: { page: parseInt(page), limit: parseInt(limit) }
     });
 
   } catch (error) {
-    console.error('❌ Get conversations error:', error);
+    console.error('❌ Get tickets error:', error);
     res.status(500).json({ success: false, message: 'حدث خطأ' });
   }
 });
 
 // ============================================
-// ✅ الحصول على تفاصيل محادثة
+// ✅ الحصول على تفاصيل تذكرة (محادثة)
 // ============================================
-router.get('/conversations/:conversationId', protect, async (req, res) => {
+router.get('/tickets/:ticketId', protect, async (req, res) => {
   try {
     const userId = req.user.id;
-    const { conversationId } = req.params;
+    const { ticketId } = req.params;
 
-    const conversationResult = await pool.query(
-      `SELECT * FROM app.support_conversations 
+    const ticketResult = await pool.query(
+      `SELECT * FROM app.support_tickets 
        WHERE id = $1 AND user_id = $2`,
-      [conversationId, userId]
+      [ticketId, userId]
     );
 
-    if (conversationResult.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'المحادثة غير موجودة' });
+    if (ticketResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'التذكرة غير موجودة' });
     }
 
-    const conversation = conversationResult.rows[0];
+    const ticket = ticketResult.rows[0];
 
     const messagesResult = await pool.query(
-      `SELECT m.*, u.full_name as sender_name, u.avatar as sender_avatar
+      `SELECT m.*, u.name as sender_name, u.avatar as sender_avatar
        FROM app.support_messages m
        LEFT JOIN app.users u ON m.user_id = u.id
-       WHERE m.conversation_id = $1
+       WHERE m.ticket_id = $1
        ORDER BY m.created_at ASC`,
-      [conversationId]
+      [ticketId]
     );
 
     // تحديث حالة القراءة
     await pool.query(
       `UPDATE app.support_messages 
        SET is_read = true 
-       WHERE conversation_id = $1 AND user_id != $2 AND is_read = false`,
-      [conversationId, userId]
+       WHERE ticket_id = $1 AND user_id != $2 AND is_read = false`,
+      [ticketId, userId]
     );
 
     res.json({
       success: true,
-      conversation,
+      ticket,
       messages: messagesResult.rows
     });
 
   } catch (error) {
-    console.error('❌ Get conversation error:', error);
+    console.error('❌ Get ticket error:', error);
     res.status(500).json({ success: false, message: 'حدث خطأ' });
   }
 });
 
 // ============================================
-// ✅ إنشاء محادثة جديدة
+// ✅ إنشاء تذكرة جديدة
 // ============================================
-router.post('/conversations', protect, async (req, res) => {
+router.post('/tickets', protect, async (req, res) => {
   try {
     const userId = req.user.id;
-    const { subject, message, priority = 'normal' } = req.body;
+    const { subject, message, priority = 'normal', type = 'general' } = req.body;
 
-    if (!subject || !message) {
-      return res.status(400).json({ success: false, message: 'الموضوع والرسالة مطلوبان' });
+    if (!subject) {
+      return res.status(400).json({ success: false, message: 'الموضوع مطلوب' });
     }
 
-    const conversationResult = await pool.query(
-      `INSERT INTO app.support_conversations (user_id, subject, priority, status, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, NOW(), NOW())
+    const ticketResult = await pool.query(
+      `INSERT INTO app.support_tickets (user_id, subject, type, priority, status, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, 'open', NOW(), NOW())
        RETURNING *`,
-      [userId, subject, priority, 'open']
+      [userId, subject, type, priority]
     );
 
-    const conversation = conversationResult.rows[0];
+    const ticket = ticketResult.rows[0];
 
-    await pool.query(
-      `INSERT INTO app.support_messages (conversation_id, user_id, message, is_from_user, created_at)
-       VALUES ($1, $2, $3, $4, NOW())`,
-      [conversation.id, userId, message, true]
-    );
+    // إذا كان هناك رسالة أولية، أضفها
+    if (message) {
+      await pool.query(
+        `INSERT INTO app.support_messages (ticket_id, user_id, message, is_from_user, created_at)
+         VALUES ($1, $2, $3, $4, NOW())`,
+        [ticket.id, userId, message, true]
+      );
+    }
 
     res.json({
       success: true,
-      conversation,
-      message: 'تم إنشاء المحادثة بنجاح'
+      ticket,
+      message: 'تم إنشاء تذكرة الدعم بنجاح'
     });
 
   } catch (error) {
-    console.error('❌ Create conversation error:', error);
+    console.error('❌ Create ticket error:', error);
     res.status(500).json({ success: false, message: 'حدث خطأ' });
   }
 });
@@ -144,38 +147,38 @@ router.post('/conversations', protect, async (req, res) => {
 // ============================================
 // ✅ إرسال رسالة
 // ============================================
-router.post('/conversations/:conversationId/messages', protect, async (req, res) => {
+router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
   try {
     const userId = req.user.id;
-    const { conversationId } = req.params;
-    const { message } = req.body;
+    const { ticketId } = req.params;
+    const { message, attachments } = req.body;
 
     if (!message) {
       return res.status(400).json({ success: false, message: 'الرسالة مطلوبة' });
     }
 
-    const conversationResult = await pool.query(
-      `SELECT * FROM app.support_conversations 
+    const ticketResult = await pool.query(
+      `SELECT * FROM app.support_tickets 
        WHERE id = $1 AND user_id = $2 AND status != 'closed'`,
-      [conversationId, userId]
+      [ticketId, userId]
     );
 
-    if (conversationResult.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'المحادثة غير موجودة أو مغلقة' });
+    if (ticketResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'التذكرة غير موجودة أو مغلقة' });
     }
 
     const messageResult = await pool.query(
-      `INSERT INTO app.support_messages (conversation_id, user_id, message, is_from_user, created_at)
-       VALUES ($1, $2, $3, $4, NOW())
+      `INSERT INTO app.support_messages (ticket_id, user_id, message, is_from_user, attachments, created_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
        RETURNING *`,
-      [conversationId, userId, message, true]
+      [ticketId, userId, message, true, attachments || '[]']
     );
 
     await pool.query(
-      `UPDATE app.support_conversations 
+      `UPDATE app.support_tickets 
        SET updated_at = NOW()
        WHERE id = $1`,
-      [conversationId]
+      [ticketId]
     );
 
     res.json({
@@ -190,43 +193,43 @@ router.post('/conversations/:conversationId/messages', protect, async (req, res)
 });
 
 // ============================================
-// ✅ إغلاق المحادثة
+// ✅ إغلاق التذكرة
 // ============================================
-router.put('/conversations/:conversationId/close', protect, async (req, res) => {
+router.put('/tickets/:ticketId/close', protect, async (req, res) => {
   try {
     const userId = req.user.id;
-    const { conversationId } = req.params;
+    const { ticketId } = req.params;
 
     const result = await pool.query(
-      `UPDATE app.support_conversations 
+      `UPDATE app.support_tickets 
        SET status = 'closed', updated_at = NOW()
        WHERE id = $1 AND user_id = $2 AND status != 'closed'
        RETURNING *`,
-      [conversationId, userId]
+      [ticketId, userId]
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'المحادثة غير موجودة أو مغلقة بالفعل' });
+      return res.status(404).json({ success: false, message: 'التذكرة غير موجودة أو مغلقة بالفعل' });
     }
 
     res.json({
       success: true,
-      message: 'تم إغلاق المحادثة بنجاح'
+      message: 'تم إغلاق التذكرة بنجاح'
     });
 
   } catch (error) {
-    console.error('❌ Close conversation error:', error);
+    console.error('❌ Close ticket error:', error);
     res.status(500).json({ success: false, message: 'حدث خطأ' });
   }
 });
 
 // ============================================
-// ✅ تقييم المحادثة
+// ✅ تقييم التذكرة
 // ============================================
-router.post('/conversations/:conversationId/rate', protect, async (req, res) => {
+router.post('/tickets/:ticketId/rate', protect, async (req, res) => {
   try {
     const userId = req.user.id;
-    const { conversationId } = req.params;
+    const { ticketId } = req.params;
     const { rating, feedback } = req.body;
 
     if (!rating || rating < 1 || rating > 5) {
@@ -234,15 +237,15 @@ router.post('/conversations/:conversationId/rate', protect, async (req, res) => 
     }
 
     const result = await pool.query(
-      `UPDATE app.support_conversations 
+      `UPDATE app.support_tickets 
        SET rating = $1, feedback = $2, updated_at = NOW()
        WHERE id = $3 AND user_id = $4 AND status = 'closed'
        RETURNING *`,
-      [rating, feedback || null, conversationId, userId]
+      [rating, feedback || null, ticketId, userId]
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'المحادثة غير موجودة أو غير مغلقة' });
+      return res.status(404).json({ success: false, message: 'التذكرة غير موجودة أو غير مغلقة' });
     }
 
     res.json({
@@ -251,7 +254,7 @@ router.post('/conversations/:conversationId/rate', protect, async (req, res) => 
     });
 
   } catch (error) {
-    console.error('❌ Rate conversation error:', error);
+    console.error('❌ Rate ticket error:', error);
     res.status(500).json({ success: false, message: 'حدث خطأ' });
   }
 });
