@@ -16,7 +16,6 @@ import walletRoutes from './src/routes/walletRoutes.js';
 import bookingRoutes from './src/routes/bookingRoutes.js';
 import chatRoutes from './src/routes/chatRoutes.js';
 import notificationRoutes from './src/routes/notificationRoutes.js';
-import supportRoutes from './src/routes/supportRoutes.js';
 
 // استيراد دوال الوقت المساعدة
 import { createExpiryDate, isOTPValid, getTimeRemaining } from './src/utils/timeUtils.js';
@@ -208,8 +207,7 @@ app.get('/', (req, res) => {
       wallet: '/api/wallet',
       bookings: '/api/bookings',
       chats: '/api/chats',
-      notifications: '/api/notifications',
-      support: '/api/support'
+      notifications: '/api/notifications'
     }
   });
 });
@@ -221,7 +219,6 @@ app.use('/api/wallet', walletRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/chats', chatRoutes);
 app.use('/api/notifications', notificationRoutes);
-app.use('/api/support', supportRoutes);
 
 // ===================== Route إضافي للمحفظة =====================
 app.get('/api/wallet/:userId', async (req, res) => {
