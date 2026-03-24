@@ -6,6 +6,7 @@ import morgan from 'morgan';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import pkg from 'pg';
+import jwt from 'jsonwebtoken';
 const { Pool } = pkg;
 
 // استيراد المسارات
@@ -300,6 +301,250 @@ app.get('/health', async (req, res) => {
     websocket: 'active',
     onlineUsers: onlineUsers.size
   });
+});
+
+// ============================================
+// 📢 ADMIN NOTIFICATIONS API
+// ============================================
+
+// إرسال إشعار لمسؤول معين
+async function sendAdminNotification(adminId, type, title, message, relatedId = null, priority = 'normal', actionUrl = null, metadata = {}) {
+  try {
+    const result = await pool.query(
+      `INSERT INTO app.admin_notifications 
+       (admin_id, type, title, message, related_id, priority, action_url, metadata, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+       RETURNING *`,
+      [adminId, type, title, message, relatedId, priority, actionUrl, JSON.stringify(metadata)]
+    );
+    return result.rows[0];
+  } catch (error) {
+    console.error('Error sending admin notification:', error);
+    return null;
+  }
+}
+
+// إرسال إشعار لجميع المسؤولين والدعم الفني
+async function sendNotificationToAllAdmins(type, title, message, relatedId = null, priority = 'normal', actionUrl = null, metadata = {}) {
+  try {
+    const admins = await pool.query(
+      `SELECT id FROM app.users WHERE role IN ('admin', 'support')`
+    );
+    
+    for (const admin of admins.rows) {
+      await sendAdminNotification(admin.id, type, title, message, relatedId, priority, actionUrl, metadata);
+    }
+    return true;
+  } catch (error) {
+    console.error('Error sending to all admins:', error);
+    return false;
+  }
+}
+
+// الحصول على إشعارات المسؤول
+app.get('/api/admin/notifications', async (req, res) => {
+  try {
+    // التحقق من التوكن
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
+    }
+    
+    const token = authHeader.split(' ')[1];
+    let adminId;
+    
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      adminId = decoded.id;
+    } catch (err) {
+      return res.status(401).json({ success: false, message: 'توكن غير صالح' });
+    }
+    
+    const { status, limit = 50, offset = 0 } = req.query;
+    
+    let query = `
+      SELECT * FROM app.admin_notifications 
+      WHERE admin_id = $1
+    `;
+    const params = [adminId];
+    let paramIndex = 2;
+    
+    if (status && status !== 'all') {
+      query += ` AND status = $${paramIndex}`;
+      params.push(status);
+      paramIndex++;
+    }
+    
+    query += ` ORDER BY created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+    params.push(limit, offset);
+    
+    const result = await pool.query(query, params);
+    
+    // حساب عدد غير المقروءة
+    const unreadResult = await pool.query(
+      `SELECT COUNT(*) FROM app.admin_notifications 
+       WHERE admin_id = $1 AND status = 'unread'`,
+      [adminId]
+    );
+    
+    res.json({
+      success: true,
+      notifications: result.rows,
+      unreadCount: parseInt(unreadResult.rows[0].count),
+      pagination: { limit: parseInt(limit), offset: parseInt(offset) }
+    });
+  } catch (error) {
+    console.error('Error fetching admin notifications:', error);
+    res.status(500).json({ success: false, message: 'فشل تحميل الإشعارات' });
+  }
+});
+
+// تحديث إشعار كمقروء
+app.put('/api/admin/notifications/:id/read', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
+    }
+    
+    const token = authHeader.split(' ')[1];
+    let adminId;
+    
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      adminId = decoded.id;
+    } catch (err) {
+      return res.status(401).json({ success: false, message: 'توكن غير صالح' });
+    }
+    
+    const { id } = req.params;
+    
+    const result = await pool.query(
+      `UPDATE app.admin_notifications 
+       SET status = 'read', read_at = NOW()
+       WHERE id = $1 AND admin_id = $2
+       RETURNING *`,
+      [id, adminId]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'الإشعار غير موجود' });
+    }
+    
+    res.json({ success: true, notification: result.rows[0] });
+  } catch (error) {
+    console.error('Error marking notification as read:', error);
+    res.status(500).json({ success: false, message: 'فشل تحديث الإشعار' });
+  }
+});
+
+// تحديث جميع الإشعارات كمقروءة
+app.put('/api/admin/notifications/read-all', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
+    }
+    
+    const token = authHeader.split(' ')[1];
+    let adminId;
+    
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      adminId = decoded.id;
+    } catch (err) {
+      return res.status(401).json({ success: false, message: 'توكن غير صالح' });
+    }
+    
+    await pool.query(
+      `UPDATE app.admin_notifications 
+       SET status = 'read', read_at = NOW()
+       WHERE admin_id = $1 AND status = 'unread'`,
+      [adminId]
+    );
+    
+    res.json({ success: true, message: 'تم تحديث جميع الإشعارات' });
+  } catch (error) {
+    console.error('Error marking all as read:', error);
+    res.status(500).json({ success: false, message: 'فشل تحديث الإشعارات' });
+  }
+});
+
+// حذف إشعار
+app.delete('/api/admin/notifications/:id', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
+    }
+    
+    const token = authHeader.split(' ')[1];
+    let adminId;
+    
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      adminId = decoded.id;
+    } catch (err) {
+      return res.status(401).json({ success: false, message: 'توكن غير صالح' });
+    }
+    
+    const { id } = req.params;
+    
+    const result = await pool.query(
+      `DELETE FROM app.admin_notifications 
+       WHERE id = $1 AND admin_id = $2
+       RETURNING id`,
+      [id, adminId]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'الإشعار غير موجود' });
+    }
+    
+    res.json({ success: true, message: 'تم حذف الإشعار' });
+  } catch (error) {
+    console.error('Error deleting notification:', error);
+    res.status(500).json({ success: false, message: 'فشل حذف الإشعار' });
+  }
+});
+
+// أرشفة إشعار
+app.put('/api/admin/notifications/:id/archive', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
+    }
+    
+    const token = authHeader.split(' ')[1];
+    let adminId;
+    
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      adminId = decoded.id;
+    } catch (err) {
+      return res.status(401).json({ success: false, message: 'توكن غير صالح' });
+    }
+    
+    const { id } = req.params;
+    
+    const result = await pool.query(
+      `UPDATE app.admin_notifications 
+       SET status = 'archived', archived_at = NOW()
+       WHERE id = $1 AND admin_id = $2
+       RETURNING *`,
+      [id, adminId]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'الإشعار غير موجود' });
+    }
+    
+    res.json({ success: true, notification: result.rows[0] });
+  } catch (error) {
+    console.error('Error archiving notification:', error);
+    res.status(500).json({ success: false, message: 'فشل أرشفة الإشعار' });
+  }
 });
 
 // ===================== Database connection and server start =====================
