@@ -105,24 +105,33 @@ router.post('/tickets', protect, async (req, res) => {
 });
 
 // ============================================
-// ✅ الحصول على رسائل التذكرة
+// ✅ الحصول على رسائل التذكرة (معدل)
 // ============================================
 router.get('/tickets/:ticketId/messages', protect, async (req, res) => {
   try {
     const userId = req.user.id;
     const { ticketId } = req.params;
 
+    console.log('🔍 [Support] Get messages - userId:', userId, 'ticketId:', ticketId);
+
+    // التحقق من أن التذكرة موجودة
     const ticketResult = await pool.query(
-      `SELECT * FROM app.support_tickets 
-       WHERE id = $1 AND user_id = $2`,
-      [ticketId, userId]
+      `SELECT * FROM app.support_tickets WHERE id = $1`,
+      [ticketId]
     );
 
     if (ticketResult.rows.length === 0) {
-      const isAdmin = req.user.role === 'admin' || req.user.role === 'support';
-      if (!isAdmin) {
-        return res.status(404).json({ success: false, message: 'التذكرة غير موجودة' });
-      }
+      return res.status(404).json({ success: false, message: 'التذكرة غير موجودة' });
+    }
+
+    const ticket = ticketResult.rows[0];
+    const isAdmin = req.user.role === 'admin' || req.user.role === 'support';
+    const isOwner = ticket.user_id === userId;
+
+    console.log('🔍 [Support] Ticket owner:', ticket.user_id, 'Current user:', userId, 'isAdmin:', isAdmin, 'isOwner:', isOwner);
+
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({ success: false, message: 'غير مصرح لك برؤية هذه التذكرة' });
     }
 
     const messagesResult = await pool.query(
@@ -156,55 +165,56 @@ router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
       return res.status(400).json({ success: false, message: 'الرسالة مطلوبة' });
     }
 
-    // التحقق من أن التذكرة موجودة وغير مغلقة
+    console.log('📤 [Support] Send message - userId:', userId, 'ticketId:', ticketId);
+
+    // التحقق من أن التذكرة موجودة
     const ticketResult = await pool.query(
-      `SELECT * FROM app.support_tickets 
-       WHERE id = $1 AND status != 'closed'`,
+      `SELECT * FROM app.support_tickets WHERE id = $1`,
       [ticketId]
     );
 
     if (ticketResult.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'التذكرة غير موجودة أو مغلقة' });
+      return res.status(404).json({ success: false, message: 'التذكرة غير موجودة' });
     }
 
     const ticket = ticketResult.rows[0];
-    
-    // ✅ السماح للمستخدم صاحب التذكرة فقط بإرسال رسائل (أو المسؤول)
-    const isOwner = ticket.user_id === userId;
     const isAdmin = req.user.role === 'admin' || req.user.role === 'support';
-    
+    const isOwner = ticket.user_id === userId;
+
+    console.log('📤 [Support] Ticket owner:', ticket.user_id, 'Current user:', userId, 'isAdmin:', isAdmin, 'isOwner:', isOwner);
+
+    // ✅ السماح للمالك والمسؤولين بإرسال الرسائل
     if (!isOwner && !isAdmin) {
       return res.status(403).json({ success: false, message: 'غير مصرح لك بإرسال رسائل لهذه التذكرة' });
     }
 
-    const senderUserId = isOwner ? userId : (ticket.user_id === userId ? userId : req.user.id);
-    
+    // التحقق من أن التذكرة غير مغلقة
+    if (ticket.status === 'closed') {
+      return res.status(400).json({ success: false, message: 'التذكرة مغلقة لا يمكن إرسال رسائل' });
+    }
+
     const messageResult = await pool.query(
       `INSERT INTO app.support_messages (ticket_id, user_id, message, is_from_user, created_at)
        VALUES ($1, $2, $3, $4, NOW())
        RETURNING *`,
-      [ticketId, senderUserId, message, isOwner]
+      [ticketId, userId, message, isOwner || !isAdmin]
     );
 
     await pool.query(
-      `UPDATE app.support_tickets 
-       SET updated_at = NOW()
-       WHERE id = $1`,
+      `UPDATE app.support_tickets SET updated_at = NOW() WHERE id = $1`,
       [ticketId]
     );
 
-    console.log('✅ [Support] Message sent:', { ticketId, userId: senderUserId, isFromUser: isOwner });
+    console.log('✅ [Support] Message sent:', { ticketId, userId, isFromUser: isOwner || !isAdmin });
 
     // ✅ إنشاء إشعار للمسؤولين إذا كانت الرسالة من مستخدم عادي
     if (!isOwner && !isAdmin) {
-      // جلب اسم المستخدم
       const userResult = await pool.query(
         `SELECT full_name, email FROM app.users WHERE id = $1`,
         [userId]
       );
       const userName = userResult.rows[0]?.full_name || userResult.rows[0]?.email || `مستخدم ${userId}`;
       
-      // الحصول على جميع المسؤولين
       const adminsResult = await pool.query(
         `SELECT id FROM app.users WHERE role IN ('admin', 'support')`
       );
