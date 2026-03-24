@@ -1472,12 +1472,11 @@ export const api = {
     }
   },
 
-
-    // ============================================
+  // ============================================
   // 📢 ADMIN NOTIFICATIONS - إشعارات المسؤولين
   // ============================================
 
-  // الحصول على إشعارات المسؤول
+  // الحصول على إشعارات المسؤول - بدون بيانات تجريبية
   async getAdminNotifications(params = {}) {
     try {
       const token = localStorage.getItem('token');
@@ -1504,34 +1503,12 @@ export const api = {
       return data;
     } catch (error) {
       console.error('❌ Get admin notifications error:', error);
-      // إرجاع بيانات تجريبية (Mock Data)
+      // بدون بيانات تجريبية - مصفوفة فارغة
       return {
-        success: true,
-        notifications: [
-          {
-            id: 1,
-            type: 'upgrade_request',
-            title: 'طلب ترقية جديد',
-            message: 'المستخدم moohmmmooh94 يطلب الترقية إلى مرشد سياحي',
-            priority: 'high',
-            status: 'unread',
-            created_at: new Date().toISOString(),
-            related_id: 1,
-            metadata: { userId: 1, userName: 'moohmmmooh94' }
-          },
-          {
-            id: 2,
-            type: 'support_ticket',
-            title: 'تذكرة دعم جديدة',
-            message: 'مستخدم moohmd15nasib@icloud.com يحتاج إلى مساعدة',
-            priority: 'normal',
-            status: 'unread',
-            created_at: new Date(Date.now() - 3600000).toISOString(),
-            related_id: 3,
-            metadata: { chatId: 'test-chat-id', userId: 2 }
-          }
-        ],
-        unreadCount: 2
+        success: false,
+        notifications: [],
+        unreadCount: 0,
+        error: error.message
       };
     }
   },
