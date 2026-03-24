@@ -10,10 +10,7 @@ const router = express.Router();
 // ============================================
 router.get('/tickets', protect, async (req, res) => {
   try {
-    // استخدام user_id من token (لأمان المستخدم)
     const userId = req.user.id;
-    
-    // ✅ السماح بتمرير user_id في query للبحث عن تذاكر مستخدم معين
     const targetUserId = req.query.user_id || userId;
     
     const result = await pool.query(
@@ -34,11 +31,10 @@ router.get('/tickets', protect, async (req, res) => {
 });
 
 // ============================================
-// ✅ إنشاء تذكرة جديدة (معدل)
+// ✅ إنشاء تذكرة جديدة
 // ============================================
 router.post('/tickets', protect, async (req, res) => {
   try {
-    // ✅ استخدام user_id من req.body إذا وجد، وإلا استخدم req.user.id
     const { subject, message, priority = 'normal', type = 'general', user_id } = req.body;
     const userId = user_id || req.user.id;
     
@@ -68,6 +64,34 @@ router.post('/tickets', protect, async (req, res) => {
       );
     }
 
+    // ✅ إنشاء إشعار للمسؤولين عند إنشاء تذكرة جديدة
+    const userResult = await pool.query(
+      `SELECT full_name, email FROM app.users WHERE id = $1`,
+      [userId]
+    );
+    const userName = userResult.rows[0]?.full_name || userResult.rows[0]?.email || `مستخدم ${userId}`;
+    
+    // الحصول على جميع المسؤولين
+    const adminsResult = await pool.query(
+      `SELECT id FROM app.users WHERE role IN ('admin', 'support')`
+    );
+    
+    for (const admin of adminsResult.rows) {
+      await pool.query(
+        `INSERT INTO app.notifications (user_id, title, message, type, is_read, created_at, action_url, data)
+         VALUES ($1, $2, $3, $4, false, NOW(), $5, $6)`,
+        [
+          admin.id,
+          'تذكرة دعم جديدة',
+          `${userName} فتح تذكرة دعم جديدة`,
+          'support_ticket',
+          `/admin/support?ticket=${ticket.id}`,
+          JSON.stringify({ ticketId: ticket.id, userId, type: 'new_ticket' })
+        ]
+      );
+    }
+    console.log('✅ [Support] Notifications sent to admins for new ticket');
+
     res.json({
       success: true,
       ticket,
@@ -88,7 +112,6 @@ router.get('/tickets/:ticketId/messages', protect, async (req, res) => {
     const userId = req.user.id;
     const { ticketId } = req.params;
 
-    // التحقق من أن المستخدم لديه صلاحية الوصول لهذه التذكرة
     const ticketResult = await pool.query(
       `SELECT * FROM app.support_tickets 
        WHERE id = $1 AND user_id = $2`,
@@ -96,7 +119,6 @@ router.get('/tickets/:ticketId/messages', protect, async (req, res) => {
     );
 
     if (ticketResult.rows.length === 0) {
-      // التحقق من أن المستخدم مسؤول (يمكنه رؤية كل التذاكر)
       const isAdmin = req.user.role === 'admin' || req.user.role === 'support';
       if (!isAdmin) {
         return res.status(404).json({ success: false, message: 'التذكرة غير موجودة' });
@@ -122,7 +144,7 @@ router.get('/tickets/:ticketId/messages', protect, async (req, res) => {
 });
 
 // ============================================
-// ✅ إرسال رسالة (معدل)
+// ✅ إرسال رسالة (معدل مع إشعارات)
 // ============================================
 router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
   try {
@@ -155,7 +177,6 @@ router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
       return res.status(403).json({ success: false, message: 'غير مصرح لك بإرسال رسائل لهذه التذكرة' });
     }
 
-    // استخدام user_id المناسب
     const senderUserId = isOwner ? userId : (ticket.user_id === userId ? userId : req.user.id);
     
     const messageResult = await pool.query(
@@ -173,6 +194,54 @@ router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
     );
 
     console.log('✅ [Support] Message sent:', { ticketId, userId: senderUserId, isFromUser: isOwner });
+
+    // ✅ إنشاء إشعار للمسؤولين إذا كانت الرسالة من مستخدم عادي
+    if (!isOwner && !isAdmin) {
+      // جلب اسم المستخدم
+      const userResult = await pool.query(
+        `SELECT full_name, email FROM app.users WHERE id = $1`,
+        [userId]
+      );
+      const userName = userResult.rows[0]?.full_name || userResult.rows[0]?.email || `مستخدم ${userId}`;
+      
+      // الحصول على جميع المسؤولين
+      const adminsResult = await pool.query(
+        `SELECT id FROM app.users WHERE role IN ('admin', 'support')`
+      );
+      
+      for (const admin of adminsResult.rows) {
+        await pool.query(
+          `INSERT INTO app.notifications (user_id, title, message, type, is_read, created_at, action_url, data)
+           VALUES ($1, $2, $3, $4, false, NOW(), $5, $6)`,
+          [
+            admin.id,
+            'رسالة دعم جديدة',
+            `رسالة جديدة من ${userName}: ${message.substring(0, 50)}${message.length > 50 ? '...' : ''}`,
+            'support_message',
+            `/admin/support?ticket=${ticketId}`,
+            JSON.stringify({ ticketId, userId, message: message.substring(0, 200) })
+          ]
+        );
+      }
+      console.log('✅ [Support] Notification sent to admins for new message');
+    }
+    
+    // ✅ إذا كانت الرسالة من مسؤول، أرسل إشعار للمستخدم صاحب التذكرة
+    if ((isAdmin || req.user.role === 'admin' || req.user.role === 'support') && !isOwner) {
+      await pool.query(
+        `INSERT INTO app.notifications (user_id, title, message, type, is_read, created_at, action_url, data)
+         VALUES ($1, $2, $3, $4, false, NOW(), $5, $6)`,
+        [
+          ticket.user_id,
+          'رد على تذكرة الدعم',
+          `تم الرد على تذكرتك: ${message.substring(0, 50)}${message.length > 50 ? '...' : ''}`,
+          'support_reply',
+          `/support?ticket=${ticketId}`,
+          JSON.stringify({ ticketId, message: message.substring(0, 200) })
+        ]
+      );
+      console.log('✅ [Support] Notification sent to user for admin reply');
+    }
 
     res.json({
       success: true,
@@ -257,7 +326,6 @@ router.post('/tickets/:ticketId/rate', protect, async (req, res) => {
 // ============================================
 router.get('/admin/tickets', protect, async (req, res) => {
   try {
-    // التحقق من أن المستخدم مسؤول
     if (req.user.role !== 'admin' && req.user.role !== 'support') {
       return res.status(403).json({ 
         success: false, 
