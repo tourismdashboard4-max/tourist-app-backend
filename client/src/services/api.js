@@ -620,6 +620,121 @@ export const api = {
   },
 
   // ============================================
+  // 🔧 GENERIC HTTP METHODS - دوال عامة
+  // ============================================
+
+  async get(url, params = {}) {
+    try {
+      const token = localStorage.getItem('token');
+      const queryParams = new URLSearchParams(params).toString();
+      const fullUrl = `${API_BASE_URL}${url}${queryParams ? `?${queryParams}` : ''}`;
+      
+      console.log('📤 GET request to:', fullUrl);
+      
+      const response = await fetch(fullUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.message || `فشل الطلب (${response.status})`);
+      }
+
+      return { data };
+    } catch (error) {
+      console.error('❌ GET request error:', error);
+      throw error;
+    }
+  },
+
+  async post(url, data) {
+    try {
+      const token = localStorage.getItem('token');
+      const fullUrl = `${API_BASE_URL}${url}`;
+      
+      console.log('📤 POST request to:', fullUrl);
+      
+      const response = await fetch(fullUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(data)
+      });
+
+      const responseData = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(responseData.message || `فشل الطلب (${response.status})`);
+      }
+
+      return { data: responseData };
+    } catch (error) {
+      console.error('❌ POST request error:', error);
+      throw error;
+    }
+  },
+
+  async put(url, data) {
+    try {
+      const token = localStorage.getItem('token');
+      const fullUrl = `${API_BASE_URL}${url}`;
+      
+      const response = await fetch(fullUrl, {
+        method: 'PUT',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(data)
+      });
+
+      const responseData = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(responseData.message || `فشل الطلب (${response.status})`);
+      }
+
+      return { data: responseData };
+    } catch (error) {
+      console.error('❌ PUT request error:', error);
+      throw error;
+    }
+  },
+
+  async delete(url) {
+    try {
+      const token = localStorage.getItem('token');
+      const fullUrl = `${API_BASE_URL}${url}`;
+      
+      const response = await fetch(fullUrl, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const responseData = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(responseData.message || `فشل الطلب (${response.status})`);
+      }
+
+      return { data: responseData };
+    } catch (error) {
+      console.error('❌ DELETE request error:', error);
+      throw error;
+    }
+  },
+
+  // ============================================
   // 🔔 NOTIFICATION SERVICES - الإشعارات
   // ============================================
 
@@ -1476,7 +1591,7 @@ export const api = {
   // 📢 ADMIN NOTIFICATIONS - إشعارات المسؤولين
   // ============================================
 
-  // الحصول على إشعارات المسؤول - بدون بيانات تجريبية
+  // الحصول على إشعارات المسؤول
   async getAdminNotifications(params = {}) {
     try {
       const token = localStorage.getItem('token');
@@ -1503,7 +1618,6 @@ export const api = {
       return data;
     } catch (error) {
       console.error('❌ Get admin notifications error:', error);
-      // بدون بيانات تجريبية - مصفوفة فارغة
       return {
         success: false,
         notifications: [],
