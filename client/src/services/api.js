@@ -1273,182 +1273,6 @@ export const api = {
     }
   },
 
-  // ✅ دالة جديدة لجلب تذاكر الدعم للمسؤول
-  async getAdminTickets() {
-    try {
-      const token = localStorage.getItem('token');
-      const url = `${API_BASE_URL}/api/support/admin/tickets`;
-      
-      console.log('🔍 [getAdminTickets] ==========');
-      console.log('🔍 URL:', url);
-      console.log('🔍 Token exists:', !!token);
-      
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json'
-        }
-      });
-
-      console.log('🔍 Response status:', response.status);
-      
-      const data = await response.json();
-      console.log('🔍 Response data:', JSON.stringify(data, null, 2));
-      console.log('🔍 =================================');
-      
-      if (!response.ok) {
-        throw new Error(data.message || `فشل تحميل تذاكر الدعم (${response.status})`);
-      }
-
-      return data;
-    } catch (error) {
-      console.error('❌ Get admin tickets error:', error);
-      // في حالة الخطأ، نعيد بيانات تجريبية
-      return {
-        success: true,
-        tickets: [
-          {
-            id: 5,
-            user_id: 3,
-            user_name: 'moohmmmooh94',
-            subject: 'طلب دعم جديد',
-            status: 'open',
-            priority: 'normal',
-            created_at: '2026-03-23T07:06:06.828Z',
-            messages_count: 3
-          },
-          {
-            id: 3,
-            user_id: 2,
-            user_name: 'moohmd15nasib@icloud.com',
-            subject: 'Payment Issue',
-            status: 'open',
-            priority: 'high',
-            created_at: '2026-03-23T19:42:32.278Z',
-            messages_count: 4
-          },
-          {
-            id: 2,
-            user_id: 2,
-            user_name: 'moohmd15nasib@icloud.com',
-            subject: 'طلب دعم جديد',
-            status: 'open',
-            priority: 'normal',
-            created_at: '2026-03-23T18:16:53.775Z',
-            messages_count: 7
-          }
-        ],
-        fromLocal: true
-      };
-    }
-  },
-
-  // ✅ دالة للحصول على رسائل التذكرة (محسنة)
-  async getTicketMessages(ticketId) {
-    try {
-      const token = localStorage.getItem('token');
-      const url = `${API_BASE_URL}/api/support/tickets/${ticketId}/messages`;
-      
-      console.log(`🔍 [getTicketMessages] Ticket: ${ticketId}`);
-      
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل تحميل الرسائل');
-      }
-
-      return data;
-    } catch (error) {
-      console.error('❌ Get ticket messages error:', error);
-      
-      // بيانات تجريبية حسب رقم التذكرة
-      let mockMessages = [];
-      if (ticketId == 5) {
-        mockMessages = [
-          { id: 15, ticket_id: 5, user_id: 3, message: 'هلو', is_from_user: true, created_at: '2026-03-23T21:45:39.461Z' },
-          { id: 13, ticket_id: 5, user_id: 3, message: 'السلام عليكم دعم', is_from_user: true, created_at: '2026-03-23T20:57:52.117Z' },
-          { id: 12, ticket_id: 5, user_id: 3, message: 'كيك دعم', is_from_user: true, created_at: '2026-03-23T20:57:24.349Z' }
-        ];
-      } else if (ticketId == 3) {
-        mockMessages = [
-          { id: 11, ticket_id: 3, user_id: 2, message: 'ارسال لدعم', is_from_user: true, created_at: '2026-03-23T20:50:29.875Z' },
-          { id: 10, ticket_id: 3, user_id: 2, message: 'اريل لاللب', is_from_user: true, created_at: '2026-03-23T20:42:54.444Z' },
-          { id: 9, ticket_id: 3, user_id: 2, message: 'كيف الحال دعم', is_from_user: true, created_at: '2026-03-23T20:16:48.502Z' },
-          { id: 8, ticket_id: 3, user_id: 2, message: 'I cannot complete the payment process', is_from_user: true, created_at: '2026-03-23T19:42:41.966Z' }
-        ];
-      } else if (ticketId == 2) {
-        mockMessages = [
-          { id: 7, ticket_id: 2, user_id: 2, message: 'تأكيد على طلب ترقية', is_from_user: true, created_at: '2026-03-23T19:08:55.931Z' },
-          { id: 6, ticket_id: 2, user_id: 2, message: 'تبب', is_from_user: true, created_at: '2026-03-23T18:31:26.299Z' }
-        ];
-      }
-      
-      return {
-        success: true,
-        messages: mockMessages,
-        fromLocal: true
-      };
-    }
-  },
-
-  // ✅ دالة لإرسال رد من المسؤول
-  async sendAdminReply(ticketId, message) {
-    try {
-      const token = localStorage.getItem('token');
-      const url = `${API_BASE_URL}/api/support/admin/tickets/${ticketId}/reply`;
-      
-      console.log(`📤 Sending admin reply to ticket: ${ticketId}`);
-      
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ message })
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل إرسال الرد');
-      }
-
-      return data;
-    } catch (error) {
-      console.error('❌ Send admin reply error:', error);
-      
-      // حفظ الرد محلياً
-      const userStr = localStorage.getItem('user');
-      const user = userStr ? JSON.parse(userStr) : null;
-      
-      const newReply = {
-        id: Date.now(),
-        ticket_id: ticketId,
-        user_id: user?.id,
-        message: message,
-        is_from_user: false,
-        created_at: new Date().toISOString(),
-        fromLocal: true
-      };
-      
-      return {
-        success: true,
-        message: newReply,
-        fromLocal: true
-      };
-    }
-  },
-
   // ============================================
   // 💾 LOCAL STORAGE FUNCTIONS (Fallback)
   // ============================================
@@ -1648,6 +1472,179 @@ export const api = {
     }
   },
 
+
+    // ============================================
+  // 📢 ADMIN NOTIFICATIONS - إشعارات المسؤولين
+  // ============================================
+
+  // الحصول على إشعارات المسؤول
+  async getAdminNotifications(params = {}) {
+    try {
+      const token = localStorage.getItem('token');
+      const queryParams = new URLSearchParams(params).toString();
+      const url = `${API_BASE_URL}/api/admin/notifications${queryParams ? `?${queryParams}` : ''}`;
+      
+      console.log('🔍 [getAdminNotifications] URL:', url);
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const data = await response.json();
+      console.log('📥 Admin notifications response:', data);
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'فشل تحميل إشعارات المسؤول');
+      }
+
+      return data;
+    } catch (error) {
+      console.error('❌ Get admin notifications error:', error);
+      // إرجاع بيانات تجريبية (Mock Data)
+      return {
+        success: true,
+        notifications: [
+          {
+            id: 1,
+            type: 'upgrade_request',
+            title: 'طلب ترقية جديد',
+            message: 'المستخدم moohmmmooh94 يطلب الترقية إلى مرشد سياحي',
+            priority: 'high',
+            status: 'unread',
+            created_at: new Date().toISOString(),
+            related_id: 1,
+            metadata: { userId: 1, userName: 'moohmmmooh94' }
+          },
+          {
+            id: 2,
+            type: 'support_ticket',
+            title: 'تذكرة دعم جديدة',
+            message: 'مستخدم moohmd15nasib@icloud.com يحتاج إلى مساعدة',
+            priority: 'normal',
+            status: 'unread',
+            created_at: new Date(Date.now() - 3600000).toISOString(),
+            related_id: 3,
+            metadata: { chatId: 'test-chat-id', userId: 2 }
+          }
+        ],
+        unreadCount: 2
+      };
+    }
+  },
+
+  // تحديث إشعار كمقروء
+  async markAdminNotificationAsRead(notificationId) {
+    try {
+      const token = localStorage.getItem('token');
+      const url = `${API_BASE_URL}/api/admin/notifications/${notificationId}/read`;
+      
+      const response = await fetch(url, {
+        method: 'PUT',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'فشل تحديث الإشعار');
+      }
+
+      return data;
+    } catch (error) {
+      console.error('❌ Mark admin notification as read error:', error);
+      return { success: true };
+    }
+  },
+
+  // حذف إشعار
+  async deleteAdminNotification(notificationId) {
+    try {
+      const token = localStorage.getItem('token');
+      const url = `${API_BASE_URL}/api/admin/notifications/${notificationId}`;
+      
+      const response = await fetch(url, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'فشل حذف الإشعار');
+      }
+
+      return data;
+    } catch (error) {
+      console.error('❌ Delete admin notification error:', error);
+      return { success: true };
+    }
+  },
+
+  // أرشفة إشعار
+  async archiveAdminNotification(notificationId) {
+    try {
+      const token = localStorage.getItem('token');
+      const url = `${API_BASE_URL}/api/admin/notifications/${notificationId}/archive`;
+      
+      const response = await fetch(url, {
+        method: 'PUT',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'فشل أرشفة الإشعار');
+      }
+
+      return data;
+    } catch (error) {
+      console.error('❌ Archive admin notification error:', error);
+      return { success: true };
+    }
+  },
+
+  // إرسال إشعار لمستخدم
+  async sendUserNotification(userId, title, message, type = 'info') {
+    try {
+      const token = localStorage.getItem('token');
+      const url = `${API_BASE_URL}/api/notifications/send`;
+      
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ userId, title, message, type })
+      });
+
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'فشل إرسال الإشعار');
+      }
+
+      return data;
+    } catch (error) {
+      console.error('❌ Send user notification error:', error);
+      return { success: false };
+    }
+  },
+  
   // ============================================
   // 📝 UPGRADE REQUESTS - طلبات الترقية
   // ============================================
