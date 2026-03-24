@@ -2,6 +2,7 @@
 import express from 'express';
 import { pool } from '../../server.js';
 import { protect } from '../middleware/authMiddleware.js';
+import notificationService from '../services/notificationService.js'; // ✅ أضف هذا
 
 const router = express.Router();
 
@@ -77,18 +78,14 @@ router.post('/tickets', protect, async (req, res) => {
     );
     
     for (const admin of adminsResult.rows) {
-      await pool.query(
-        `INSERT INTO app.notifications (user_id, title, message, type, is_read, created_at, action_url, data)
-         VALUES ($1, $2, $3, $4, false, NOW(), $5, $6)`,
-        [
-          admin.id,
-          'تذكرة دعم جديدة',
-          `${userName} فتح تذكرة دعم جديدة`,
-          'support_ticket',
-          `/admin/support?ticket=${ticket.id}`,
-          JSON.stringify({ ticketId: ticket.id, userId, type: 'new_ticket' })
-        ]
-      );
+      await notificationService.create(admin.id, {
+        title: 'تذكرة دعم جديدة',
+        message: `${userName} فتح تذكرة دعم جديدة`,
+        type: 'support_ticket',
+        priority: 'high',
+        action_url: `/admin/support?ticket=${ticket.id}`,
+        data: JSON.stringify({ ticketId: ticket.id, userId, type: 'new_ticket' })
+      });
     }
     console.log('✅ [Support] Notifications sent to admins for new ticket');
 
@@ -207,49 +204,44 @@ router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
 
     console.log('✅ [Support] Message sent:', { ticketId, userId, isFromUser: isOwner || !isAdmin });
 
-    // ✅ إنشاء إشعار للمسؤولين إذا كانت الرسالة من مستخدم عادي
-    if (!isOwner && !isAdmin) {
+    // ✅ إنشاء إشعار للمسؤولين إذا كانت الرسالة من مستخدم عادي (وليس مسؤول)
+    // ✅ التعديل: أي مستخدم ليس مسؤولاً (حتى لو كان مالكاً)
+    if (!isAdmin) {
+      // جلب اسم المستخدم
       const userResult = await pool.query(
         `SELECT full_name, email FROM app.users WHERE id = $1`,
         [userId]
       );
       const userName = userResult.rows[0]?.full_name || userResult.rows[0]?.email || `مستخدم ${userId}`;
       
+      // الحصول على جميع المسؤولين
       const adminsResult = await pool.query(
         `SELECT id FROM app.users WHERE role IN ('admin', 'support')`
       );
       
       for (const admin of adminsResult.rows) {
-        await pool.query(
-          `INSERT INTO app.notifications (user_id, title, message, type, is_read, created_at, action_url, data)
-           VALUES ($1, $2, $3, $4, false, NOW(), $5, $6)`,
-          [
-            admin.id,
-            'رسالة دعم جديدة',
-            `رسالة جديدة من ${userName}: ${message.substring(0, 50)}${message.length > 50 ? '...' : ''}`,
-            'support_message',
-            `/admin/support?ticket=${ticketId}`,
-            JSON.stringify({ ticketId, userId, message: message.substring(0, 200) })
-          ]
-        );
+        await notificationService.create(admin.id, {
+          title: 'رسالة دعم جديدة',
+          message: `رسالة جديدة من ${userName}: ${message.substring(0, 50)}${message.length > 50 ? '...' : ''}`,
+          type: 'support_message',
+          priority: 'high',
+          action_url: `/admin/support?ticket=${ticketId}`,
+          data: JSON.stringify({ ticketId, userId, message: message.substring(0, 200) })
+        });
       }
-      console.log('✅ [Support] Notification sent to admins for new message');
+      console.log('✅ [Support] Notification sent to admins for new message from user');
     }
     
     // ✅ إذا كانت الرسالة من مسؤول، أرسل إشعار للمستخدم صاحب التذكرة
-    if ((isAdmin || req.user.role === 'admin' || req.user.role === 'support') && !isOwner) {
-      await pool.query(
-        `INSERT INTO app.notifications (user_id, title, message, type, is_read, created_at, action_url, data)
-         VALUES ($1, $2, $3, $4, false, NOW(), $5, $6)`,
-        [
-          ticket.user_id,
-          'رد على تذكرة الدعم',
-          `تم الرد على تذكرتك: ${message.substring(0, 50)}${message.length > 50 ? '...' : ''}`,
-          'support_reply',
-          `/support?ticket=${ticketId}`,
-          JSON.stringify({ ticketId, message: message.substring(0, 200) })
-        ]
-      );
+    if (isAdmin && !isOwner) {
+      await notificationService.create(ticket.user_id, {
+        title: 'رد على تذكرة الدعم',
+        message: `تم الرد على تذكرتك: ${message.substring(0, 50)}${message.length > 50 ? '...' : ''}`,
+        type: 'support_reply',
+        priority: 'high',
+        action_url: `/support?ticket=${ticketId}`,
+        data: JSON.stringify({ ticketId, message: message.substring(0, 200) })
+      });
       console.log('✅ [Support] Notification sent to user for admin reply');
     }
 
