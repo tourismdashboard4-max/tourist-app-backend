@@ -8,17 +8,20 @@ import fs from 'fs';
 
 const router = express.Router();
 
-// إعداد multer لرفع الملفات
+// ✅ Corrected multer storage configuration
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const dir = './uploads/documents';
+    // Create directory if it doesn't exist
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
+    // ✅ Fixed: Pass the directory path, not false
     cb(null, dir);
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    // ✅ Fixed: Proper filename generation
     cb(null, uniqueSuffix + path.extname(file.originalname));
   }
 });
