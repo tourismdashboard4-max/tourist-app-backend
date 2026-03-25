@@ -5,6 +5,7 @@ import { upload } from '../middleware/uploadMiddleware.js';
 import * as guideController from '../controllers/guideController.js';
 import { validate } from '../middleware/validationMiddleware.js';
 import { body } from 'express-validator';
+import { pool } from '../../server.js';
 
 const router = express.Router();
 
@@ -18,6 +19,66 @@ const upgradeValidation = [
   body('phone').notEmpty().withMessage('رقم الجوال مطلوب'),
   body('experience').optional().isNumeric().withMessage('سنوات الخبرة يجب أن تكون رقماً')
 ];
+
+// ============================================
+// ✅ جلب جميع المرشدين المعتمدين (للمستخدمين)
+// ============================================
+router.get('/', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, full_name, email, phone, specialties, experience, avatar, 
+              bio, rating, created_at
+       FROM app.users 
+       WHERE role = 'guide' AND guide_status = 'approved'
+       ORDER BY rating DESC NULLS LAST, created_at DESC`
+    );
+    
+    res.json({
+      success: true,
+      guides: result.rows
+    });
+  } catch (error) {
+    console.error('❌ Error fetching guides:', error);
+    res.status(500).json({
+      success: false,
+      message: 'حدث خطأ أثناء جلب المرشدين'
+    });
+  }
+});
+
+// ============================================
+// ✅ جلب تفاصيل مرشد محدد
+// ============================================
+router.get('/:guideId', async (req, res) => {
+  try {
+    const { guideId } = req.params;
+    const result = await pool.query(
+      `SELECT id, full_name, email, phone, specialties, experience, avatar, 
+              bio, rating, created_at
+       FROM app.users 
+       WHERE id = $1 AND role = 'guide' AND guide_status = 'approved'`,
+      [guideId]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'المرشد غير موجود'
+      });
+    }
+    
+    res.json({
+      success: true,
+      guide: result.rows[0]
+    });
+  } catch (error) {
+    console.error('❌ Error fetching guide:', error);
+    res.status(500).json({
+      success: false,
+      message: 'حدث خطأ أثناء جلب بيانات المرشد'
+    });
+  }
+});
 
 // ============================================
 // ✅ مسار الترقية
