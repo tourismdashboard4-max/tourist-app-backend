@@ -155,6 +155,130 @@ export const deleteAllNotifications = async (req, res) => {
   }
 };
 
+// ============================================
+// ✅ إنشاء إشعار محادثة مع المسؤول
+// ============================================
+export const createChatNotification = async (req, res) => {
+  try {
+    // التحقق من صلاحيات المسؤول
+    if (req.user.role !== 'admin' && req.user.role !== 'support') {
+      return res.status(403).json({
+        success: false,
+        message: 'غير مصرح. فقط المسؤولون يمكنهم إرسال إشعارات المحادثة'
+      });
+    }
+
+    const { userId, ticketId, message } = req.body;
+
+    if (!userId || !ticketId || !message) {
+      return res.status(400).json({
+        success: false,
+        message: 'الرجاء إدخال userId, ticketId, message'
+      });
+    }
+
+    const result = await notificationService.createChatNotification(
+      userId, 
+      req.user.id, 
+      ticketId, 
+      message
+    );
+
+    res.json({
+      success: true,
+      message: 'تم إرسال إشعار المحادثة بنجاح',
+      notification: result.userNotification
+    });
+  } catch (error) {
+    console.error('❌ Error in createChatNotification:', error);
+    res.status(500).json({
+      success: false,
+      message: 'حدث خطأ أثناء إنشاء الإشعار',
+      error: error.message
+    });
+  }
+};
+
+// ============================================
+// ✅ إنشاء إشعار طلب ترقية مع محادثة
+// ============================================
+export const createUpgradeRequestNotification = async (req, res) => {
+  try {
+    // التحقق من صلاحيات المسؤول
+    if (req.user.role !== 'admin' && req.user.role !== 'support') {
+      return res.status(403).json({
+        success: false,
+        message: 'غير مصرح. فقط المسؤولون يمكنهم إرسال إشعارات الترقية'
+      });
+    }
+
+    const { userId, requestId, message } = req.body;
+
+    if (!userId || !requestId || !message) {
+      return res.status(400).json({
+        success: false,
+        message: 'الرجاء إدخال userId, requestId, message'
+      });
+    }
+
+    const result = await notificationService.createUpgradeRequestNotification(
+      userId, 
+      req.user.id, 
+      requestId, 
+      message
+    );
+
+    res.json({
+      success: true,
+      message: 'تم إرسال إشعار الترقية بنجاح',
+      notification: result.notification
+    });
+  } catch (error) {
+    console.error('❌ Error in createUpgradeRequestNotification:', error);
+    res.status(500).json({
+      success: false,
+      message: 'حدث خطأ أثناء إنشاء الإشعار',
+      error: error.message
+    });
+  }
+};
+
+// ============================================
+// ✅ إنشاء إشعار بنتيجة الترقية
+// ============================================
+export const createUpgradeResultNotification = async (req, res) => {
+  try {
+    const { userId, requestId, status, notes } = req.body;
+
+    if (!userId || !requestId || !status) {
+      return res.status(400).json({
+        success: false,
+        message: 'الرجاء إدخال userId, requestId, status'
+      });
+    }
+
+    const notification = await notificationService.createUpgradeResultNotification(
+      userId, 
+      requestId, 
+      status, 
+      notes
+    );
+
+    res.json({
+      success: true,
+      message: 'تم إرسال إشعار نتيجة الترقية بنجاح',
+      notification
+    });
+  } catch (error) {
+    console.error('❌ Error in createUpgradeResultNotification:', error);
+    res.status(500).json({
+      success: false,
+      message: 'حدث خطأ أثناء إنشاء الإشعار',
+      error: error.message
+    });
+  }
+};
+
 // دالة لإنشاء إشعار تجريبي (للتطوير)
 export const createTestNotification = async (req, res) => {
   try {
