@@ -18,6 +18,7 @@ import bookingRoutes from './src/routes/bookingRoutes.js';
 import chatRoutes from './src/routes/chatRoutes.js';
 import notificationRoutes from './src/routes/notificationRoutes.js';
 import supportRoutes from './src/routes/supportRoutes.js';
+import upgradeRoutes from './src/routes/upgradeRoutes.js'; // ✅ إضافة مسار الترقيات
 
 // استيراد دوال الوقت المساعدة
 import { createExpiryDate, isOTPValid, getTimeRemaining } from './src/utils/timeUtils.js';
@@ -214,7 +215,8 @@ app.get('/', (req, res) => {
       bookings: '/api/bookings',
       chats: '/api/chats',
       notifications: '/api/notifications',
-      support: '/api/support'
+      support: '/api/support',
+      upgrade: '/api/upgrade' // ✅ إضافة نقطة نهاية الترقيات
     }
   });
 });
@@ -227,6 +229,7 @@ app.use('/api/bookings', bookingRoutes);
 app.use('/api/chats', chatRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/support', supportRoutes);
+app.use('/api/upgrade', upgradeRoutes); // ✅ إضافة مسار الترقيات
 
 // ===================== Route إضافي للمحفظة =====================
 app.get('/api/wallet/:userId', async (req, res) => {
