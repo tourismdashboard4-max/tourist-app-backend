@@ -267,3 +267,149 @@ async startSupportChat(data) {
     };
   }
 },
+
+// ===================== Upgrade APIs =====================
+/**
+ * إنشاء طلب ترقية جديد إلى مرشد سياحي
+ * @param {FormData} formData - بيانات النموذج مع الملفات
+ * @returns {Promise<Object>} نتيجة الطلب
+ */
+async upgradeToGuide(formData) {
+  try {
+    console.log('📤 Sending upgrade request to /api/upgrade/upgrade-requests');
+    
+    const token = localStorage.getItem('token');
+    const response = await axios.post(`${API_BASE_URL}/api/upgrade/upgrade-requests`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+        'Authorization': token ? `Bearer ${token}` : ''
+      },
+      withCredentials: true
+    });
+
+    console.log('📥 Upgrade request response:', response.data);
+    
+    return {
+      success: true,
+      message: response.data.message || 'تم إرسال طلب الترقية بنجاح',
+      data: response.data
+    };
+  } catch (error) {
+    console.error('❌ Upgrade request error:', error);
+    return { 
+      success: false, 
+      message: error.response?.data?.message || 'فشل إرسال طلب الترقية',
+      statusCode: error.response?.status
+    };
+  }
+},
+
+/**
+ * جلب حالة طلب الترقية للمستخدم الحالي
+ * @returns {Promise<Object>} حالة الطلب
+ */
+async getMyUpgradeStatus() {
+  try {
+    console.log('📤 Fetching my upgrade status');
+    
+    const response = await this.api.get('/api/upgrade/upgrade-requests/my-status');
+
+    console.log('📥 Upgrade status response:', response.data);
+    
+    return {
+      success: true,
+      request: response.data.request,
+      data: response.data
+    };
+  } catch (error) {
+    console.error('❌ Error fetching upgrade status:', error);
+    return { 
+      success: false, 
+      request: null,
+      message: error.response?.data?.message || 'فشل تحميل حالة الترقية'
+    };
+  }
+},
+
+/**
+ * جلب جميع طلبات الترقية (للمسؤول فقط)
+ * @returns {Promise<Object>} قائمة الطلبات
+ */
+async getAllUpgradeRequests() {
+  try {
+    console.log('📤 Fetching all upgrade requests');
+    
+    const response = await this.api.get('/api/upgrade/upgrade-requests');
+
+    console.log('📥 Upgrade requests response:', response.data);
+    
+    return {
+      success: true,
+      requests: response.data.requests || [],
+      data: response.data
+    };
+  } catch (error) {
+    console.error('❌ Error fetching upgrade requests:', error);
+    return { 
+      success: false, 
+      requests: [],
+      message: error.response?.data?.message || 'فشل تحميل طلبات الترقية'
+    };
+  }
+},
+
+/**
+ * الموافقة على طلب ترقية (للمسؤول فقط)
+ * @param {number} requestId - معرف الطلب
+ * @param {string} notes - ملاحظات (اختياري)
+ * @returns {Promise<Object>} نتيجة الموافقة
+ */
+async approveUpgradeRequest(requestId, notes = '') {
+  try {
+    console.log(`📤 Approving upgrade request: ${requestId}`);
+    
+    const response = await this.api.post(`/api/upgrade/upgrade-requests/${requestId}/approve`, { notes });
+
+    console.log('📥 Approve response:', response.data);
+    
+    return {
+      success: true,
+      message: response.data.message || 'تمت الموافقة على الطلب',
+      data: response.data
+    };
+  } catch (error) {
+    console.error('❌ Error approving request:', error);
+    return { 
+      success: false, 
+      message: error.response?.data?.message || 'فشل الموافقة على الطلب'
+    };
+  }
+},
+
+/**
+ * رفض طلب ترقية (للمسؤول فقط)
+ * @param {number} requestId - معرف الطلب
+ * @param {string} reason - سبب الرفض
+ * @returns {Promise<Object>} نتيجة الرفض
+ */
+async rejectUpgradeRequest(requestId, reason) {
+  try {
+    console.log(`📤 Rejecting upgrade request: ${requestId}`);
+    
+    const response = await this.api.post(`/api/upgrade/upgrade-requests/${requestId}/reject`, { reason });
+
+    console.log('📥 Reject response:', response.data);
+    
+    return {
+      success: true,
+      message: response.data.message || 'تم رفض الطلب',
+      data: response.data
+    };
+  } catch (error) {
+    console.error('❌ Error rejecting request:', error);
+    return { 
+      success: false, 
+      message: error.response?.data?.message || 'فشل رفض الطلب'
+    };
+  }
+},
