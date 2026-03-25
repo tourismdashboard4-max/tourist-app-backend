@@ -9,7 +9,11 @@ import {
   markAllAsRead,
   deleteNotification,
   deleteAllNotifications,
-  createTestNotification
+  createTestNotification,
+  createChatNotification,
+  createUpgradeRequestNotification,
+  createUpgradeResultNotification,
+  createGeneralNotification
 } from '../controllers/notificationController.js';
 
 const router = express.Router();
@@ -17,17 +21,29 @@ const router = express.Router();
 // جميع المسارات محمية (تحتاج تسجيل دخول)
 router.use(protect);
 
+// ============================================
+// 📋 GET Routes - جلب الإشعارات
+// ============================================
+
 // GET /api/notifications - جلب الإشعارات
 router.get('/', getUserNotifications);
 
 // GET /api/notifications/unread-count - جلب عدد غير المقروءة
 router.get('/unread-count', getUnreadCount);
 
+// ============================================
+// ✏️ PUT Routes - تحديث الإشعارات
+// ============================================
+
 // PUT /api/notifications/read-all - تحديث الكل كمقروء
 router.put('/read-all', markAllAsRead);
 
 // PUT /api/notifications/:notificationId/read - تحديث إشعار محدد
 router.put('/:notificationId/read', markAsRead);
+
+// ============================================
+// 🗑️ DELETE Routes - حذف الإشعارات
+// ============================================
 
 // DELETE /api/notifications/:notificationId - حذف إشعار
 router.delete('/:notificationId', deleteNotification);
@@ -36,53 +52,39 @@ router.delete('/:notificationId', deleteNotification);
 router.delete('/', deleteAllNotifications);
 
 // ============================================
-// ✅ POST /api/notifications - إنشاء إشعار جديد (للمسؤول)
+// 📨 POST Routes - إنشاء إشعارات (للمسؤول)
 // ============================================
-router.post('/', async (req, res) => {
-  try {
-    // التحقق من صلاحيات المسؤول
-    if (req.user.role !== 'admin' && req.user.role !== 'support') {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'غير مصرح. فقط المسؤولون يمكنهم إرسال الإشعارات' 
-      });
-    }
-    
-    const { userId, title, message, type, data, action_url } = req.body;
-    
-    // التحقق من البيانات المطلوبة
-    if (!userId || !title || !message) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'الرجاء إدخال جميع البيانات المطلوبة: userId, title, message' 
-      });
-    }
-    
-    // إدخال الإشعار في قاعدة البيانات
-    const result = await pool.query(
-      `INSERT INTO app.notifications 
-       (user_id, title, message, type, is_read, created_at, action_url, data)
-       VALUES ($1, $2, $3, $4, false, NOW(), $5, $6)
-       RETURNING *`,
-      [userId, title, message, type || 'system', action_url || null, data || null]
-    );
-    
-    console.log(`✅ Admin notification created for user ${userId}: ${title}`);
-    
-    res.json({
-      success: true,
-      message: 'تم إرسال الإشعار بنجاح',
-      notification: result.rows[0]
-    });
-    
-  } catch (error) {
-    console.error('❌ Create notification error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'حدث خطأ في إنشاء الإشعار' 
-    });
-  }
-});
+
+/**
+ * POST /api/notifications
+ * إنشاء إشعار عام (للمسؤول)
+ */
+router.post('/', createGeneralNotification);
+
+/**
+ * POST /api/notifications/chat
+ * إنشاء إشعار محادثة مع المسؤول (للمسؤول)
+ * البيانات المطلوبة: { userId, ticketId, message }
+ */
+router.post('/chat', createChatNotification);
+
+/**
+ * POST /api/notifications/upgrade
+ * إنشاء إشعار طلب ترقية مع محادثة (للمسؤول)
+ * البيانات المطلوبة: { userId, requestId, message }
+ */
+router.post('/upgrade', createUpgradeRequestNotification);
+
+/**
+ * POST /api/notifications/upgrade-result
+ * إنشاء إشعار نتيجة الترقية (موافقة/رفض)
+ * البيانات المطلوبة: { userId, requestId, status, notes }
+ */
+router.post('/upgrade-result', createUpgradeResultNotification);
+
+// ============================================
+// 🧪 Test Routes - للتطوير فقط
+// ============================================
 
 // POST /api/notifications/test - إنشاء إشعار تجريبي (للتطوير فقط)
 if (process.env.NODE_ENV === 'development') {
