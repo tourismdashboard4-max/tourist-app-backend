@@ -48,13 +48,28 @@ router.get('/upgrade-requests', protect, async (req, res) => {
       return res.status(403).json({ success: false, message: 'غير مصرح' });
     }
     
-    // ✅ استعلام مبسط مع التحقق من وجود الأعمدة
-    // جلب الحقول الأساسية فقط لتجنب أخطاء الأعمدة المفقودة
+    // ✅ جلب جميع الحقول بما فيها المستندات
     const result = await pool.query(
       `SELECT 
-        r.id, r.user_id, r.status, r.created_at, r.updated_at, 
-        r.approved_at, r.rejected_at, r.admin_notes,
-        u.email, u.full_name, u.phone
+        r.id, 
+        r.user_id, 
+        r.status, 
+        r.created_at, 
+        r.updated_at, 
+        r.approved_at, 
+        r.rejected_at, 
+        r.admin_notes,
+        u.email, 
+        u.full_name, 
+        u.phone,
+        u.license_number,
+        u.civil_id,
+        u.specialties,
+        u.experience,
+        u.bio,
+        u.license_document,
+        u.id_document,
+        u.guide_status
        FROM app.upgrade_requests r
        LEFT JOIN app.users u ON r.user_id = u.id
        ORDER BY r.created_at DESC`
