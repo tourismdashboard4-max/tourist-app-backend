@@ -735,18 +735,29 @@ export const api = {
   },
 
   // ============================================
-  // 🔔 NOTIFICATION SERVICES - الإشعارات
+  // 🔔 NOTIFICATION SERVICES - الإشعارات (معدل للمسؤول)
   // ============================================
 
   async getUserNotifications(params = {}) {
     try {
       const token = localStorage.getItem('token');
+      const userStr = localStorage.getItem('user');
+      const user = userStr ? JSON.parse(userStr) : null;
+      
+      // ✅ إذا كان المستخدم مسؤولاً، استخدم الـ endpoint المجمع
+      let baseUrl = `${API_BASE_URL}/api/notifications`;
+      if (user?.role === 'admin' || user?.role === 'support') {
+        baseUrl = `${API_BASE_URL}/api/notifications/admin-grouped`;
+        console.log('🔍 [getUserNotifications] Admin detected, using grouped endpoint');
+      }
+      
       const queryParams = new URLSearchParams(params).toString();
-      const url = `${API_BASE_URL}/api/notifications${queryParams ? `?${queryParams}` : ''}`;
+      const url = `${baseUrl}${queryParams ? `?${queryParams}` : ''}`;
       
       console.log('🔍 [getUserNotifications] ==========');
       console.log('🔍 URL:', url);
       console.log('🔍 Token exists:', !!token);
+      console.log('🔍 User role:', user?.role);
       
       const response = await fetch(url, {
         method: 'GET',
