@@ -13,7 +13,11 @@ import {
   createChatNotification,
   createUpgradeRequestNotification,
   createUpgradeResultNotification,
-  createGeneralNotification
+  createGeneralNotification,
+  createAdminMessageNotification,
+  getGroupedAdminNotifications,
+  createUserMessageNotification,
+  createAdminReplyNotification
 } from '../controllers/notificationController.js';
 
 const router = express.Router();
@@ -30,6 +34,9 @@ router.get('/', getUserNotifications);
 
 // GET /api/notifications/unread-count - جلب عدد غير المقروءة
 router.get('/unread-count', getUnreadCount);
+
+// ✅ GET /api/notifications/admin-grouped - إشعارات المسؤول المجمعة (إشعار واحد لكل مستخدم)
+router.get('/admin-grouped', getGroupedAdminNotifications);
 
 // ============================================
 // ✏️ PUT Routes - تحديث الإشعارات
@@ -81,6 +88,27 @@ router.post('/upgrade', createUpgradeRequestNotification);
  * البيانات المطلوبة: { userId, requestId, status, notes }
  */
 router.post('/upgrade-result', createUpgradeResultNotification);
+
+/**
+ * POST /api/notifications/admin-message
+ * إنشاء إشعار للمسؤول عند استلام رسالة دعم جديدة (مع منع التكرار)
+ * البيانات المطلوبة: { userId, ticketId, message, userName }
+ */
+router.post('/admin-message', createAdminMessageNotification);
+
+/**
+ * POST /api/notifications/user-message
+ * إنشاء إشعار للمستخدم عند إرسال رسالة (تأكيد)
+ * البيانات المطلوبة: { userId, ticketId, message }
+ */
+router.post('/user-message', createUserMessageNotification);
+
+/**
+ * POST /api/notifications/admin-reply
+ * إنشاء إشعار للمستخدم عند رد المسؤول
+ * البيانات المطلوبة: { userId, ticketId, message }
+ */
+router.post('/admin-reply', createAdminReplyNotification);
 
 // ============================================
 // 🧪 Test Routes - للتطوير فقط
