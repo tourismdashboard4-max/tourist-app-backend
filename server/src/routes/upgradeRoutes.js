@@ -16,12 +16,10 @@ const storage = multer.diskStorage({
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
-    // ✅ Fixed: Pass the directory path, not false
     cb(null, dir);
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    // ✅ Fixed: Proper filename generation
     cb(null, uniqueSuffix + path.extname(file.originalname));
   }
 });
@@ -50,10 +48,13 @@ router.get('/upgrade-requests', protect, async (req, res) => {
       return res.status(403).json({ success: false, message: 'غير مصرح' });
     }
     
+    // ✅ استعلام مبسط مع التحقق من وجود الأعمدة
+    // جلب الحقول الأساسية فقط لتجنب أخطاء الأعمدة المفقودة
     const result = await pool.query(
-      `SELECT r.*, u.email, u.full_name, u.phone, u.license_number, 
-              u.civil_id, u.specialties, u.experience, u.license_document, 
-              u.id_document, u.bio
+      `SELECT 
+        r.id, r.user_id, r.status, r.created_at, r.updated_at, 
+        r.approved_at, r.rejected_at, r.admin_notes,
+        u.email, u.full_name, u.phone
        FROM app.upgrade_requests r
        LEFT JOIN app.users u ON r.user_id = u.id
        ORDER BY r.created_at DESC`
@@ -66,7 +67,12 @@ router.get('/upgrade-requests', protect, async (req, res) => {
     
   } catch (error) {
     console.error('❌ Get upgrade requests error:', error);
-    res.status(500).json({ success: false, message: 'حدث خطأ' });
+    console.error('❌ Error details:', error.message);
+    res.status(500).json({ 
+      success: false, 
+      message: 'حدث خطأ',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
@@ -83,6 +89,10 @@ router.post('/upgrade-requests', protect, upload.fields([
       fullName, civilId, licenseNumber, experience, 
       specialties, bio, phone 
     } = req.body;
+    
+    console.log('📥 Received upgrade request for user:', userId);
+    console.log('📋 Request body:', { fullName, civilId, licenseNumber, experience, specialties, phone });
+    console.log('📎 Files:', req.files);
     
     // التحقق من وجود طلب سابق
     const existingRequest = await pool.query(
@@ -111,42 +121,95 @@ router.post('/upgrade-requests', protect, upload.fields([
       [userId]
     );
     
-    // تحديث معلومات المستخدم
-    await pool.query(
-      `UPDATE app.users 
-       SET full_name = COALESCE($1, full_name),
-           phone = COALESCE($2, phone),
-           license_number = COALESCE($3, license_number),
-           civil_id = COALESCE($4, civil_id),
-           specialties = COALESCE($5, specialties),
-           experience = COALESCE($6, experience),
-           license_document = COALESCE($7, license_document),
-           id_document = COALESCE($8, id_document),
-           guide_status = 'pending'
-       WHERE id = $9`,
-      [fullName, phone, licenseNumber, civilId, specialties, 
-       experience, licenseDocument, idDocument, userId]
-    );
+    console.log('✅ Upgrade request created with ID:', result.rows[0].id);
+    
+    // تحديث معلومات المستخدم - استخدام تحديث جزئي
+    const updateFields = [];
+    const updateValues = [];
+    let paramIndex = 1;
+    
+    if (fullName) {
+      updateFields.push(`full_name = $${paramIndex}`);
+      updateValues.push(fullName);
+      paramIndex++;
+    }
+    if (phone) {
+      updateFields.push(`phone = $${paramIndex}`);
+      updateValues.push(phone);
+      paramIndex++;
+    }
+    if (licenseNumber) {
+      updateFields.push(`license_number = $${paramIndex}`);
+      updateValues.push(licenseNumber);
+      paramIndex++;
+    }
+    if (civilId) {
+      updateFields.push(`civil_id = $${paramIndex}`);
+      updateValues.push(civilId);
+      paramIndex++;
+    }
+    if (specialties) {
+      updateFields.push(`specialties = $${paramIndex}`);
+      updateValues.push(specialties);
+      paramIndex++;
+    }
+    if (experience) {
+      updateFields.push(`experience = $${paramIndex}`);
+      updateValues.push(parseInt(experience));
+      paramIndex++;
+    }
+    if (licenseDocument) {
+      updateFields.push(`license_document = $${paramIndex}`);
+      updateValues.push(licenseDocument);
+      paramIndex++;
+    }
+    if (idDocument) {
+      updateFields.push(`id_document = $${paramIndex}`);
+      updateValues.push(idDocument);
+      paramIndex++;
+    }
+    
+    // إضافة guide_status دائماً
+    updateFields.push(`guide_status = $${paramIndex}`);
+    updateValues.push('pending');
+    paramIndex++;
+    
+    if (updateFields.length > 0) {
+      updateValues.push(userId);
+      const query = `
+        UPDATE app.users 
+        SET ${updateFields.join(', ')}
+        WHERE id = $${paramIndex}
+      `;
+      await pool.query(query, updateValues);
+      console.log('✅ User profile updated');
+    }
     
     // إرسال إشعار للمسؤولين
     const adminsResult = await pool.query(
       `SELECT id FROM app.users WHERE role IN ('admin', 'support')`
     );
     
+    console.log(`📢 Sending notifications to ${adminsResult.rows.length} admins`);
+    
     for (const admin of adminsResult.rows) {
-      await pool.query(
-        `INSERT INTO app.notifications 
-         (user_id, title, message, type, is_read, created_at, action_url, data)
-         VALUES ($1, $2, $3, $4, false, NOW(), $5, $6)`,
-        [
-          admin.id,
-          'طلب ترقية جديد',
-          `${fullName || `مستخدم ${userId}`} تقدم بطلب ترقية إلى مرشد سياحي`,
-          'upgrade_request',
-          '/admin-upgrade-requests',
-          JSON.stringify({ userId, requestId: result.rows[0].id })
-        ]
-      );
+      try {
+        await pool.query(
+          `INSERT INTO app.notifications 
+           (user_id, title, message, type, is_read, created_at, action_url, data)
+           VALUES ($1, $2, $3, $4, false, NOW(), $5, $6)`,
+          [
+            admin.id,
+            'طلب ترقية جديد',
+            `${fullName || `مستخدم ${userId}`} تقدم بطلب ترقية إلى مرشد سياحي`,
+            'upgrade_request',
+            '/admin-upgrade-requests',
+            JSON.stringify({ userId, requestId: result.rows[0].id })
+          ]
+        );
+      } catch (notifError) {
+        console.error('❌ Error sending notification to admin:', admin.id, notifError.message);
+      }
     }
     
     res.json({
@@ -157,7 +220,12 @@ router.post('/upgrade-requests', protect, upload.fields([
     
   } catch (error) {
     console.error('❌ Create upgrade request error:', error);
-    res.status(500).json({ success: false, message: 'حدث خطأ' });
+    console.error('❌ Error details:', error.message);
+    res.status(500).json({ 
+      success: false, 
+      message: 'حدث خطأ',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
@@ -172,6 +240,8 @@ router.post('/upgrade-requests/:requestId/approve', protect, async (req, res) =>
     
     const { requestId } = req.params;
     const { notes } = req.body;
+    
+    console.log(`✅ Approving upgrade request: ${requestId}`);
     
     // جلب تفاصيل الطلب
     const requestResult = await pool.query(
@@ -191,7 +261,7 @@ router.post('/upgrade-requests/:requestId/approve', protect, async (req, res) =>
       `UPDATE app.upgrade_requests 
        SET status = 'approved', approved_at = NOW(), admin_notes = $1, updated_at = NOW()
        WHERE id = $2`,
-      [notes, requestId]
+      [notes || null, requestId]
     );
     
     // تحديث دور المستخدم إلى مرشد
@@ -216,6 +286,8 @@ router.post('/upgrade-requests/:requestId/approve', protect, async (req, res) =>
       ]
     );
     
+    console.log(`✅ Upgrade request ${requestId} approved for user ${userId}`);
+    
     res.json({
       success: true,
       message: 'تمت الموافقة على طلب الترقية'
@@ -223,7 +295,12 @@ router.post('/upgrade-requests/:requestId/approve', protect, async (req, res) =>
     
   } catch (error) {
     console.error('❌ Approve upgrade request error:', error);
-    res.status(500).json({ success: false, message: 'حدث خطأ' });
+    console.error('❌ Error details:', error.message);
+    res.status(500).json({ 
+      success: false, 
+      message: 'حدث خطأ',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
@@ -238,6 +315,8 @@ router.post('/upgrade-requests/:requestId/reject', protect, async (req, res) => 
     
     const { requestId } = req.params;
     const { reason } = req.body;
+    
+    console.log(`❌ Rejecting upgrade request: ${requestId}, reason: ${reason}`);
     
     // جلب تفاصيل الطلب
     const requestResult = await pool.query(
@@ -257,7 +336,7 @@ router.post('/upgrade-requests/:requestId/reject', protect, async (req, res) => 
       `UPDATE app.upgrade_requests 
        SET status = 'rejected', rejected_at = NOW(), admin_notes = $1, updated_at = NOW()
        WHERE id = $2`,
-      [reason, requestId]
+      [reason || null, requestId]
     );
     
     // تحديث حالة المستخدم
@@ -282,6 +361,8 @@ router.post('/upgrade-requests/:requestId/reject', protect, async (req, res) => 
       ]
     );
     
+    console.log(`✅ Upgrade request ${requestId} rejected for user ${userId}`);
+    
     res.json({
       success: true,
       message: 'تم رفض طلب الترقية'
@@ -289,7 +370,12 @@ router.post('/upgrade-requests/:requestId/reject', protect, async (req, res) => 
     
   } catch (error) {
     console.error('❌ Reject upgrade request error:', error);
-    res.status(500).json({ success: false, message: 'حدث خطأ' });
+    console.error('❌ Error details:', error.message);
+    res.status(500).json({ 
+      success: false, 
+      message: 'حدث خطأ',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
@@ -299,6 +385,8 @@ router.post('/upgrade-requests/:requestId/reject', protect, async (req, res) => 
 router.get('/upgrade-requests/my-status', protect, async (req, res) => {
   try {
     const userId = req.user.id;
+    
+    console.log(`🔍 Checking upgrade status for user: ${userId}`);
     
     const result = await pool.query(
       `SELECT * FROM app.upgrade_requests 
@@ -315,7 +403,12 @@ router.get('/upgrade-requests/my-status', protect, async (req, res) => {
     
   } catch (error) {
     console.error('❌ Get upgrade status error:', error);
-    res.status(500).json({ success: false, message: 'حدث خطأ' });
+    console.error('❌ Error details:', error.message);
+    res.status(500).json({ 
+      success: false, 
+      message: 'حدث خطأ',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
