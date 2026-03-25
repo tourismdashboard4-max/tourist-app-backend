@@ -379,11 +379,378 @@ class NotificationService {
   }
 
   // ============================================
-  // ✅ دوال إشعارات الدعم والترقية
+  // ✅ دوال إشعارات الدعم والترقية مع منع التكرار
   // ============================================
 
   /**
-   * إرسال إشعار بمحادثة دعم جديدة
+   * ✅ التحقق من وجود إشعار دعم غير مقروء لنفس المستخدم
+   * @param {string} adminId - معرف المسؤول
+   * @param {string} userId - معرف المستخدم
+   * @returns {Promise<Object|null>} الإشعار الموجود أو null
+   */
+  async checkExistingSupportNotification(adminId, userId) {
+    try {
+      const result = await pool.query(
+        `SELECT id, message, created_at, data
+         FROM app.notifications 
+         WHERE user_id = $1 
+           AND type = 'support_message' 
+           AND is_read = false
+           AND is_deleted = false
+           AND data->>'userId' = $2
+         ORDER BY created_at DESC 
+         LIMIT 1`,
+        [adminId, userId.toString()]
+      );
+      
+      return result.rows[0] || null;
+    } catch (error) {
+      console.error('❌ Error checking existing support notification:', error);
+      return null;
+    }
+  }
+
+  /**
+   * ✅ تحديث إشعار دعم موجود (بدلاً من إنشاء جديد)
+   * @param {string} notificationId - معرف الإشعار
+   * @param {string} newMessage - الرسالة الجديدة
+   * @param {string} userName - اسم المستخدم
+   * @returns {Promise<Object>} الإشعار المحدث
+   */
+  async updateSupportNotification(notificationId, newMessage, userName) {
+    try {
+      const result = await pool.query(
+        `UPDATE app.notifications 
+         SET message = $1, 
+             created_at = NOW(),
+             data = jsonb_set(data, '{message}', to_jsonb($2)),
+             title = $3
+         WHERE id = $4
+         RETURNING *`,
+        [
+          `${userName || 'مستخدم'} أرسل رسالة جديدة: "${newMessage.substring(0, 50)}${newMessage.length > 50 ? '...' : ''}"`,
+          newMessage,
+          `رسالة جديدة من ${userName || 'مستخدم'}`,
+          notificationId
+        ]
+      );
+      
+      return result.rows[0];
+    } catch (error) {
+      console.error('❌ Error updating support notification:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * ✅ إنشاء أو تحديث إشعار للمسؤول عند استلام رسالة دعم جديدة (إشعار واحد لكل مستخدم)
+   * @param {string} adminId - معرف المسؤول
+   * @param {string} userId - معرف المستخدم
+   * @param {string} ticketId - معرف التذكرة
+   * @param {string} message - نص الرسالة
+   * @param {string} userName - اسم المستخدم
+   * @returns {Promise<Object>} الإشعار المنشأ أو المحدث
+   */
+  async createOrUpdateAdminMessageNotification(adminId, userId, ticketId, message, userName) {
+    try {
+      // التحقق من وجود إشعار غير مقروء لنفس المستخدم
+      const existingNotification = await this.checkExistingSupportNotification(adminId, userId);
+      
+      if (existingNotification) {
+        // تحديث الإشعار الموجود
+        console.log(`📝 Updating existing notification for admin ${adminId} from user ${userId}`);
+        const updatedNotification = await this.updateSupportNotification(
+          existingNotification.id,
+          message,
+          userName
+        );
+        
+        // إرسال تحديث عبر WebSocket
+        const io = getIO();
+        if (io) {
+          io.to(`user-${adminId}`).emit('notification_updated', {
+            notification: updatedNotification
+          });
+        }
+        
+        return updatedNotification;
+      }
+      
+      // إنشاء إشعار جديد
+      console.log(`🆕 Creating new notification for admin ${adminId} from user ${userId}`);
+      const adminUrl = `/admin/support/tickets/${ticketId}`;
+      
+      const notification = await this.create(adminId, {
+        title: `رسالة جديدة من ${userName || 'مستخدم'}`,
+        message: `${userName || 'مستخدم'} أرسل رسالة جديدة: "${message.substring(0, 50)}${message.length > 50 ? '...' : ''}"`,
+        type: 'support_message',
+        priority: 'high',
+        data: { 
+          ticketId, 
+          userId, 
+          type: 'admin_notification',
+          message: message.substring(0, 100),
+          userName: userName || 'مستخدم'
+        },
+        actionUrl: adminUrl
+      });
+      
+      return notification;
+    } catch (error) {
+      console.error('❌ Error creating/updating admin message notification:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * ✅ إنشاء إشعار للمسؤول عند إنشاء تذكرة دعم جديدة (مع منع التكرار)
+   * @param {string} adminId - معرف المسؤول
+   * @param {string} userId - معرف المستخدم
+   * @param {string} ticketId - معرف التذكرة
+   * @param {string} userName - اسم المستخدم
+   * @returns {Promise<Object>} الإشعار المنشأ
+   */
+  async createOrUpdateAdminTicketNotification(adminId, userId, ticketId, userName) {
+    try {
+      // التحقق من وجود إشعار غير مقروء لنفس المستخدم
+      const existingNotification = await pool.query(
+        `SELECT id FROM app.notifications 
+         WHERE user_id = $1 
+           AND type = 'support_ticket' 
+           AND is_read = false
+           AND is_deleted = false
+           AND data->>'userId' = $2
+         ORDER BY created_at DESC 
+         LIMIT 1`,
+        [adminId, userId.toString()]
+      );
+      
+      if (existingNotification.rows.length > 0) {
+        // يوجد إشعار بالفعل، لا داعي لإنشاء جديد
+        console.log(`⏭️ Skipping duplicate ticket notification for admin ${adminId}, user ${userId}`);
+        return existingNotification.rows[0];
+      }
+      
+      const adminUrl = `/admin/support/tickets/${ticketId}`;
+      
+      const notification = await this.create(adminId, {
+        title: '🆕 تذكرة دعم جديدة',
+        message: `${userName || 'مستخدم'} أنشأ تذكرة دعم جديدة`,
+        type: 'support_ticket',
+        priority: 'high',
+        data: { 
+          ticketId, 
+          userId, 
+          type: 'admin_notification' 
+        },
+        actionUrl: adminUrl
+      });
+      
+      return notification;
+    } catch (error) {
+      console.error('❌ Error creating admin ticket notification:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * ✅ إنشاء أو تحديث إشعار للمستخدم عند رد المسؤول (إشعار واحد لكل تذكرة)
+   * @param {string} userId - معرف المستخدم
+   * @param {string} ticketId - معرف التذكرة
+   * @param {string} message - نص الرسالة
+   * @param {string} adminName - اسم المسؤول
+   * @returns {Promise<Object>} الإشعار المنشأ أو المحدث
+   */
+  async createOrUpdateAdminReplyNotification(userId, ticketId, message, adminName) {
+    try {
+      // التحقق من وجود إشعار غير مقروء لنفس التذكرة
+      const existingNotification = await pool.query(
+        `SELECT id FROM app.notifications 
+         WHERE user_id = $1 
+           AND type = 'support_reply' 
+           AND is_read = false
+           AND is_deleted = false
+           AND data->>'ticketId' = $2
+         ORDER BY created_at DESC 
+         LIMIT 1`,
+        [userId, ticketId.toString()]
+      );
+      
+      if (existingNotification.rows.length > 0) {
+        // تحديث الإشعار الموجود
+        console.log(`📝 Updating existing reply notification for user ${userId}, ticket ${ticketId}`);
+        
+        const result = await pool.query(
+          `UPDATE app.notifications 
+           SET message = $1, 
+               created_at = NOW(),
+               data = jsonb_set(data, '{message}', to_jsonb($2))
+           WHERE id = $3
+           RETURNING *`,
+          [
+            `${adminName || 'الدعم الفني'} رد على رسالتك: "${message.substring(0, 50)}${message.length > 50 ? '...' : ''}"`,
+            message,
+            existingNotification.rows[0].id
+          ]
+        );
+        
+        return result.rows[0];
+      }
+      
+      const chatUrl = `/support-chat/${ticketId}`;
+      
+      const notification = await this.create(userId, {
+        title: 'رد من الدعم الفني',
+        message: `${adminName || 'الدعم الفني'} رد على رسالتك: "${message.substring(0, 50)}${message.length > 50 ? '...' : ''}"`,
+        type: 'support_reply',
+        priority: 'high',
+        data: { 
+          ticketId, 
+          type: 'support_reply', 
+          message: message.substring(0, 100),
+          adminName
+        },
+        actionUrl: chatUrl
+      });
+      
+      return notification;
+    } catch (error) {
+      console.error('❌ Error creating/updating admin reply notification:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * ✅ إنشاء أو تحديث إشعار للمستخدم عند إرسال رسالة (تأكيد) - إشعار واحد لكل تذكرة
+   * @param {string} userId - معرف المستخدم
+   * @param {string} ticketId - معرف التذكرة
+   * @param {string} message - نص الرسالة
+   * @returns {Promise<Object>} الإشعار المنشأ أو المحدث
+   */
+  async createOrUpdateUserMessageNotification(userId, ticketId, message) {
+    try {
+      // التحقق من وجود إشعار غير مقروء لنفس التذكرة للمستخدم
+      const existingNotification = await pool.query(
+        `SELECT id FROM app.notifications 
+         WHERE user_id = $1 
+           AND type = 'message_sent' 
+           AND is_read = false
+           AND is_deleted = false
+           AND data->>'ticketId' = $2
+         ORDER BY created_at DESC 
+         LIMIT 1`,
+        [userId, ticketId.toString()]
+      );
+      
+      if (existingNotification.rows.length > 0) {
+        // تحديث الإشعار الموجود
+        const result = await pool.query(
+          `UPDATE app.notifications 
+           SET message = $1, 
+               created_at = NOW(),
+               data = jsonb_set(data, '{message}', to_jsonb($2))
+           WHERE id = $3
+           RETURNING *`,
+          [
+            `تم إرسال رسالتك إلى فريق الدعم: "${message.substring(0, 50)}${message.length > 50 ? '...' : ''}"`,
+            message,
+            existingNotification.rows[0].id
+          ]
+        );
+        
+        return result.rows[0];
+      }
+      
+      const chatUrl = `/support-chat/${ticketId}`;
+      
+      const notification = await this.create(userId, {
+        title: 'تم إرسال رسالتك بنجاح',
+        message: `تم إرسال رسالتك إلى فريق الدعم: "${message.substring(0, 50)}${message.length > 50 ? '...' : ''}"`,
+        type: 'message_sent',
+        priority: 'normal',
+        data: { 
+          ticketId, 
+          type: 'message_sent', 
+          message: message.substring(0, 100) 
+        },
+        actionUrl: chatUrl
+      });
+      
+      return notification;
+    } catch (error) {
+      console.error('❌ Error creating/updating user message notification:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * ✅ الحصول على إشعارات المسؤول المجمعة (إشعار واحد لكل مستخدم)
+   * @param {string} adminId - معرف المسؤول
+   * @param {number} page - رقم الصفحة
+   * @param {number} limit - عدد العناصر
+   * @returns {Promise<Object>} الإشعارات المجمعة
+   */
+  async getGroupedAdminNotifications(adminId, page = 1, limit = 20) {
+    try {
+      // جلب الإشعارات المجمعة حسب المستخدم
+      const query = `
+        SELECT 
+          MAX(id) as id,
+          (data->>'userId')::int as user_id,
+          MAX(title) as title,
+          MAX(message) as message,
+          'support_message' as type,
+          bool_or(is_read) as is_read,
+          MAX(created_at) as created_at,
+          MAX(action_url) as action_url,
+          jsonb_build_object(
+            'userId', (data->>'userId')::int,
+            'userName', MAX(data->>'userName'),
+            'lastMessage', MAX(data->>'message'),
+            'messageCount', COUNT(*),
+            'ticketId', MAX(data->>'ticketId')
+          ) as data
+        FROM app.notifications 
+        WHERE user_id = $1
+          AND type = 'support_message'
+          AND is_deleted = false
+        GROUP BY data->>'userId'
+        ORDER BY created_at DESC
+        LIMIT $2 OFFSET $3
+      `;
+      
+      const offset = (page - 1) * limit;
+      const result = await pool.query(query, [adminId, limit, offset]);
+      
+      // جلب العدد الإجمالي للمستخدمين الذين لديهم إشعارات
+      const countResult = await pool.query(`
+        SELECT COUNT(DISTINCT data->>'userId') as count
+        FROM app.notifications 
+        WHERE user_id = $1
+          AND type = 'support_message'
+          AND is_deleted = false
+      `, [adminId]);
+      
+      const total = parseInt(countResult.rows[0].count);
+      
+      return {
+        notifications: result.rows,
+        pagination: {
+          currentPage: page,
+          totalPages: Math.ceil(total / limit),
+          totalItems: total,
+          itemsPerPage: limit
+        },
+        unreadCount: await this.getUnreadCount(null, adminId)
+      };
+    } catch (error) {
+      console.error('❌ Error getting grouped admin notifications:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * ✅ إرسال إشعار بمحادثة دعم جديدة
    * @param {string} chatId - معرف المحادثة
    * @param {string} userId - معرف المستخدم
    * @param {string} supportId - معرف موظف الدعم (اختياري)
@@ -407,7 +774,7 @@ class NotificationService {
         actionUrl: `/chat/${chatId}`
       });
 
-      // 2️⃣ إذا كان هناك موظف دعم، أرسل له إشعاراً أيضاً
+      // 2️⃣ إذا كان هناك موظف دعم، أرسل له إشعاراً أيضاً (باستخدام الدالة الجديدة)
       if (supportId) {
         const userResult = await pool.query(
           'SELECT full_name, email FROM app.users WHERE id = $1',
@@ -416,18 +783,7 @@ class NotificationService {
         
         const userName = userResult.rows[0]?.full_name || 'مستخدم جديد';
         
-        await this.create(supportId, {
-          title: '🆕 طلب دعم جديد',
-          message: `مستخدم ${userName} يحتاج إلى مساعدة`,
-          type: 'support',
-          priority: 'high',
-          data: { 
-            chatId,
-            userId,
-            userName
-          },
-          actionUrl: `/support/chats/${chatId}`
-        });
+        await this.createOrUpdateAdminTicketNotification(supportId, userId, chatId, userName);
       }
 
       console.log(`✅ [sendNewChatNotification] Notification sent successfully for chat: ${chatId}`);
@@ -436,221 +792,6 @@ class NotificationService {
     } catch (error) {
       console.error('❌ [sendNewChatNotification] Error:', error);
       return false;
-    }
-  }
-
-  /**
-   * ✅ إنشاء إشعار للمستخدم عند إرسال رسالة دعم
-   * @param {string} userId - معرف المستخدم
-   * @param {string} ticketId - معرف التذكرة
-   * @param {string} message - نص الرسالة
-   * @returns {Promise<Object>} الإشعار المنشأ
-   */
-  async createUserMessageNotification(userId, ticketId, message) {
-    try {
-      const chatUrl = `/support-chat/${ticketId}`;
-      
-      const notification = await this.create(userId, {
-        title: 'تم إرسال رسالتك بنجاح',
-        message: `تم إرسال رسالتك إلى فريق الدعم: "${message.substring(0, 50)}${message.length > 50 ? '...' : ''}"`,
-        type: 'message_sent',
-        priority: 'normal',
-        data: { 
-          ticketId, 
-          type: 'message_sent', 
-          message: message.substring(0, 100) 
-        },
-        actionUrl: chatUrl
-      });
-      
-      return notification;
-    } catch (error) {
-      console.error('❌ Error creating user message notification:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * ✅ إنشاء إشعار للمسؤول عند استلام رسالة دعم جديدة
-   * @param {string} adminId - معرف المسؤول
-   * @param {string} userId - معرف المستخدم
-   * @param {string} ticketId - معرف التذكرة
-   * @param {string} message - نص الرسالة
-   * @param {string} userName - اسم المستخدم
-   * @returns {Promise<Object>} الإشعار المنشأ
-   */
-  async createAdminMessageNotification(adminId, userId, ticketId, message, userName) {
-    try {
-      const adminUrl = `/admin/support/tickets/${ticketId}`;
-      
-      const notification = await this.create(adminId, {
-        title: 'رسالة دعم جديدة',
-        message: `${userName || 'مستخدم'} أرسل رسالة جديدة: "${message.substring(0, 50)}${message.length > 50 ? '...' : ''}"`,
-        type: 'support_message',
-        priority: 'high',
-        data: { 
-          ticketId, 
-          userId, 
-          type: 'admin_notification',
-          message: message.substring(0, 100)
-        },
-        actionUrl: adminUrl
-      });
-      
-      return notification;
-    } catch (error) {
-      console.error('❌ Error creating admin message notification:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * ✅ إنشاء إشعار للمسؤول عند إنشاء تذكرة دعم جديدة
-   * @param {string} adminId - معرف المسؤول
-   * @param {string} userId - معرف المستخدم
-   * @param {string} ticketId - معرف التذكرة
-   * @param {string} userName - اسم المستخدم
-   * @returns {Promise<Object>} الإشعار المنشأ
-   */
-  async createAdminTicketNotification(adminId, userId, ticketId, userName) {
-    try {
-      const adminUrl = `/admin/support/tickets/${ticketId}`;
-      
-      const notification = await this.create(adminId, {
-        title: 'تذكرة دعم جديدة',
-        message: `${userName || 'مستخدم'} أنشأ تذكرة دعم جديدة`,
-        type: 'support_ticket',
-        priority: 'high',
-        data: { 
-          ticketId, 
-          userId, 
-          type: 'admin_notification' 
-        },
-        actionUrl: adminUrl
-      });
-      
-      return notification;
-    } catch (error) {
-      console.error('❌ Error creating admin ticket notification:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * ✅ إنشاء إشعار للمستخدم عند رد المسؤول
-   * @param {string} userId - معرف المستخدم
-   * @param {string} ticketId - معرف التذكرة
-   * @param {string} message - نص الرسالة
-   * @param {string} adminName - اسم المسؤول
-   * @returns {Promise<Object>} الإشعار المنشأ
-   */
-  async createAdminReplyNotification(userId, ticketId, message, adminName) {
-    try {
-      const chatUrl = `/support-chat/${ticketId}`;
-      
-      const notification = await this.create(userId, {
-        title: 'رد من الدعم الفني',
-        message: `${adminName || 'الدعم الفني'} رد على رسالتك: "${message.substring(0, 50)}${message.length > 50 ? '...' : ''}"`,
-        type: 'support_reply',
-        priority: 'high',
-        data: { 
-          ticketId, 
-          type: 'support_reply', 
-          message: message.substring(0, 100),
-          adminName
-        },
-        actionUrl: chatUrl
-      });
-      
-      return notification;
-    } catch (error) {
-      console.error('❌ Error creating admin reply notification:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * ✅ إنشاء إشعار للمستخدم عند الرد على طلب الترقية
-   * @param {string} userId - معرف المستخدم
-   * @param {string} requestId - معرف طلب الترقية
-   * @param {string} message - نص الرسالة
-   * @returns {Promise<Object>} الإشعار المنشأ
-   */
-  async createUpgradeNotification(userId, requestId, message) {
-    try {
-      const upgradeUrl = `/upgrade-status?requestId=${requestId}`;
-      
-      const notification = await this.create(userId, {
-        title: 'طلب استكمال بيانات الترقية',
-        message: message,
-        type: 'upgrade_incomplete',
-        priority: 'high',
-        data: { 
-          requestId, 
-          type: 'upgrade_notification', 
-          requiresAction: true,
-          message: message
-        },
-        actionUrl: upgradeUrl
-      });
-      
-      return notification;
-    } catch (error) {
-      console.error('❌ Error creating upgrade notification:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * ✅ التحقق من وجود إشعار غير مقروء لنفس التذكرة
-   * @param {string} userId - معرف المستخدم
-   * @param {string} ticketId - معرف التذكرة
-   * @returns {Promise<Object|null>} الإشعار الموجود أو null
-   */
-  async checkExistingChatNotification(userId, ticketId) {
-    try {
-      const result = await pool.query(
-        `SELECT id, message, created_at, data
-         FROM app.notifications 
-         WHERE user_id = $1 
-           AND type = 'support_reply' 
-           AND is_read = false
-           AND is_deleted = false
-           AND data->>'ticketId' = $2
-         ORDER BY created_at DESC 
-         LIMIT 1`,
-        [userId, ticketId.toString()]
-      );
-      
-      return result.rows[0] || null;
-    } catch (error) {
-      console.error('❌ Error checking existing chat notification:', error);
-      return null;
-    }
-  }
-
-  /**
-   * ✅ تحديث إشعار محادثة موجود
-   * @param {string} notificationId - معرف الإشعار
-   * @param {string} newMessage - الرسالة الجديدة
-   * @returns {Promise<Object>} الإشعار المحدث
-   */
-  async updateChatNotification(notificationId, newMessage) {
-    try {
-      const result = await pool.query(
-        `UPDATE app.notifications 
-         SET message = $1, 
-             created_at = NOW(),
-             data = jsonb_set(data, '{message}', to_jsonb($2))
-         WHERE id = $3
-         RETURNING *`,
-        [`رد جديد من الدعم: ${newMessage}`, newMessage, notificationId]
-      );
-      
-      return result.rows[0];
-    } catch (error) {
-      console.error('❌ Error updating chat notification:', error);
-      throw error;
     }
   }
 
@@ -712,6 +853,38 @@ class NotificationService {
       },
       actionUrl: `/chat/${chatData.chatId}`
     });
+  }
+
+  /**
+   * ✅ إنشاء إشعار للمستخدم عند الرد على طلب الترقية
+   * @param {string} userId - معرف المستخدم
+   * @param {string} requestId - معرف طلب الترقية
+   * @param {string} message - نص الرسالة
+   * @returns {Promise<Object>} الإشعار المنشأ
+   */
+  async createUpgradeNotification(userId, requestId, message) {
+    try {
+      const upgradeUrl = `/upgrade-status?requestId=${requestId}`;
+      
+      const notification = await this.create(userId, {
+        title: 'طلب استكمال بيانات الترقية',
+        message: message,
+        type: 'upgrade_incomplete',
+        priority: 'high',
+        data: { 
+          requestId, 
+          type: 'upgrade_notification', 
+          requiresAction: true,
+          message: message
+        },
+        actionUrl: upgradeUrl
+      });
+      
+      return notification;
+    } catch (error) {
+      console.error('❌ Error creating upgrade notification:', error);
+      throw error;
+    }
   }
 }
 
