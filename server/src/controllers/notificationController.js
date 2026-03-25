@@ -156,7 +156,88 @@ export const deleteAllNotifications = async (req, res) => {
 };
 
 // ============================================
-// ✅ إنشاء إشعار محادثة مع المسؤول
+// ✅ إنشاء إشعار للمسؤول عند استلام رسالة دعم جديدة (مع منع التكرار)
+// ============================================
+export const createAdminMessageNotification = async (req, res) => {
+  try {
+    // التحقق من صلاحيات المسؤول
+    if (req.user.role !== 'admin' && req.user.role !== 'support') {
+      return res.status(403).json({
+        success: false,
+        message: 'غير مصرح. فقط المسؤولون يمكنهم إرسال إشعارات المحادثة'
+      });
+    }
+
+    const { userId, ticketId, message, userName } = req.body;
+
+    if (!userId || !ticketId || !message) {
+      return res.status(400).json({
+        success: false,
+        message: 'الرجاء إدخال userId, ticketId, message'
+      });
+    }
+
+    // ✅ استخدام الدالة الجديدة التي تمنع التكرار
+    const notification = await notificationService.createOrUpdateAdminMessageNotification(
+      req.user.id,  // adminId
+      userId,
+      ticketId,
+      message,
+      userName
+    );
+
+    res.json({
+      success: true,
+      message: 'تم إرسال إشعار المسؤول بنجاح',
+      notification
+    });
+  } catch (error) {
+    console.error('❌ Error in createAdminMessageNotification:', error);
+    res.status(500).json({
+      success: false,
+      message: 'حدث خطأ أثناء إنشاء الإشعار',
+      error: error.message
+    });
+  }
+};
+
+// ============================================
+// ✅ الحصول على إشعارات المسؤول المجمعة (إشعار واحد لكل مستخدم)
+// ============================================
+export const getGroupedAdminNotifications = async (req, res) => {
+  try {
+    // التحقق من صلاحيات المسؤول
+    if (req.user.role !== 'admin' && req.user.role !== 'support') {
+      return res.status(403).json({
+        success: false,
+        message: 'غير مصرح. هذه الخدمة متاحة فقط للمسؤولين'
+      });
+    }
+    
+    const { page = 1, limit = 20 } = req.query;
+    
+    const result = await notificationService.getGroupedAdminNotifications(
+      req.user.id,
+      parseInt(page),
+      parseInt(limit)
+    );
+    
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (error) {
+    console.error('❌ Error in getGroupedAdminNotifications:', error);
+    res.status(500).json({
+      success: false,
+      message: 'حدث خطأ أثناء جلب الإشعارات',
+      error: error.message
+    });
+  }
+};
+
+// ============================================
+// ✅ إنشاء إشعار محادثة مع المسؤول (للتوافق القديم)
 // ============================================
 export const createChatNotification = async (req, res) => {
   try {
@@ -316,6 +397,86 @@ export const createGeneralNotification = async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Error in createGeneralNotification:', error);
+    res.status(500).json({
+      success: false,
+      message: 'حدث خطأ أثناء إنشاء الإشعار',
+      error: error.message
+    });
+  }
+};
+
+// ============================================
+// ✅ إنشاء إشعار للمستخدم عند إرسال رسالة (تأكيد)
+// ============================================
+export const createUserMessageNotification = async (req, res) => {
+  try {
+    const { userId, ticketId, message } = req.body;
+
+    if (!userId || !ticketId || !message) {
+      return res.status(400).json({
+        success: false,
+        message: 'الرجاء إدخال userId, ticketId, message'
+      });
+    }
+
+    const notification = await notificationService.createOrUpdateUserMessageNotification(
+      userId,
+      ticketId,
+      message
+    );
+
+    res.json({
+      success: true,
+      message: 'تم إرسال إشعار المستخدم بنجاح',
+      notification
+    });
+  } catch (error) {
+    console.error('❌ Error in createUserMessageNotification:', error);
+    res.status(500).json({
+      success: false,
+      message: 'حدث خطأ أثناء إنشاء الإشعار',
+      error: error.message
+    });
+  }
+};
+
+// ============================================
+// ✅ إنشاء إشعار للمستخدم عند رد المسؤول
+// ============================================
+export const createAdminReplyNotification = async (req, res) => {
+  try {
+    // التحقق من صلاحيات المسؤول
+    if (req.user.role !== 'admin' && req.user.role !== 'support') {
+      return res.status(403).json({
+        success: false,
+        message: 'غير مصرح. فقط المسؤولون يمكنهم إرسال إشعارات الرد'
+      });
+    }
+
+    const { userId, ticketId, message } = req.body;
+    const adminName = req.user.fullName || req.user.name || 'الدعم الفني';
+
+    if (!userId || !ticketId || !message) {
+      return res.status(400).json({
+        success: false,
+        message: 'الرجاء إدخال userId, ticketId, message'
+      });
+    }
+
+    const notification = await notificationService.createOrUpdateAdminReplyNotification(
+      userId,
+      ticketId,
+      message,
+      adminName
+    );
+
+    res.json({
+      success: true,
+      message: 'تم إرسال إشعار رد المسؤول بنجاح',
+      notification
+    });
+  } catch (error) {
+    console.error('❌ Error in createAdminReplyNotification:', error);
     res.status(500).json({
       success: false,
       message: 'حدث خطأ أثناء إنشاء الإشعار',
