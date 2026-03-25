@@ -244,7 +244,7 @@ export const createUpgradeRequestNotification = async (req, res) => {
 };
 
 // ============================================
-// ✅ إنشاء إشعار بنتيجة الترقية
+// ✅ إنشاء إشعار بنتيجة الترقية (موافقة/رفض)
 // ============================================
 export const createUpgradeResultNotification = async (req, res) => {
   try {
@@ -271,6 +271,51 @@ export const createUpgradeResultNotification = async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Error in createUpgradeResultNotification:', error);
+    res.status(500).json({
+      success: false,
+      message: 'حدث خطأ أثناء إنشاء الإشعار',
+      error: error.message
+    });
+  }
+};
+
+// ============================================
+// ✅ إنشاء إشعار عام (للمسؤول)
+// ============================================
+export const createGeneralNotification = async (req, res) => {
+  try {
+    // التحقق من صلاحيات المسؤول
+    if (req.user.role !== 'admin' && req.user.role !== 'support') {
+      return res.status(403).json({
+        success: false,
+        message: 'غير مصرح. فقط المسؤولون يمكنهم إرسال إشعارات عامة'
+      });
+    }
+
+    const { userId, title, message, type, actionUrl, data } = req.body;
+
+    if (!userId || !title || !message) {
+      return res.status(400).json({
+        success: false,
+        message: 'الرجاء إدخال userId, title, message'
+      });
+    }
+
+    const notification = await notificationService.create(userId, {
+      title,
+      message,
+      type: type || 'system',
+      actionUrl: actionUrl || null,
+      metadata: data ? JSON.parse(data) : null
+    });
+
+    res.json({
+      success: true,
+      message: 'تم إرسال الإشعار بنجاح',
+      notification
+    });
+  } catch (error) {
+    console.error('❌ Error in createGeneralNotification:', error);
     res.status(500).json({
       success: false,
       message: 'حدث خطأ أثناء إنشاء الإشعار',
