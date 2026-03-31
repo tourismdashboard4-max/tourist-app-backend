@@ -6,7 +6,7 @@ import toast from 'react-hot-toast';
 import api from '../services/apiService';
 import './ProfilePage.css';
 
-const ProfilePage = () => {
+const ProfilePage = ({ setPage }) => {
   const { user, isAuthenticated, logout, updateUser } = useAuth();
   const fileInputRef = useRef(null);
   
@@ -149,13 +149,11 @@ const ProfilePage = () => {
     const file = e.target.files[0];
     if (!file) return;
 
-    // التحقق من حجم الصورة
     if (file.size > 2 * 1024 * 1024) {
       toast.error('حجم الصورة يجب أن يكون أقل من 2 ميجابايت');
       return;
     }
 
-    // التحقق من نوع الصورة
     if (!file.type.startsWith('image/')) {
       toast.error('الرجاء اختيار صورة فقط');
       return;
@@ -169,7 +167,6 @@ const ProfilePage = () => {
       const response = await api.uploadAvatar(user.id, formData);
       
       if (response?.data?.success) {
-        // تحديث صورة المستخدم في السياق
         const avatarUrl = response.data.avatar || response.data.user?.avatar;
         updateUser({ avatar: avatarUrl });
         toast.success('تم تحديث الصورة الشخصية بنجاح');
@@ -241,11 +238,9 @@ const ProfilePage = () => {
       );
       
       if (response?.data?.success) {
-        // تحديث رقم الجوال في قاعدة البيانات
         const updateResponse = await api.updateUserPhone(user.id, phoneVerification.newPhone);
         
         if (updateResponse?.data?.success) {
-          // تحديث المستخدم في السياق
           updateUser({ 
             phone: phoneVerification.newPhone,
             phoneVerified: true 
@@ -408,6 +403,11 @@ const ProfilePage = () => {
     );
   }
 
+  // ✅ التحقق من صلاحيات المسؤول والدعم
+  const isAdmin = user?.role === 'admin';
+  const isSupport = user?.role === 'support';
+  const showAdminButtons = isAdmin || isSupport;
+
   return (
     <div className="profile-container" dir="rtl">
       {/* رأس الصفحة مع الصورة الشخصية */}
@@ -444,7 +444,7 @@ const ProfilePage = () => {
           <p className="profile-email">{user?.email}</p>
           <div className="profile-badges">
             <span className="profile-badge role">
-              {user?.role === 'guide' ? 'مرشد سياحي' : 'سائح'}
+              {user?.role === 'guide' ? 'مرشد سياحي' : user?.role === 'admin' ? 'مدير النظام' : user?.role === 'support' ? 'دعم فني' : 'سائح'}
             </span>
             {user?.phoneVerified && (
               <span className="profile-badge verified">✓ موثق</span>
@@ -452,6 +452,69 @@ const ProfilePage = () => {
           </div>
         </div>
       </div>
+
+      {/* ✅ أزرار المسؤول - تستخدم setPage للتنقل */}
+      {showAdminButtons && (
+        <div style={{ 
+          display: 'flex', 
+          gap: '15px', 
+          margin: '20px 0',
+          justifyContent: 'center',
+          flexWrap: 'wrap'
+        }}>
+          <button 
+            onClick={() => setPage('admin-support')}
+            style={{
+              flex: 1,
+              minWidth: '150px',
+              padding: '15px 20px',
+              background: '#10b981',
+              border: 'none',
+              borderRadius: '12px',
+              color: 'white',
+              fontSize: '16px',
+              fontWeight: 'bold',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '10px',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+              transition: 'all 0.3s'
+            }}
+            onMouseEnter={(e) => e.target.style.transform = 'scale(1.02)'}
+            onMouseLeave={(e) => e.target.style.transform = 'scale(1)'}
+          >
+            🎫 تذاكر الدعم
+          </button>
+          
+          <button 
+            onClick={() => setPage('upgrade-requests')}
+            style={{
+              flex: 1,
+              minWidth: '150px',
+              padding: '15px 20px',
+              background: '#8b5cf6',
+              border: 'none',
+              borderRadius: '12px',
+              color: 'white',
+              fontSize: '16px',
+              fontWeight: 'bold',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '10px',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+              transition: 'all 0.3s'
+            }}
+            onMouseEnter={(e) => e.target.style.transform = 'scale(1.02)'}
+            onMouseLeave={(e) => e.target.style.transform = 'scale(1)'}
+          >
+            ⭐ طلبات الترقية
+          </button>
+        </div>
+      )}
 
       {/* بطاقة المحفظة */}
       {wallet ? (
@@ -554,373 +617,314 @@ const ProfilePage = () => {
   );
 };
 
-// ===== بطاقة المحفظة =====
-const WalletCard = ({ wallet, stats, showFullWalletNumber, setShowFullWalletNumber, copyWalletNumber, formatWalletNumber, maskWalletNumber }) => (
-  <motion.div 
-    className="wallet-premium-card"
-    initial={{ opacity: 0, y: 20 }}
-    animate={{ opacity: 1, y: 0 }}
-  >
-    <div className="wallet-card-header">
-      <div className="wallet-title">
-        <span className="wallet-icon">💰</span>
-        <h3>محفظتي الرقمية</h3>
+// ===== مكون بطاقة المحفظة =====
+const WalletCard = ({ wallet, stats, showFullWalletNumber, setShowFullWalletNumber, copyWalletNumber, formatWalletNumber, maskWalletNumber }) => {
+  return (
+    <div className="wallet-card">
+      <div className="wallet-header">
+        <div className="wallet-title">
+          <span>💰</span>
+          <h3>محفظتي</h3>
+        </div>
+        <button className="wallet-refresh" onClick={() => window.location.reload()}>
+          🔄
+        </button>
       </div>
-      <span className={`wallet-status-badge ${wallet.status}`}>
-        {wallet.status === 'active' ? 'نشطة' : 'غير نشطة'}
-      </span>
-    </div>
-
-    <div className="wallet-balance-section">
-      <span className="wallet-balance-label">الرصيد الحالي</span>
-      <div className="wallet-balance-main">
-        <span className="wallet-balance-amount">
-          {wallet.balance?.toFixed(2)} 
-        </span>
-        <span className="wallet-balance-currency">{wallet.currency}</span>
+      
+      <div className="wallet-balance">
+        <div className="balance-amount">
+          {wallet?.balance?.toLocaleString() || 0} <span>ريال</span>
+        </div>
+        <div className="balance-label">الرصيد الحالي</div>
       </div>
-    </div>
-
-    <div className="wallet-number-section">
-      <span className="wallet-number-label">رقم المحفظة</span>
-      <div className="wallet-number-display">
-        <span className="wallet-number">
-          {showFullWalletNumber ? formatWalletNumber(wallet.wallet_number) : maskWalletNumber(wallet.wallet_number)}
+      
+      <div className="wallet-number" onClick={() => setShowFullWalletNumber(!showFullWalletNumber)}>
+        <span className="number-label">رقم المحفظة</span>
+        <span className="number-value">
+          {showFullWalletNumber ? formatWalletNumber(wallet?.wallet_number) : maskWalletNumber(wallet?.wallet_number)}
         </span>
-        <div className="wallet-actions">
-          <button className="wallet-action-btn" onClick={() => setShowFullWalletNumber(!showFullWalletNumber)}>
-            {showFullWalletNumber ? '👁️' : '👁️‍🗨️'}
-          </button>
-          <button className="wallet-action-btn" onClick={copyWalletNumber}>📋</button>
+        <button className="copy-btn" onClick={(e) => { e.stopPropagation(); copyWalletNumber(); }}>
+          📋 نسخ
+        </button>
+      </div>
+      
+      <div className="wallet-stats">
+        <div className="stat-item">
+          <div className="stat-value">{stats.transactionsCount}</div>
+          <div className="stat-label">معاملات</div>
+        </div>
+        <div className="stat-item">
+          <div className="stat-value">{stats.totalEarned.toLocaleString()}</div>
+          <div className="stat-label">إجمالي الدخل</div>
+        </div>
+        <div className="stat-item">
+          <div className="stat-value">{stats.totalSpent.toLocaleString()}</div>
+          <div className="stat-label">إجمالي المصروف</div>
+        </div>
+      </div>
+      
+      <div className="reward-info">
+        <div className="reward-points">
+          ⭐ {stats.rewardPoints || 0} نقطة مكافآت
+        </div>
+        <div className={`membership-level ${stats.membershipLevel === 'ذهبي' ? 'gold' : stats.membershipLevel === 'فضي' ? 'silver' : 'bronze'}`}>
+          {stats.membershipLevel || 'برونزي'}
         </div>
       </div>
     </div>
+  );
+};
 
-    <div className="wallet-stats-grid">
-      <div className="wallet-stat-item">
-        <span className="stat-label">المعاملات</span>
-        <span className="stat-value">{stats.transactionsCount}</span>
-      </div>
-      <div className="wallet-stat-item">
-        <span className="stat-label">المكافآت</span>
-        <span className="stat-value">{stats.rewardPoints}</span>
-      </div>
-      <div className="wallet-stat-item">
-        <span className="stat-label">المستوى</span>
-        <span className="stat-value level">{stats.membershipLevel || 'عادي'}</span>
-      </div>
-    </div>
-  </motion.div>
-);
-
-// ===== تبويب الملف الشخصي =====
+// ===== مكون تبويب الملف الشخصي =====
 const ProfileTab = ({ 
   user, editData, setEditData, isEditing, setIsEditing,
   phoneVerification, setPhoneVerification,
   onUpdateName, onSendOTP, onVerifyOTP, onResendOTP, onCancelVerification,
-  wallet, setActiveTab, logout 
-}) => (
-  <motion.div 
-    className="profile-tab"
-    initial={{ opacity: 0, x: -20 }}
-    animate={{ opacity: 1, x: 0 }}
-  >
-    {/* معلومات الحساب الأساسية */}
-    <div className="info-card">
-      <h3>معلومات الحساب</h3>
-      <div className="info-grid">
-        <div className="info-item">
-          <span className="info-label">البريد الإلكتروني</span>
-          <span className="info-value">{user?.email}</span>
+  wallet, setActiveTab, logout
+}) => {
+  return (
+    <div className="profile-tab">
+      <div className="info-section">
+        <div className="section-title">
+          <h3>معلومات شخصية</h3>
+          {!isEditing && (
+            <button className="edit-btn" onClick={() => setIsEditing(true)}>
+              ✏️ تعديل
+            </button>
+          )}
         </div>
         
-        <div className="info-item">
-          <span className="info-label">الاسم</span>
+        <div className="info-row">
+          <label>الاسم الكامل</label>
           {isEditing ? (
-            <div className="edit-field" style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+            <div className="edit-field">
               <input
                 type="text"
                 value={editData.fullName}
                 onChange={(e) => setEditData({...editData, fullName: e.target.value})}
+                className="edit-input"
                 placeholder="الاسم الكامل"
-                style={{ flex: 1, padding: '5px', borderRadius: '5px', border: '1px solid #ddd' }}
               />
-              <button className="save-btn" onClick={onUpdateName} style={{ padding: '5px 10px', background: '#10b981', color: 'white', border: 'none', borderRadius: '5px' }}>حفظ</button>
-              <button className="cancel-btn" onClick={() => setIsEditing(false)} style={{ padding: '5px 10px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '5px' }}>إلغاء</button>
+              <div className="edit-actions">
+                <button className="save-btn" onClick={onUpdateName}>حفظ</button>
+                <button className="cancel-btn" onClick={() => setIsEditing(false)}>إلغاء</button>
+              </div>
             </div>
           ) : (
-            <div className="info-value-with-edit" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <span>{user?.fullName || user?.name || 'غير محدد'}</span>
-              <button className="edit-btn" onClick={() => setIsEditing(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px' }}>✏️</button>
+            <p>{user?.fullName || user?.name || 'غير مضاف'}</p>
+          )}
+        </div>
+        
+        <div className="info-row">
+          <label>البريد الإلكتروني</label>
+          <p>{user?.email}</p>
+        </div>
+        
+        <div className="info-row">
+          <label>رقم الجوال</label>
+          {phoneVerification.step === 'idle' && (
+            <div className="phone-display">
+              <p>{user?.phone || 'غير مضاف'}</p>
+              {!user?.phone && (
+                <button className="verify-phone-btn" onClick={() => setPhoneVerification(prev => ({ ...prev, step: 'sending' }))}>
+                  إضافة رقم
+                </button>
+              )}
+              {user?.phone && !user?.phoneVerified && (
+                <button className="verify-phone-btn" onClick={() => {
+                  setPhoneVerification({ step: 'sending', newPhone: user.phone, code: '', timer: 0 });
+                  onSendOTP();
+                }}>
+                  توثيق
+                </button>
+              )}
+              {user?.phoneVerified && (
+                <span className="verified-badge">✓ موثق</span>
+              )}
             </div>
           )}
         </div>
-
-        <div className="info-item">
-          <span className="info-label">رقم الجوال</span>
-          <div className="phone-section">
-            {phoneVerification.step === 'idle' && (
-              <div className="info-value-with-edit" style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                <span>{user?.phone || 'غير مضاف'}</span>
-                {user?.phoneVerified && (
-                  <span className="verified-badge" style={{ background: '#10b981', color: 'white', padding: '2px 8px', borderRadius: '12px', fontSize: '11px' }}>✓ موثق</span>
-                )}
-                <button 
-                  className="edit-btn"
-                  onClick={() => setPhoneVerification({...phoneVerification, step: 'sending'})}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px' }}
-                >
-                  {user?.phone ? 'تحديث' : 'إضافة'}
-                </button>
-              </div>
-            )}
-
-            {phoneVerification.step === 'sending' && (
-              <div className="phone-input-group" style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
-                <input
-                  type="tel"
-                  value={phoneVerification.newPhone}
-                  onChange={(e) => setPhoneVerification({...phoneVerification, newPhone: e.target.value})}
-                  placeholder="05xxxxxxxx"
-                  dir="ltr"
-                  style={{ flex: 1, padding: '8px', borderRadius: '5px', border: '1px solid #ddd' }}
-                />
-                <button className="send-otp-btn" onClick={onSendOTP} style={{ padding: '8px 15px', background: '#3b82f6', color: 'white', border: 'none', borderRadius: '5px' }}>إرسال الرمز</button>
-                <button className="cancel-btn" onClick={onCancelVerification} style={{ padding: '8px 15px', background: '#6b7280', color: 'white', border: 'none', borderRadius: '5px' }}>إلغاء</button>
-              </div>
-            )}
-
-            {phoneVerification.step === 'verify' && (
-              <div className="otp-verify-group" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <p className="otp-message" style={{ margin: 0, color: '#666' }}>تم إرسال الرمز إلى {phoneVerification.newPhone}</p>
-                <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
-                  <input
-                    type="text"
-                    value={phoneVerification.code}
-                    onChange={(e) => setPhoneVerification({
-                      ...phoneVerification, 
-                      code: e.target.value.replace(/\D/g, '').slice(0, 6)
-                    })}
-                    placeholder="000000"
-                    maxLength="6"
-                    className="otp-input"
-                    dir="ltr"
-                    style={{ flex: 1, padding: '8px', borderRadius: '5px', border: '1px solid #ddd', textAlign: 'center', fontSize: '18px', letterSpacing: '4px' }}
-                  />
-                  <button className="verify-btn" onClick={onVerifyOTP} style={{ padding: '8px 15px', background: '#10b981', color: 'white', border: 'none', borderRadius: '5px' }}>تحقق</button>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'center' }}>
-                  <button 
-                    className="resend-btn" 
-                    onClick={onResendOTP}
-                    disabled={phoneVerification.timer > 0}
-                    style={{ background: 'none', border: 'none', color: phoneVerification.timer > 0 ? '#999' : '#3b82f6', cursor: phoneVerification.timer > 0 ? 'default' : 'pointer', textDecoration: 'underline' }}
-                  >
-                    {phoneVerification.timer > 0 
-                      ? `إعادة الإرسال بعد ${phoneVerification.timer}ث` 
-                      : 'إعادة إرسال الرمز'}
-                  </button>
-                </div>
-              </div>
-            )}
+        
+        {phoneVerification.step === 'sending' && (
+          <div className="phone-verification">
+            <input
+              type="tel"
+              value={phoneVerification.newPhone}
+              onChange={(e) => setPhoneVerification(prev => ({ ...prev, newPhone: e.target.value }))}
+              placeholder="أدخل رقم الجوال (05xxxxxxxx)"
+              className="phone-input"
+              dir="ltr"
+            />
+            <button className="send-otp-btn" onClick={onSendOTP}>إرسال رمز التحقق</button>
           </div>
+        )}
+        
+        {phoneVerification.step === 'verify' && (
+          <div className="phone-verification">
+            <p className="verify-info">تم إرسال رمز التحقق إلى {phoneVerification.newPhone}</p>
+            <div className="otp-input-group">
+              <input
+                type="text"
+                maxLength="6"
+                value={phoneVerification.code}
+                onChange={(e) => setPhoneVerification(prev => ({ ...prev, code: e.target.value }))}
+                placeholder="أدخل رمز التحقق (6 أرقام)"
+                className="otp-input"
+                dir="ltr"
+              />
+              <button className="verify-btn" onClick={onVerifyOTP}>تحقق</button>
+            </div>
+            <div className="resend-group">
+              <button 
+                className="resend-btn" 
+                onClick={onResendOTP}
+                disabled={phoneVerification.timer > 0}
+              >
+                {phoneVerification.timer > 0 ? `إعادة الإرسال بعد ${phoneVerification.timer} ثانية` : 'إعادة إرسال الرمز'}
+              </button>
+              <button className="cancel-btn" onClick={onCancelVerification}>إلغاء</button>
+            </div>
+          </div>
+        )}
+      </div>
+      
+      <div className="info-section">
+        <div className="section-title">
+          <h3>المحفظة</h3>
         </div>
-
-        <div className="info-item">
-          <span className="info-label">تاريخ التسجيل</span>
-          <span className="info-value">
-            {user?.createdAt ? new Date(user.createdAt).toLocaleDateString('ar-SA') : 'غير محدد'}
-          </span>
+        <div className="info-row wallet-short">
+          <label>رصيد المحفظة</label>
+          <p className="wallet-balance-short">{wallet?.balance?.toLocaleString() || 0} ريال</p>
+        </div>
+        <button className="view-wallet-btn" onClick={() => setActiveTab('wallet')}>
+          عرض تفاصيل المحفظة →
+        </button>
+      </div>
+      
+      <div className="info-section">
+        <div className="section-title">
+          <h3>الأمان</h3>
+        </div>
+        <div className="info-row">
+          <label>تسجيل الخروج</label>
+          <button className="logout-btn" onClick={logout}>تسجيل الخروج</button>
         </div>
       </div>
     </div>
+  );
+};
 
-    {/* أرقام فريدة */}
-    {(user?.walletNumber || user?.chatId) && (
-      <div className="unique-ids-card" style={{ background: 'white', borderRadius: '15px', padding: '20px', marginBottom: '20px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)' }}>
-        <h4 style={{ margin: '0 0 15px 0', color: '#1f2937' }}>الأرقام الخاصة</h4>
-        
-        {user?.walletNumber && (
-          <div className="id-item" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid #e5e7eb' }}>
-            <span className="id-label" style={{ color: '#6b7280' }}>رقم المحفظة:</span>
-            <div className="id-value" style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-              <span className="mono" style={{ fontFamily: 'monospace', color: '#3b82f6' }}>{user.walletNumber}</span>
-              <button onClick={() => {
-                navigator.clipboard.writeText(user.walletNumber);
-                toast.success('تم نسخ رقم المحفظة');
-              }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px' }}>📋</button>
-            </div>
-          </div>
-        )}
-        
-        {user?.chatId && (
-          <div className="id-item" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0' }}>
-            <span className="id-label" style={{ color: '#6b7280' }}>رقم المراسلة:</span>
-            <div className="id-value" style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-              <span className="mono" style={{ fontFamily: 'monospace', color: '#3b82f6' }}>{user.chatId}</span>
-              <button onClick={() => {
-                navigator.clipboard.writeText(user.chatId);
-                toast.success('تم نسخ رقم المراسلة');
-              }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px' }}>📋</button>
-            </div>
-          </div>
-        )}
-      </div>
-    )}
-
-    {/* رابط سريع للمحفظة */}
-    {wallet && (
-      <div className="quick-wallet-card" onClick={() => setActiveTab('wallet')} style={{ cursor: 'pointer' }}>
-        <h4 style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: 0, color: '#667eea' }}>
-          <span className="quick-wallet-icon">💰</span>
-          ملخص المحفظة
-        </h4>
-        <div className="quick-wallet-row" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span>الرصيد:</span>
-          <span className="balance-large" style={{ fontSize: '18px', fontWeight: 'bold', color: '#10b981' }}>
-            {wallet.balance} {wallet.currency}
-          </span>
+// ===== مكون تبويب المحفظة =====
+const WalletTab = ({ wallet, stats, transactions, formatWalletNumber, copyWalletNumber, onDeposit, onWithdraw }) => {
+  return (
+    <div className="wallet-tab">
+      <div className="balance-card">
+        <div className="balance-amount-large">
+          {wallet?.balance?.toLocaleString() || 0} <span>ريال</span>
         </div>
-        <span className="arrow" style={{ fontSize: '20px', color: '#667eea' }}>←</span>
-      </div>
-    )}
-
-    {/* زر تسجيل الخروج */}
-    <button className="logout-btn" onClick={logout} style={{ width: '100%', padding: '14px', background: 'linear-gradient(135deg, #ef4444, #dc2626)', color: 'white', border: 'none', borderRadius: '10px', fontSize: '16px', fontWeight: '600', cursor: 'pointer', marginTop: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-      تسجيل الخروج
-    </button>
-  </motion.div>
-);
-
-// ===== تبويب المحفظة =====
-const WalletTab = ({ wallet, stats, transactions, formatWalletNumber, copyWalletNumber, onDeposit, onWithdraw }) => (
-  <motion.div 
-    className="wallet-tab"
-    initial={{ opacity: 0, x: 20 }}
-    animate={{ opacity: 1, x: 0 }}
-  >
-    {wallet ? (
-      <>
-        <div className="wallet-details-card" style={{ background: 'white', borderRadius: '15px', padding: '20px', marginBottom: '20px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)' }}>
-          <h3 style={{ margin: '0 0 15px 0', color: '#1f2937' }}>تفاصيل المحفظة</h3>
-          <div className="wallet-detail-item" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid #e5e7eb' }}>
-            <span className="detail-label" style={{ color: '#6b7280' }}>رقم المحفظة:</span>
-            <span className="detail-value highlight" style={{ color: '#3b82f6', display: 'flex', alignItems: 'center', gap: '5px' }}>
-              {formatWalletNumber(wallet.wallet_number)}
-              <button className="copy-btn-small" onClick={copyWalletNumber} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px' }}>📋</button>
-            </span>
-          </div>
-          <div className="wallet-detail-item" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0' }}>
-            <span className="detail-label" style={{ color: '#6b7280' }}>تاريخ الإنشاء:</span>
-            <span className="detail-value" style={{ color: '#1f2937' }}>
-              {new Date(wallet.created_at).toLocaleDateString('ar-SA')}
-            </span>
-          </div>
+        <div className="balance-label">الرصيد الحالي</div>
+        
+        <div className="wallet-number-large" onClick={() => copyWalletNumber()}>
+          <span>رقم المحفظة: {formatWalletNumber(wallet?.wallet_number)}</span>
+          <button className="copy-icon">📋</button>
         </div>
-
-        {/* إحصائيات */}
-        {(stats.totalSpent > 0 || stats.totalEarned > 0) && (
-          <div className="wallet-stats-cards" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '20px' }}>
-            {stats.totalSpent > 0 && (
-              <div className="stat-card spent" style={{ background: 'linear-gradient(135deg, #fee2e2, #fecaca)', borderRadius: '15px', padding: '15px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <span className="stat-card-icon" style={{ fontSize: '30px' }}>💸</span>
-                <div>
-                  <div className="stat-card-label" style={{ fontSize: '12px', color: '#4b5563' }}>إجمالي المصروف</div>
-                  <div className="stat-card-value" style={{ fontSize: '18px', fontWeight: 'bold', color: '#1f2937' }}>{stats.totalSpent} ريال</div>
-                </div>
-              </div>
-            )}
-            {stats.totalEarned > 0 && (
-              <div className="stat-card earned" style={{ background: 'linear-gradient(135deg, #d1fae5, #a7f3d0)', borderRadius: '15px', padding: '15px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <span className="stat-card-icon" style={{ fontSize: '30px' }}>💰</span>
-                <div>
-                  <div className="stat-card-label" style={{ fontSize: '12px', color: '#4b5563' }}>إجمالي المكاسب</div>
-                  <div className="stat-card-value" style={{ fontSize: '18px', fontWeight: 'bold', color: '#1f2937' }}>{stats.totalEarned} ريال</div>
-                </div>
-              </div>
-            )}
+        
+        <div className="action-buttons">
+          <button className="deposit-btn" onClick={onDeposit}>إيداع</button>
+          <button className="withdraw-btn" onClick={onWithdraw}>سحب</button>
+        </div>
+      </div>
+      
+      <div className="stats-grid">
+        <div className="stat-card">
+          <div className="stat-value">{stats.transactionsCount}</div>
+          <div className="stat-label">إجمالي المعاملات</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-value">{stats.totalEarned.toLocaleString()}</div>
+          <div className="stat-label">إجمالي الدخل</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-value">{stats.totalSpent.toLocaleString()}</div>
+          <div className="stat-label">إجمالي المصروف</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-value">{stats.rewardPoints || 0}</div>
+          <div className="stat-label">نقاط المكافآت</div>
+        </div>
+      </div>
+      
+      <div className="transactions-section">
+        <div className="section-header">
+          <h4>آخر المعاملات</h4>
+        </div>
+        {transactions.length === 0 ? (
+          <div className="empty-transactions">
+            <p>لا توجد معاملات حتى الآن</p>
           </div>
-        )}
-
-        {/* آخر المعاملات */}
-        {transactions.length > 0 && (
-          <div className="recent-transactions" style={{ background: 'white', borderRadius: '15px', padding: '20px', marginBottom: '20px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)' }}>
-            <h4 style={{ margin: '0 0 15px 0', color: '#1f2937' }}>آخر المعاملات</h4>
-            {transactions.slice(0, 3).map(tx => (
-              <div key={tx.id} className="transaction-item" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px', background: '#f9fafb', borderRadius: '8px', marginBottom: '8px' }}>
-                <span className="transaction-desc" style={{ color: '#1f2937' }}>{tx.description}</span>
-                <span className={`transaction-amount ${tx.amount > 0 ? 'positive' : 'negative'}`} style={{ fontWeight: 'bold', color: tx.amount > 0 ? '#10b981' : '#ef4444' }}>
-                  {tx.amount > 0 ? '+' : ''}{tx.amount} ريال
-                </span>
+        ) : (
+          <div className="transactions-list">
+            {transactions.map((tx, idx) => (
+              <div key={tx.id || idx} className={`transaction-item ${tx.amount > 0 ? 'income' : 'expense'}`}>
+                <div className="transaction-info">
+                  <div className="transaction-title">{tx.description || (tx.amount > 0 ? 'إيداع' : 'سحب')}</div>
+                  <div className="transaction-date">{new Date(tx.created_at).toLocaleDateString('ar-EG')}</div>
+                </div>
+                <div className={`transaction-amount ${tx.amount > 0 ? 'positive' : 'negative'}`}>
+                  {tx.amount > 0 ? '+' : '-'}{Math.abs(tx.amount).toLocaleString()} ريال
+                </div>
               </div>
             ))}
           </div>
         )}
-
-        <div className="wallet-actions" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '20px' }}>
-          <button className="btn-primary" onClick={onDeposit} style={{ padding: '12px', background: 'linear-gradient(135deg, #3b82f6, #2563eb)', color: 'white', border: 'none', borderRadius: '10px', fontSize: '14px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
-            <span className="btn-icon">➕</span>
-            إيداع
-          </button>
-          <button className="btn-secondary" onClick={onWithdraw} style={{ padding: '12px', background: 'white', color: '#1f2937', border: '1px solid #e5e7eb', borderRadius: '10px', fontSize: '14px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
-            <span className="btn-icon">➖</span>
-            سحب
-          </button>
-        </div>
-      </>
-    ) : (
-      <div className="empty-state" style={{ textAlign: 'center', padding: '40px 20px', background: 'white', borderRadius: '15px' }}>
-        <div className="empty-icon" style={{ fontSize: '48px', marginBottom: '15px', opacity: '0.5' }}>💰</div>
-        <p style={{ color: '#6b7280' }}>لا توجد محفظة</p>
       </div>
-    )}
-  </motion.div>
-);
+    </div>
+  );
+};
 
-// ===== تبويب الإشعارات =====
-const NotificationsTab = ({ notifications, unreadCount, markAsRead, markAllAsRead }) => (
-  <motion.div 
-    className="notifications-tab"
-    initial={{ opacity: 0, x: -20 }}
-    animate={{ opacity: 1, x: 0 }}
-  >
-    <div className="notifications-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-      <h3 style={{ margin: 0, color: '#1f2937' }}>الإشعارات</h3>
-      {unreadCount > 0 && (
-        <button className="btn-mark-all" onClick={markAllAsRead} style={{ padding: '6px 12px', background: '#f3f4f6', border: 'none', borderRadius: '8px', fontSize: '12px', color: '#6b7280', cursor: 'pointer' }}>
-          تحديد الكل كمقروء
-        </button>
+// ===== مكون تبويب الإشعارات =====
+const NotificationsTab = ({ notifications, unreadCount, markAsRead, markAllAsRead }) => {
+  return (
+    <div className="notifications-tab">
+      <div className="notifications-header">
+        <h3>الإشعارات</h3>
+        {unreadCount > 0 && (
+          <button className="mark-all-read" onClick={markAllAsRead}>
+            تحديد الكل كمقروء
+          </button>
+        )}
+      </div>
+      
+      {notifications.length === 0 ? (
+        <div className="empty-notifications">
+          <div className="empty-icon">🔔</div>
+          <p>لا توجد إشعارات</p>
+        </div>
+      ) : (
+        <div className="notifications-list">
+          {notifications.map((notif) => (
+            <div 
+              key={notif.id} 
+              className={`notification-item ${!notif.is_read ? 'unread' : ''}`}
+              onClick={() => markAsRead(notif.id)}
+            >
+              <div className="notification-icon">
+                {notif.type === 'info' ? 'ℹ️' : notif.type === 'success' ? '✅' : notif.type === 'warning' ? '⚠️' : '🔔'}
+              </div>
+              <div className="notification-content">
+                <div className="notification-title">{notif.title}</div>
+                <div className="notification-message">{notif.message}</div>
+                <div className="notification-time">
+                  {new Date(notif.created_at).toLocaleString('ar-EG')}
+                </div>
+              </div>
+              {!notif.is_read && <div className="unread-dot"></div>}
+            </div>
+          ))}
+        </div>
       )}
     </div>
-
-    {notifications.length > 0 ? (
-      <div className="notifications-list" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        {notifications.map(notification => (
-          <div 
-            key={notification.id} 
-            className={`notification-item ${!notification.is_read ? 'unread' : ''}`}
-            onClick={() => !notification.is_read && markAsRead(notification.id)}
-            style={{ padding: '15px', background: notification.is_read ? '#f9fafb' : '#eff6ff', borderRadius: '10px', cursor: 'pointer', transition: 'all 0.3s', position: 'relative' }}
-          >
-            <div className="notification-content">
-              <h4 style={{ margin: '0 0 5px 0', fontSize: '14px', color: '#1f2937' }}>{notification.title}</h4>
-              <p style={{ margin: '0 0 5px 0', fontSize: '13px', color: '#6b7280' }}>{notification.message}</p>
-              <span className="notification-time" style={{ fontSize: '11px', color: '#9ca3af' }}>
-                {new Date(notification.created_at).toLocaleString('ar-SA')}
-              </span>
-            </div>
-            {!notification.is_read && (
-              <span className="notification-dot" style={{ width: '8px', height: '8px', background: '#3b82f6', borderRadius: '50%', position: 'absolute', top: '15px', left: '15px' }}></span>
-            )}
-          </div>
-        ))}
-      </div>
-    ) : (
-      <div className="empty-state" style={{ textAlign: 'center', padding: '40px 20px', background: 'white', borderRadius: '15px' }}>
-        <p style={{ color: '#6b7280' }}>لا توجد إشعارات</p>
-      </div>
-    )}
-  </motion.div>
-);
+  );
+};
 
 export default ProfilePage;
