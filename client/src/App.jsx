@@ -1,3 +1,4 @@
+import SupportChatPage from './pages/SupportChatPage';
 import React, { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import './index.css';
@@ -8,7 +9,18 @@ import {
   Search, Calendar, MapPin, Users, Sun, Moon, MessageCircle, 
   CheckCircle, XCircle, Phone, FileText, Send, Plus, 
   Archive, Shield, Package, Target, MapPinned, Mail,     
-  Edit2, LogOut, Camera, Save, X 
+  Edit2, LogOut, Camera, Save, X, ArrowLeft, 
+  DollarSign, Clock, Eye, EyeOff, Trash2,
+  RefreshCw,      // ✅ لتحديث الخريطة
+  Compass,        // ✅ للوحة تحكم المرشد
+  Globe,          // ✅ للغة
+  ArrowRight,     // ✅ للتنقل
+  AlertCircle,    // ✅ للتنبيهات
+  ChevronDown,    // ✅ للقوائم المنسدلة
+  ChevronUp,      // ✅ للقوائم المنسدلة
+  Info,           // ✅ للمعلومات
+  Loader2,        // ✅ لمؤشر التحميل
+  PlusCircle      // ✅ للإضافة (بديل لـ Plus)
 } from "lucide-react";
 import api from './services/api';
 import LoginPage from './components/Auth/LoginPage';
@@ -18,6 +30,13 @@ import NotificationsPage from './pages/NotificationsPage';
 import { AuthProvider } from './contexts/AuthContext';
 import UpgradeToGuidePage from './pages/UpgradeToGuidePage';
 import UpgradeStatusPage from './pages/UpgradeStatusPage';
+import SupportUpgradeRequestsPage from './pages/SupportUpgradeRequestsPage';
+import AdminSupportPage from './pages/AdminSupportPage';
+import AdminNotificationsPage from './pages/AdminNotificationsPage';
+import AdminUpgradeRequestsPage from './pages/AdminUpgradeRequestsPage';
+
+
+
 
 // Mapbox token
 mapboxgl.accessToken = "pk.eyJ1IjoibW9vaG1kMTUiLCJhIjoiY21obWJwN3EwMHF1czJvc2lyaWRyem0xciJ9.sl39WFOhm4m-kOOYtGqONw";
@@ -162,18 +181,25 @@ const LOCALES = {
 };
 
 // ===================== 📱 Bottom Navigation Bar =====================
-function BottomNav({ current, setCurrent, lang, user }) {
-  const navItems = user?.type === "guide" ? [
+function BottomNav({ current, setCurrent, lang, user, unreadCount = 0 }) {
+  // ✅ التحقق من أن المستخدم مرشد
+  const isGuideUser = user?.type === "guide" || 
+                      user?.role === 'guide' || 
+                      user?.isGuide === true || 
+                      user?.guide_status === 'approved';
+  
+  // ✅ شريط التنقل حسب نوع المستخدم
+  const navItems = isGuideUser ? [
     { key: "home", icon: Home, label: lang === "ar" ? "الرئيسية" : "Home" },
     { key: "explore", icon: Navigation, label: lang === "ar" ? "استكشف" : "Explore" },
-    { key: "guideDashboard", icon: Users, label: lang === "ar" ? "لوحتي" : "My Dashboard" },
-    { key: "messages", icon: MessageCircle, label: lang === "ar" ? "الرسائل" : "Messages" },
+    { key: "favorites", icon: Heart, label: lang === "ar" ? "المفضلة" : "Favorites" },     // ❤️ المفضلة
+    { key: "guideDashboard", icon: Shield, label: lang === "ar" ? "لوحتي" : "My Dashboard" }, // 🛡️ لوحتي
     { key: "profile", icon: User, label: lang === "ar" ? "صفحتي" : "Profile" },
   ] : [
     { key: "home", icon: Home, label: lang === "ar" ? "الرئيسية" : "Home" },
     { key: "explore", icon: Navigation, label: lang === "ar" ? "استكشف" : "Explore" },
-    { key: "favorites", icon: Heart, label: lang === "ar" ? "المفضلة" : "Favorites" },
-    { key: "guides", icon: Users, label: lang === "ar" ? "المرشدين" : "Guides" },
+    { key: "favorites", icon: Heart, label: lang === "ar" ? "المفضلة" : "Favorites" },     // ❤️ المفضلة
+    { key: "guides", icon: Users, label: lang === "ar" ? "المرشدين" : "Guides" },           // 👥 المرشدين
     { key: "profile", icon: User, label: lang === "ar" ? "صفحتي" : "Profile" },
   ];
 
@@ -209,41 +235,82 @@ function BottomNav({ current, setCurrent, lang, user }) {
     );
   };
 
+  // التحقق من صلاحيات المسؤول والدعم
+  const isAdmin = user?.role === 'admin';
+  const isSupport = user?.role === 'support';
+  const showAdminBar = isAdmin || isSupport;
+
   return (
-    <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 flex justify-around py-3 z-50 shadow-lg dark:bg-gray-800 dark:border-gray-700">
-      {navItems.map((item) => {
-        const Icon = item.icon;
-        return (
+    <div className="fixed bottom-0 left-0 right-0 z-50">
+      {/* ✅ شريط أزرار المسؤول - يظهر للمسؤول والدعم */}
+      {showAdminBar && (
+        <div className="bg-gradient-to-r from-teal-600 to-cyan-600 py-2 px-4 flex justify-center gap-3 shadow-lg">
           <button
-            key={item.key}
-            onClick={() => {
-              if (!user && item.key === 'explore') {
-                alert(lang === 'ar' 
-                  ? 'الرجاء تسجيل الدخول أولاً للوصول للخريطة' 
-                  : 'Please login first to access the map'
-                );
-                return;
-              }
-              setCurrent(item.key);
-            }}
-            className={`flex flex-col items-center justify-center w-16 ${
-              current === item.key 
-                ? "text-green-600 dark:text-green-400" 
-                : "text-gray-500 dark:text-gray-400"
-            }`}
+            onClick={() => setCurrent('adminNotifications')}
+            className="relative flex items-center justify-center w-10 h-10 bg-white/20 rounded-full hover:bg-white/30 transition"
+            title={lang === 'ar' ? 'الإشعارات' : 'Notifications'}
           >
-            {item.key === 'profile' ? getProfileIcon() : <Icon size={24} className="mb-1" />}
-            <span className="text-xs font-medium">{item.label}</span>
-            {current === item.key && (
-              <div className="w-1 h-1 bg-green-600 dark:bg-green-400 rounded-full mt-1"></div>
+            <Bell size={18} className="text-white" />
+            {unreadCount > 0 && (
+              <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                {unreadCount > 9 ? '9+' : unreadCount}
+              </span>
             )}
           </button>
-        );
-      })}
+          
+          <button
+            onClick={() => setCurrent('adminSupport')}
+            className="px-4 py-2 bg-white text-teal-700 rounded-full text-sm font-bold shadow-md hover:bg-gray-100 transition flex items-center gap-2"
+          >
+            📧 {lang === 'ar' ? 'تذاكر الدعم' : 'Support Tickets'}
+          </button>
+          
+          {isAdmin && (
+            <button
+              onClick={() => setCurrent('upgrade-requests')}
+              className="px-4 py-2 bg-white text-teal-700 rounded-full text-sm font-bold shadow-md hover:bg-gray-100 transition flex items-center gap-2"
+            >
+              ⭐ {lang === 'ar' ? 'طلبات الترقية' : 'Upgrade Requests'}
+            </button>
+          )}
+        </div>
+      )}
+      
+      {/* شريط التنقل الأصلي */}
+      <div className="bg-white border-t border-gray-200 flex justify-around py-3 shadow-lg dark:bg-gray-800 dark:border-gray-700">
+        {navItems.map((item) => {
+          const Icon = item.icon;
+          return (
+            <button
+              key={item.key}
+              onClick={() => {
+                if (!user && item.key === 'explore') {
+                  alert(lang === 'ar' 
+                    ? 'الرجاء تسجيل الدخول أولاً للوصول للخريطة' 
+                    : 'Please login first to access the map'
+                  );
+                  return;
+                }
+                setCurrent(item.key);
+              }}
+              className={`flex flex-col items-center justify-center w-16 ${
+                current === item.key 
+                  ? "text-green-600 dark:text-green-400" 
+                  : "text-gray-500 dark:text-gray-400"
+              }`}
+            >
+              {item.key === 'profile' ? getProfileIcon() : <Icon size={24} className="mb-1" />}
+              <span className="text-xs font-medium">{item.label}</span>
+              {current === item.key && (
+                <div className="w-1 h-1 bg-green-600 dark:bg-green-400 rounded-full mt-1"></div>
+              )}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
-
 // ===================== 📍 Home Page (بدون بيانات وهمية) =====================
 function HomePage({ lang, user, setPage, dark, setDark, locationEnabled, setLocationEnabled }) {
   const t = (k) => LOCALES[lang][k] || k;
@@ -385,15 +452,16 @@ function HomePage({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
   );
 }
 
-// ===================== 🗺️ Explore/Map Page (بدون بيانات وهمية) =====================
-function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, user, programs, setPrograms, unreadCount }) {
+// ===================== 🗺️ Explore/Map Page =====================
+function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, user, programs, setPrograms, unreadCount, refreshTrigger }) {
   const t = (k) => LOCALES[lang][k] || k;
   const [selectedProgram, setSelectedProgram] = useState(null);
   const [tripInfo, setTripInfo] = useState(null);
   const [mapInstance, setMapInstance] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
+  const [showMyProgramsOnly, setShowMyProgramsOnly] = useState(false);
 
-  // إذا كان المستخدم غير مسجل، نعرض رسالة بدلاً من الخريطة
+  // إذا كان المستخدم غير مسجل
   if (!user) {
     return (
       <div className="h-full flex items-center justify-center bg-gray-50 dark:bg-gray-900">
@@ -410,16 +478,10 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
               : 'Login or create a new account to access all app features including interactive maps and nearby programs'}
           </p>
           <div className="flex flex-col gap-3">
-            <button
-              onClick={() => setPage('profile')}
-              className="w-full py-3 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl font-medium hover:from-green-700 hover:to-emerald-700 transition transform hover:scale-105 shadow-md"
-            >
+            <button onClick={() => setPage('profile')} className="w-full py-3 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl font-medium hover:from-green-700 hover:to-emerald-700 transition">
               {lang === 'ar' ? 'تسجيل الدخول' : 'Login'}
             </button>
-            <button
-              onClick={() => setPage('home')}
-              className="w-full py-3 border-2 border-green-600 text-green-600 rounded-xl font-medium hover:bg-green-50 dark:border-green-400 dark:text-green-400 dark:hover:bg-green-900/30 transition"
-            >
+            <button onClick={() => setPage('home')} className="w-full py-3 border-2 border-green-600 text-green-600 rounded-xl font-medium hover:bg-green-50 transition">
               {lang === 'ar' ? 'العودة للرئيسية' : 'Back to Home'}
             </button>
           </div>
@@ -428,86 +490,139 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
     );
   }
 
-  // برامج حقيقية من API فقط
+  // برامج من API
   const allPrograms = programs || [];
+  const displayedPrograms = showMyProgramsOnly 
+    ? allPrograms.filter(p => p.guide_id === user?.id)
+    : allPrograms;
+  
+  const isGuide = user?.role === 'guide' || user?.type === 'guide' || user?.isGuide === true;
 
+  // ✅ تهيئة الخريطة - أضف refreshTrigger هنا
   useEffect(() => {
-    if (mapContainerRef.current) {
-      if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-          (position) => {
-            const { latitude, longitude } = position.coords;
-            setUserLocation([longitude, latitude]);
-            
-            const map = new mapboxgl.Map({
-              container: mapContainerRef.current,
-              style: "mapbox://styles/mapbox/streets-v12",
-              center: [longitude, latitude],
-              zoom: 13
-            });
-            
-            setMapInstance(map);
-            
+    if (!mapContainerRef.current) return;
+
+    const initMap = (center, zoom = 13) => {
+      // إذا كان هناك خريطة موجودة، قم بإزالتها أولاً
+      if (mapInstance) {
+        mapInstance.remove();
+      }
+      
+      const map = new mapboxgl.Map({
+        container: mapContainerRef.current,
+        style: "mapbox://styles/mapbox/streets-v12",
+        center: center,
+        zoom: zoom
+      });
+      setMapInstance(map);
+      return map;
+    };
+
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const { latitude, longitude } = position.coords;
+          const userCoords = [longitude, latitude];
+          setUserLocation(userCoords);
+          
+          const map = initMap(userCoords);
+          
+          map.on('load', () => {
             // علامة موقع المستخدم
             new mapboxgl.Marker({ color: "green" })
-              .setLngLat([longitude, latitude])
+              .setLngLat(userCoords)
               .setPopup(new mapboxgl.Popup().setText(lang === "ar" ? "موقعك الحالي" : "Your location"))
               .addTo(map);
 
-            // إضافة علامات البرامج النشطة فقط (من API)
-            allPrograms.filter(p => p.active !== false).forEach((program) => {
-              const marker = new mapboxgl.Marker({ 
-                color: program.guide_name === user?.name ? "purple" : "blue" 
-              })
-                .setLngLat(program.coords)
-                .setPopup(new mapboxgl.Popup().setHTML(
-                  lang === "ar" 
-                    ? `<div style="text-align:right; padding:8px;">
-                        <strong>${program.name_ar}</strong><br/>
-                        <span>المرشد: ${program.guide_name}</span><br/>
-                        <span>السعر: ${program.price} ريال</span><br/>
-                        <span>المدة: ${program.duration}</span><br/>
-                        <span>التقييم: ⭐ ${program.rating}</span>
-                      </div>` 
-                    : `<div style="padding:8px;">
-                        <strong>${program.name_en}</strong><br/>
-                        <span>Guide: ${program.guide_name}</span><br/>
-                        <span>Price: ${program.price} SAR</span><br/>
-                        <span>Duration: ${program.duration}</span><br/>
-                        <span>Rating: ⭐ ${program.rating}</span>
-                      </div>`
-                ))
-                .addTo(map);
-              
-              marker.getElement().addEventListener("click", () => { 
-                setSelectedProgram(program); 
-                setTripInfo(null); 
-              });
+            // إضافة علامات البرامج
+            displayedPrograms.forEach((program) => {
+              if (program.coords && program.coords.length === 2) {
+                const markerColor = program.guide_id === user?.id ? "purple" : "blue";
+                new mapboxgl.Marker({ color: markerColor })
+                  .setLngLat(program.coords)
+                  .setPopup(new mapboxgl.Popup().setHTML(`
+                    <div style="text-align:${lang === "ar" ? "right" : "left"}; padding:8px;">
+                      <strong>${program.name_ar || program.name}</strong><br/>
+                      👤 ${program.guide_name}<br/>
+                      💰 ${program.price} ${lang === "ar" ? "ريال" : "SAR"}<br/>
+                      ⏱️ ${program.duration}<br/>
+                      ⭐ ${program.rating || 4.8}
+                    </div>
+                  `))
+                  .addTo(map);
+              }
             });
-          },
-          () => {
-            // إذا فشل تحديد الموقع، استخدم مركز افتراضي
-            const defaultCenter = [46.713, 24.774];
-            const map = new mapboxgl.Map({
-              container: mapContainerRef.current,
-              style: "mapbox://styles/mapbox/streets-v12",
-              center: defaultCenter,
-              zoom: 12
+          });
+        },
+        (error) => {
+          console.warn('Geolocation error:', error);
+          const defaultCenter = [46.713, 24.774];
+          const map = initMap(defaultCenter, 12);
+          
+          map.on('load', () => {
+            displayedPrograms.forEach((program) => {
+              if (program.coords && program.coords.length === 2) {
+                new mapboxgl.Marker({ color: program.guide_id === user?.id ? "purple" : "blue" })
+                  .setLngLat(program.coords)
+                  .setPopup(new mapboxgl.Popup().setHTML(`
+                    <strong>${program.name_ar || program.name}</strong><br/>
+                    👤 ${program.guide_name}
+                  `))
+                  .addTo(map);
+              }
             });
-            
-            setMapInstance(map);
-          }
-        );
-      }
+          });
+        }
+      );
     }
     
     return () => {
       if (mapInstance) {
         mapInstance.remove();
-        setMapInstance(null);
       }
     };
-  }, [user, programs]);
+  }, [user, displayedPrograms, refreshTrigger]); // ✅ أضف refreshTrigger هنا
+
+  // تحديث الخريطة عند تغيير refreshTrigger
+  useEffect(() => {
+    if (refreshTrigger && mapInstance) {
+      console.log('🔄 Refreshing map due to program addition...');
+      // إعادة تحميل الخريطة
+      if (mapInstance) {
+        mapInstance.remove();
+      }
+      // إعادة تهيئة الخريطة
+      if (userLocation) {
+        const map = new mapboxgl.Map({
+          container: mapContainerRef.current,
+          style: "mapbox://styles/mapbox/streets-v12",
+          center: userLocation,
+          zoom: 13
+        });
+        setMapInstance(map);
+        
+        map.on('load', () => {
+          new mapboxgl.Marker({ color: "green" })
+            .setLngLat(userLocation)
+            .setPopup(new mapboxgl.Popup().setText(lang === "ar" ? "موقعك الحالي" : "Your location"))
+            .addTo(map);
+            
+          displayedPrograms.forEach((program) => {
+            if (program.coords && program.coords.length === 2) {
+              new mapboxgl.Marker({ color: program.guide_id === user?.id ? "purple" : "blue" })
+                .setLngLat(program.coords)
+                .setPopup(new mapboxgl.Popup().setHTML(`
+                  <strong>${program.name_ar || program.name}</strong><br/>
+                  👤 ${program.guide_name}<br/>
+                  💰 ${program.price} SAR
+                `))
+                .addTo(map);
+            }
+          });
+        });
+      }
+    }
+  }, [refreshTrigger]);
 
   const startTrip = async () => {
     if (!mapInstance || !userLocation || !selectedProgram) return;
@@ -539,21 +654,6 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
       return;
     }
     
-    // إضافة طلب برنامج
-    const request = {
-      id: Date.now(),
-      programId: program.id,
-      programName: lang === "ar" ? program.name_ar : program.name_en,
-      guideName: program.guide_name,
-      userId: user.id,
-      userName: user.name,
-      status: 'pending',
-      date: new Date().toISOString(),
-      price: program.price
-    };
-    
-    console.log('Program request:', request);
-    
     alert(lang === 'ar' 
       ? 'تم إرسال طلب المشاركة في البرنامج. سيتم التواصل معك من قبل المرشد.' 
       : 'Program participation request sent. The guide will contact you.'
@@ -562,11 +662,10 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
 
   return (
     <div className="h-full relative">
-      {/* شريط علوي مع اسم المستخدم */}
+      {/* شريط علوي */}
       <div className="bg-gradient-to-r from-green-500 to-emerald-600 p-6 text-white">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center">
-            {/* صورة المستخدم */}
             <div className="w-12 h-12 rounded-full bg-white/20 border-2 border-white/30 flex items-center justify-center ml-3">
               {user?.avatar ? (
                 <img src={user.avatar} alt={user?.name} className="w-full h-full rounded-full object-cover" />
@@ -583,33 +682,15 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
             </div>
           </div>
           
-          {/* الأزرار العلوية */}
           <div className="flex items-center gap-2">
-            {/* زر العودة للصفحة الرئيسية */}
-            <button 
-              onClick={() => setPage('home')}
-              className="p-2 rounded-full bg-white/20 hover:bg-white/30 transition"
-              title={lang === 'ar' ? 'الرئيسية' : 'Home'}
-            >
+            <button onClick={() => setPage('home')} className="p-2 rounded-full bg-white/20 hover:bg-white/30 transition">
               <Home size={20} />
             </button>
-            
-            {/* زر التحديث */}
-            <button 
-              onClick={() => window.location.reload()}
-              className="p-2 rounded-full bg-white/20 hover:bg-white/30 transition"
-              title={lang === 'ar' ? 'تحديث' : 'Refresh'}
-            >
+            <button onClick={() => window.location.reload()} className="p-2 rounded-full bg-white/20 hover:bg-white/30 transition">
               <span className="text-lg">🔄</span>
             </button>
-            
-            {/* زر الإشعارات */}
             {user && (
-              <button 
-                onClick={() => setPage("notifications")}
-                className="relative p-2 rounded-full bg-white/20 hover:bg-white/30 transition"
-                title={lang === 'ar' ? 'الإشعارات' : 'Notifications'}
-              >
+              <button onClick={() => setPage("notifications")} className="relative p-2 rounded-full bg-white/20 hover:bg-white/30 transition">
                 <Bell size={20} />
                 {unreadCount > 0 && (
                   <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full min-w-[18px] h-[18px] flex items-center justify-center border-2 border-white">
@@ -621,21 +702,13 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
           </div>
         </div>
         
-        {/* حقل البحث */}
         <div className="relative">
           <Search className="absolute right-3 top-3.5 text-gray-400" size={20} />
-          <input
-            type="text"
-            placeholder={t('search')}
-            className="w-full p-3 pr-10 rounded-xl bg-white/20 placeholder-white/70 border border-white/30 focus:outline-none focus:border-white text-white"
-          />
+          <input type="text" placeholder={t('search')} className="w-full p-3 pr-10 rounded-xl bg-white/20 placeholder-white/70 border border-white/30 focus:outline-none focus:border-white text-white" />
         </div>
 
-        {/* إظهار عدد البرامج المتاحة */}
         <div className="mt-3 text-xs text-white/80">
-          {lang === 'ar' 
-            ? `📌 ${allPrograms.length} برنامج متاح` 
-            : `📌 ${allPrograms.length} programs available`}
+          {lang === 'ar' ? `📌 ${displayedPrograms.length} برنامج متاح` : `📌 ${displayedPrograms.length} programs available`}
         </div>
       </div>
 
@@ -665,12 +738,7 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
                   <span className="text-sm text-gray-500">{selectedProgram.duration}</span>
                 </div>
               </div>
-              <button 
-                onClick={() => setSelectedProgram(null)}
-                className="text-gray-500 hover:text-gray-700 dark:text-gray-400"
-              >
-                ✕
-              </button>
+              <button onClick={() => setSelectedProgram(null)} className="text-gray-500 hover:text-gray-700 dark:text-gray-400">✕</button>
             </div>
             
             {tripInfo && (
@@ -681,28 +749,18 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
             
             <div className="flex items-center justify-between mt-3">
               <div className="flex items-center gap-3">
-                <select 
-                  value={transport} 
-                  onChange={(e) => setTransport(e.target.value)} 
-                  className="border rounded-md px-2 py-1 text-sm dark:bg-gray-700 dark:text-white"
-                >
+                <select value={transport} onChange={(e) => setTransport(e.target.value)} className="border rounded-md px-2 py-1 text-sm dark:bg-gray-700 dark:text-white">
                   <option value="driving">{t('driving')}</option>
                   <option value="walking">{t('walking')}</option>
                   <option value="cycling">{t('cycling')}</option>
                 </select>
-                <button 
-                  onClick={startTrip}
-                  className="px-3 py-1 bg-green-600 text-white rounded-md text-sm hover:bg-green-700 transition"
-                >
+                <button onClick={startTrip} className="px-3 py-1 bg-green-600 text-white rounded-md text-sm hover:bg-green-700 transition">
                   {t('startTrip')}
                 </button>
               </div>
               
               {user?.type !== 'guide' && (
-                <button 
-                  onClick={() => requestProgram(selectedProgram)}
-                  className="px-3 py-1 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700 transition"
-                >
+                <button onClick={() => requestProgram(selectedProgram)} className="px-3 py-1 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700 transition">
                   {lang === "ar" ? "طلب المشاركة" : "Request to Join"}
                 </button>
               )}
@@ -713,29 +771,85 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
     </div>
   );
 }
-// ===================== 💬 نظام المراسلة الداخلية =====================
-function ChatSystem({ user, lang, setPage }) {
-  const [messages, setMessages] = useState([
-    { id: 1, sender: "guide", text: "مرحباً، كيف يمكنني مساعدتك؟", time: "10:30", senderName: "محمد العتيبي" },
-    { id: 2, sender: "user", text: "أريد معرفة تفاصيل جولة المنتزه", time: "10:32", senderName: "أحمد" },
-    { id: 3, sender: "guide", text: "بالتأكيد، الجولة تبدأ الساعة 4 عصراً", time: "10:33", senderName: "محمد العتيبي" },
-  ]);
-  const [newMessage, setNewMessage] = useState("");
 
-  const sendMessage = () => {
+// ===================== 💬 نظام المراسلة الداخلية (مع API) =====================
+function ChatSystem({ user, lang, setPage }) {
+  const [messages, setMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [conversationId, setConversationId] = useState(null);
+
+  // جلب المحادثات من API
+  useEffect(() => {
+    fetchConversations();
+  }, []);
+
+  const fetchConversations = async () => {
+    try {
+      const response = await api.getUserConversations();
+      if (response.success && response.conversations.length > 0) {
+        const conversation = response.conversations[0];
+        setConversationId(conversation.id);
+        fetchMessages(conversation.id);
+      }
+    } catch (error) {
+      console.error('Error fetching conversations:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchMessages = async (convId) => {
+    try {
+      const response = await api.getConversationMessages(convId);
+      if (response.success) {
+        setMessages(response.messages);
+      }
+    } catch (error) {
+      console.error('Error fetching messages:', error);
+    }
+  };
+
+  const sendMessage = async () => {
     if (!newMessage.trim()) return;
     
-    const newMsg = {
-      id: messages.length + 1,
-      sender: user?.type === "guide" ? "guide" : "user",
-      text: newMessage,
-      time: new Date().toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" }),
-      senderName: user?.name || "مستخدم"
-    };
-    
-    setMessages([...messages, newMsg]);
+    const messageText = newMessage;
     setNewMessage("");
+    
+    // إضافة الرسالة محلياً فوراً
+    const tempMessage = {
+      id: Date.now(),
+      sender: user?.type === "guide" ? "guide" : "user",
+      text: messageText,
+      time: new Date().toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" }),
+      senderName: user?.name || "مستخدم",
+      status: "sending"
+    };
+    setMessages(prev => [...prev, tempMessage]);
+
+    try {
+      const response = await api.sendTextMessage(conversationId, messageText);
+      if (response.success) {
+        // تحديث الرسالة بحالة مرسلة
+        setMessages(prev => prev.map(msg => 
+          msg.id === tempMessage.id ? { ...msg, status: "sent" } : msg
+        ));
+      }
+    } catch (error) {
+      console.error('Error sending message:', error);
+      setMessages(prev => prev.map(msg => 
+        msg.id === tempMessage.id ? { ...msg, status: "failed" } : msg
+      ));
+    }
   };
+
+  if (loading) {
+    return (
+      <div className="h-full flex items-center justify-center bg-gray-50 dark:bg-gray-900">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-full flex flex-col bg-gray-50 dark:bg-gray-900">
@@ -751,28 +865,37 @@ function ChatSystem({ user, lang, setPage }) {
 
       <div className="flex-1 flex flex-col overflow-hidden">
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}
-            >
+          {messages.length === 0 ? (
+            <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+              {lang === "ar" ? "لا توجد رسائل بعد" : "No messages yet"}
+            </div>
+          ) : (
+            messages.map((msg) => (
               <div
-                className={`max-w-xs rounded-lg p-3 ${
-                  msg.sender === "user"
-                    ? "bg-green-500 text-white rounded-br-none"
-                    : "bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 rounded-bl-none shadow-sm"
-                }`}
+                key={msg.id}
+                className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}
               >
-                {msg.sender !== "user" && (
-                  <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">{msg.senderName}</div>
-                )}
-                <div>{msg.text}</div>
-                <div className={`text-xs mt-1 ${msg.sender === "user" ? "text-green-100" : "text-gray-500 dark:text-gray-400"}`}>
-                  {msg.time}
+                <div
+                  className={`max-w-xs rounded-lg p-3 ${
+                    msg.sender === "user"
+                      ? "bg-green-500 text-white rounded-br-none"
+                      : "bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 rounded-bl-none shadow-sm"
+                  }`}
+                >
+                  {msg.sender !== "user" && (
+                    <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">{msg.senderName}</div>
+                  )}
+                  <div>{msg.text}</div>
+                  <div className={`text-xs mt-1 flex items-center gap-1 ${msg.sender === "user" ? "text-green-100" : "text-gray-500 dark:text-gray-400"}`}>
+                    <span>{msg.time}</span>
+                    {msg.status === "sending" && <span className="animate-pulse">⏳</span>}
+                    {msg.status === "sent" && <span>✓</span>}
+                    {msg.status === "failed" && <span className="text-red-400">✗</span>}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            ))
+          )}
         </div>
 
         <div className="bg-white dark:bg-gray-800 p-4 border-t dark:border-gray-700">
@@ -787,7 +910,8 @@ function ChatSystem({ user, lang, setPage }) {
             />
             <button
               onClick={sendMessage}
-              className="px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition flex items-center justify-center"
+              disabled={!newMessage.trim()}
+              className="px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition disabled:opacity-50 flex items-center justify-center"
             >
               <Send size={20} />
             </button>
@@ -989,19 +1113,99 @@ function GuideRegistrationPage({ lang, onBack, onSubmit }) {
   );
 }
 
-// ===================== 🗺️ لوحة تحكم المرشد =====================
-function GuideDashboard({ lang, guide, setPage, user, setUserPrograms }) {
-  const [programs, setPrograms] = useState([
-    { id: 1, name: "جولة تاريخية في الدرعية", status: "active", participants: 15, revenue: 4500, location: [46.713, 24.774], price: 150, duration: "3 ساعات", maxParticipants: 20 },
-    { id: 2, name: "مغامرة الصحراء", status: "inactive", participants: 0, revenue: 0, location: [46.720, 24.770], price: 250, duration: "5 ساعات", maxParticipants: 15 },
-  ]);
+// ===================== 🗺️ Guide Dashboard =====================
+function GuideDashboard({ lang, guide, setPage, user, setUserPrograms, onProgramAdded }) {
+  console.log('🎯 GuideDashboard STARTED');
+  console.log('user:', user);
+  console.log('guide:', guide);
   
-  const [requests, setRequests] = useState([
-    { id: 1, userName: "أحمد محمد", programName: "جولة تاريخية في الدرعية", status: "pending", date: "2024-03-15" },
-    { id: 2, userName: "سارة عبدالله", programName: "مغامرة الصحراء", status: "approved", date: "2024-03-14" },
-  ]);
+  // ✅ التحقق من أن المستخدم مرشد - دعم عدة صيغ
+  const isGuideUser = 
+    user?.role === 'guide' || 
+    user?.type === 'guide' || 
+    user?.isGuide === true || 
+    user?.guide_status === 'approved' ||
+    user?.userType === 'guide' ||
+    user?.accountType === 'guide' ||
+    (guide && guide.id) || // إذا كان هناك guide object
+    (user?.id && user?.id === guide?.id); // إذا كان user هو نفس guide
   
+  console.log('✅ isGuideUser:', isGuideUser);
+  
+  if (!isGuideUser) {
+    console.log('❌ User is not a guide');
+    return (
+      <div className="h-full flex items-center justify-center bg-gray-50 dark:bg-gray-900">
+        <div className="text-center p-8 max-w-md">
+          <div className="w-24 h-24 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center mx-auto mb-6">
+            <Shield className="w-12 h-12 text-red-600 dark:text-red-400" />
+          </div>
+          <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-4">
+            {lang === 'ar' ? 'غير مصرح بالوصول' : 'Access Denied'}
+          </h2>
+          <p className="text-gray-600 dark:text-gray-400 mb-6">
+            {lang === 'ar' 
+              ? 'هذه الصفحة مخصصة للمرشدين السياحيين فقط.'
+              : 'This page is only available for tour guides.'}
+          </p>
+          <button 
+            onClick={() => setPage('profile')} 
+            className="px-6 py-3 bg-green-600 text-white rounded-xl font-bold hover:bg-green-700 transition"
+          >
+            {lang === 'ar' ? 'العودة للملف الشخصي' : 'Back to Profile'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ✅ الحصول على معرف المرشد من مصادر مختلفة
+  const getGuideId = () => {
+    return user?.id || guide?.id || user?.userId || guide?.userId || user?._id || guide?._id;
+  };
+
+  const guideId = getGuideId();
+  console.log('📌 Guide ID:', guideId);
+
+  // ✅ الحصول على اسم المرشد
+  const getGuideName = () => {
+    return user?.fullName || user?.name || guide?.fullName || guide?.name || user?.username || "مرشد سياحي";
+  };
+
+  const guideName = getGuideName();
+  console.log('📌 Guide Name:', guideName);
+
+  // ✅ Load programs from localStorage
+  const [programs, setPrograms] = useState(() => {
+    const saved = localStorage.getItem(`guide_programs_${guideId}`);
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch(e) {
+        console.error('Error parsing saved programs:', e);
+        return [];
+      }
+    }
+    return [];
+  });
+  
+  const [requests, setRequests] = useState(() => {
+    const saved = localStorage.getItem(`guide_requests_${guideId}`);
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch(e) {
+        console.error('Error parsing saved requests:', e);
+        return [];
+      }
+    }
+    return [];
+  });
+  
+  const [loading, setLoading] = useState(false);
   const [showAddProgram, setShowAddProgram] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingProgram, setEditingProgram] = useState(null);
   const [newProgram, setNewProgram] = useState({
     name: "",
     description: "",
@@ -1009,8 +1213,231 @@ function GuideDashboard({ lang, guide, setPage, user, setUserPrograms }) {
     price: "",
     duration: "",
     maxParticipants: "",
+    location_lat: "",
+    location_lng: ""
   });
 
+  // ✅ Save programs to localStorage when changed
+  useEffect(() => {
+    if (programs.length > 0 && guideId) {
+      localStorage.setItem(`guide_programs_${guideId}`, JSON.stringify(programs));
+    } else if (guideId) {
+      localStorage.removeItem(`guide_programs_${guideId}`);
+    }
+  }, [programs, guideId]);
+  
+  useEffect(() => {
+    if (requests.length > 0 && guideId) {
+      localStorage.setItem(`guide_requests_${guideId}`, JSON.stringify(requests));
+    } else if (guideId) {
+      localStorage.removeItem(`guide_requests_${guideId}`);
+    }
+  }, [requests, guideId]);
+
+  // ✅ Calculate statistics
+  const activeProgs = programs.filter(p => p.status === 'active');
+  const totalParticipants = activeProgs.reduce((sum, p) => sum + (p.participants || 0), 0);
+  const totalRevenue = activeProgs.reduce((sum, p) => sum + (p.participants || 0) * (p.price || 0), 0);
+  const pendingRequests = requests.filter(r => r.status === 'pending').length;
+
+  // ✅ Get coordinates from location using Mapbox Geocoding
+  const getCoordinatesFromLocation = async (locationName) => {
+    if (!locationName) return null;
+    
+    try {
+      const response = await fetch(
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(locationName)}.json?access_token=pk.eyJ1IjoibW9vaG1kMTUiLCJhIjoiY21obWJwN3EwMHF1czJvc2lyaWRyem0xciJ9.sl39WFOhm4m-kOOYtGqONw&limit=1`
+      );
+      const data = await response.json();
+      if (data.features && data.features.length > 0) {
+        const [lng, lat] = data.features[0].center;
+        return { lat, lng, coords: [lng, lat], place_name: data.features[0].place_name };
+      }
+    } catch (error) {
+      console.error('Geocoding error:', error);
+    }
+    return null;
+  };
+
+  // ✅ Add new program
+  const handleAddProgram = async () => {
+    if (!newProgram.name.trim()) {
+      alert(lang === 'ar' ? '⚠️ الرجاء إدخال اسم البرنامج' : '⚠️ Please enter program name');
+      return;
+    }
+    
+    if (!newProgram.location.trim()) {
+      alert(lang === 'ar' ? '⚠️ الرجاء إدخال موقع البرنامج' : '⚠️ Please enter program location');
+      return;
+    }
+    
+    setLoading(true);
+    
+    try {
+      // Get coordinates from location
+      let coordinates = null;
+      let locationData = null;
+      
+      if (newProgram.location) {
+        locationData = await getCoordinatesFromLocation(newProgram.location);
+        if (locationData) {
+          coordinates = locationData.coords;
+        }
+      }
+      
+      const program = {
+        id: Date.now(),
+        name: newProgram.name,
+        description: newProgram.description || "",
+        status: "active",
+        participants: 0,
+        revenue: 0,
+        location: coordinates || null,
+        location_lat: locationData?.lat || null,
+        location_lng: locationData?.lng || null,
+        price: parseFloat(newProgram.price) || 0,
+        duration: newProgram.duration || "غير محدد",
+        maxParticipants: parseInt(newProgram.maxParticipants) || 20,
+        location_name: newProgram.location,
+        guide_name: guideName,
+        guide_id: guideId,
+        created_at: new Date().toISOString()
+      };
+      
+      const updatedPrograms = [...programs, program];
+      setPrograms(updatedPrograms);
+      
+      // Reset form
+      setNewProgram({
+        name: "", description: "", location: "", price: "", duration: "", maxParticipants: "", location_lat: "", location_lng: ""
+      });
+      setShowAddProgram(false);
+      
+      // ✅ Update user programs for map
+      if (setUserPrograms) {
+        const allPrograms = [...(setUserPrograms._currentValue || []), ...updatedPrograms.filter(p => p.status === 'active').map(p => ({
+          id: p.id,
+          name_ar: p.name,
+          name_en: p.name,
+          guide_name: p.guide_name,
+          coords: p.location,
+          price: p.price,
+          duration: p.duration,
+          rating: null,
+          distance: null,
+          active: true,
+          location_name: p.location_name,
+          description: p.description,
+          maxParticipants: p.maxParticipants,
+          currentParticipants: p.participants
+        }))];
+        setUserPrograms(allPrograms);
+      }
+      
+      if (onProgramAdded) onProgramAdded();
+      alert(lang === 'ar' ? '✅ تم إضافة البرنامج بنجاح وسيظهر على الخريطة' : '✅ Program added successfully and will appear on the map');
+      
+    } catch (error) {
+      console.error('Error adding program:', error);
+      alert(lang === 'ar' ? '❌ حدث خطأ في إضافة البرنامج' : '❌ Error adding program');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ✅ Open edit modal
+  const openEditModal = (program) => {
+    setEditingProgram(program);
+    setNewProgram({
+      name: program.name || "",
+      description: program.description || "",
+      location: program.location_name || program.location || "",
+      price: program.price || "",
+      duration: program.duration || "",
+      maxParticipants: program.maxParticipants || "",
+      location_lat: program.location_lat || "",
+      location_lng: program.location_lng || ""
+    });
+    setShowEditModal(true);
+  };
+
+  // ✅ Update program
+  const handleUpdateProgram = async () => {
+    if (!editingProgram) {
+      alert(lang === 'ar' ? 'لا يوجد برنامج للتعديل' : 'No program to edit');
+      return;
+    }
+    
+    setLoading(true);
+    
+    try {
+      // Get coordinates from new location if changed
+      let coordinates = editingProgram.location;
+      let locationData = null;
+      
+      if (newProgram.location !== editingProgram.location_name) {
+        locationData = await getCoordinatesFromLocation(newProgram.location);
+        if (locationData) {
+          coordinates = locationData.coords;
+        }
+      }
+      
+      const updatedPrograms = programs.map(p => 
+        p.id === editingProgram.id 
+          ? { 
+              ...p, 
+              name: newProgram.name,
+              description: newProgram.description,
+              price: parseFloat(newProgram.price) || 0,
+              duration: newProgram.duration || "غير محدد",
+              maxParticipants: parseInt(newProgram.maxParticipants) || 20,
+              location_name: newProgram.location,
+              location: coordinates,
+              location_lat: locationData?.lat || p.location_lat,
+              location_lng: locationData?.lng || p.location_lng
+            }
+          : p
+      );
+      
+      setPrograms(updatedPrograms);
+      setShowEditModal(false);
+      setEditingProgram(null);
+      setNewProgram({
+        name: "", description: "", location: "", price: "", duration: "", maxParticipants: "", location_lat: "", location_lng: ""
+      });
+      
+      // ✅ Update user programs for map
+      if (setUserPrograms) {
+        setUserPrograms(updatedPrograms.filter(p => p.status === 'active').map(p => ({
+          id: p.id,
+          name_ar: p.name,
+          name_en: p.name,
+          guide_name: p.guide_name,
+          coords: p.location,
+          price: p.price,
+          duration: p.duration,
+          rating: null,
+          distance: null,
+          active: true,
+          location_name: p.location_name,
+          description: p.description,
+          maxParticipants: p.maxParticipants,
+          currentParticipants: p.participants
+        })));
+      }
+      
+      if (onProgramAdded) onProgramAdded();
+      alert(lang === 'ar' ? '✅ تم تحديث البرنامج بنجاح' : '✅ Program updated successfully');
+      
+    } catch (error) {
+      console.error('Error updating program:', error);
+      alert(lang === 'ar' ? '❌ حدث خطأ في تحديث البرنامج' : '❌ Error updating program');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ✅ Toggle program status
   const toggleProgramStatus = (id) => {
     const updatedPrograms = programs.map(program => 
       program.id === id 
@@ -1019,292 +1446,611 @@ function GuideDashboard({ lang, guide, setPage, user, setUserPrograms }) {
     );
     setPrograms(updatedPrograms);
     
+    // ✅ Update user programs for map
     if (setUserPrograms) {
-      setUserPrograms(updatedPrograms.filter(p => p.status === "active").map(p => ({
+      setUserPrograms(updatedPrograms.filter(p => p.status === 'active').map(p => ({
         id: p.id,
         name_ar: p.name,
         name_en: p.name,
-        guide_name: user?.name || guide?.name || "مرشد",
+        guide_name: p.guide_name,
         coords: p.location,
         price: p.price,
         duration: p.duration,
-        rating: 4.8,
-        distance: 2.5,
-        active: p.status === "active"
+        rating: null,
+        distance: null,
+        active: true,
+        location_name: p.location_name
       })));
     }
+    
+    if (onProgramAdded) onProgramAdded();
+    const message = updatedPrograms.find(p => p.id === id)?.status === 'active' 
+      ? (lang === 'ar' ? '✅ تم تفعيل البرنامج وسيظهر للجميع' : '✅ Program activated and will appear to everyone')
+      : (lang === 'ar' ? '⏸ تم إيقاف البرنامج ولن يظهر للجميع' : '⏸ Program deactivated and will not appear');
+    alert(message);
   };
 
-  const handleAddProgram = () => {
-    if (!newProgram.name.trim()) return;
+  // ✅ Delete program
+  const handleDeleteProgram = (id) => {
+    if (!confirm(lang === 'ar' ? '⚠️ هل أنت متأكد من حذف هذا البرنامج؟ لا يمكن التراجع عن هذا الإجراء.' : '⚠️ Are you sure you want to delete this program? This action cannot be undone.')) {
+      return;
+    }
     
-    const program = {
-      id: programs.length + 1,
-      ...newProgram,
-      status: "active",
-      participants: 0,
-      revenue: 0,
-      location: [46.713 + (Math.random() * 0.02), 24.774 + (Math.random() * 0.02)]
-    };
-    
-    const updatedPrograms = [...programs, program];
+    const updatedPrograms = programs.filter(p => p.id !== id);
     setPrograms(updatedPrograms);
-    setNewProgram({
-      name: "",
-      description: "",
-      location: "",
-      price: "",
-      duration: "",
-      maxParticipants: "",
-    });
-    setShowAddProgram(false);
     
+    // ✅ Update user programs for map
     if (setUserPrograms) {
-      setUserPrograms(updatedPrograms.filter(p => p.status === "active").map(p => ({
+      setUserPrograms(updatedPrograms.filter(p => p.status === 'active').map(p => ({
         id: p.id,
         name_ar: p.name,
         name_en: p.name,
-        guide_name: user?.name || guide?.name || "مرشد",
+        guide_name: p.guide_name,
         coords: p.location,
         price: p.price,
         duration: p.duration,
-        rating: 4.8,
-        distance: 2.5,
-        active: p.status === "active"
+        rating: null,
+        distance: null,
+        active: true,
+        location_name: p.location_name
       })));
+    }
+    
+    if (onProgramAdded) onProgramAdded();
+    alert(lang === 'ar' ? '✅ تم حذف البرنامج بنجاح' : '✅ Program deleted successfully');
+  };
+
+  // ✅ Update request status
+  const updateRequestStatus = (requestId, newStatus) => {
+    const updatedRequests = requests.map(req => 
+      req.id === requestId ? { ...req, status: newStatus } : req
+    );
+    setRequests(updatedRequests);
+    
+    if (newStatus === 'approved') {
+      // If approved, update program participants
+      const request = requests.find(r => r.id === requestId);
+      if (request) {
+        const updatedPrograms = programs.map(p => 
+          p.name === request.programName 
+            ? { ...p, participants: (p.participants || 0) + 1 }
+            : p
+        );
+        setPrograms(updatedPrograms);
+      }
     }
   };
 
-  const updateRequestStatus = (requestId, newStatus) => {
-    setRequests(requests.map(req => 
-      req.id === requestId ? { ...req, status: newStatus } : req
-    ));
-  };
+  // Add demo request for testing (remove in production)
+  useEffect(() => {
+    if (requests.length === 0 && guideId && programs.length > 0) {
+      const demoRequest = {
+        id: Date.now(),
+        userName: "أحمد محمد",
+        programName: programs[0]?.name || "برنامج سياحي",
+        status: "pending",
+        date: new Date().toLocaleDateString('ar-EG'),
+        created_at: new Date().toISOString()
+      };
+      setRequests([demoRequest]);
+    }
+  }, [guideId, programs.length]);
 
   return (
     <div className="h-full overflow-y-auto bg-gray-50 dark:bg-gray-900 p-4 pb-20">
-      <div className="bg-gradient-to-r from-blue-500 to-indigo-600 rounded-xl p-6 text-white mb-6">
+      {/* Back button */}
+      <div className="mb-4">
+        <button onClick={() => setPage('home')} className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-green-600 transition">
+          <ArrowLeft size={20} />
+          <span>{lang === 'ar' ? 'العودة للرئيسية' : 'Back to Home'}</span>
+        </button>
+      </div>
+
+      {/* Header */}
+      <div className="bg-gradient-to-r from-green-500 to-emerald-600 rounded-2xl p-6 text-white mb-6 shadow-lg">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold">لوحة تحكم المرشد</h1>
-            <p className="opacity-90">{guide?.name || "مرشد سياحي"}</p>
+            <h1 className="text-2xl font-bold">{lang === "ar" ? "لوحة تحكم المرشد" : "Guide Dashboard"}</h1>
+            <p className="opacity-90 mt-1">{guideName}</p>
             <div className="flex items-center mt-2">
               <CheckCircle className="w-5 h-5 ml-1" />
-              <span className="text-sm">حساب موثق</span>
+              <span className="text-sm">{lang === "ar" ? "حساب مرشد معتمد" : "Verified Guide Account"}</span>
             </div>
           </div>
           <div className="text-right">
-            <div className="text-3xl font-bold">{programs.filter(p => p.status === "active").length}</div>
-            <div className="text-sm opacity-90">برنامج نشط</div>
+            <div className="text-3xl font-bold">{activeProgs.length}</div>
+            <div className="text-sm opacity-90">{lang === "ar" ? "برنامج نشط" : "Active Programs"}</div>
           </div>
         </div>
       </div>
 
+      {/* Statistics */}
       <div className="grid grid-cols-3 gap-4 mb-6">
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm">
-          <div className="text-2xl font-bold text-gray-800 dark:text-white">
-            {programs.reduce((sum, p) => sum + p.participants, 0)}
-          </div>
-          <div className="text-sm text-gray-600 dark:text-gray-300">مشاركين</div>
+        <div className="bg-white dark:bg-gray-800 rounded-2xl p-4 shadow-sm hover:shadow-md transition">
+          <Users className="w-6 h-6 text-blue-600 mb-2" />
+          <div className="text-2xl font-bold text-gray-800 dark:text-white">{totalParticipants}</div>
+          <div className="text-sm text-gray-600 dark:text-gray-300">{lang === "ar" ? "مشاركين" : "Participants"}</div>
         </div>
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm">
-          <div className="text-2xl font-bold text-gray-800 dark:text-white">
-            {programs.reduce((sum, p) => sum + p.revenue, 0)} ريال
-          </div>
-          <div className="text-sm text-gray-600 dark:text-gray-300">إجمالي الإيرادات</div>
+        <div className="bg-white dark:bg-gray-800 rounded-2xl p-4 shadow-sm hover:shadow-md transition">
+          <DollarSign className="w-6 h-6 text-green-600 mb-2" />
+          <div className="text-2xl font-bold text-gray-800 dark:text-white">{totalRevenue} ريال</div>
+          <div className="text-sm text-gray-600 dark:text-gray-300">{lang === "ar" ? "إجمالي الإيرادات" : "Total Revenue"}</div>
         </div>
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm">
-          <div className="text-2xl font-bold text-gray-800 dark:text-white">
-            {requests.filter(r => r.status === "pending").length}
-          </div>
-          <div className="text-sm text-gray-600 dark:text-gray-300">طلبات جديدة</div>
+        <div className="bg-white dark:bg-gray-800 rounded-2xl p-4 shadow-sm hover:shadow-md transition">
+          <Clock className="w-6 h-6 text-yellow-600 mb-2" />
+          <div className="text-2xl font-bold text-gray-800 dark:text-white">{pendingRequests}</div>
+          <div className="text-sm text-gray-600 dark:text-gray-300">{lang === "ar" ? "طلبات جديدة" : "New Requests"}</div>
         </div>
       </div>
 
+      {/* Participation Requests */}
       <div className="mb-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-bold text-gray-800 dark:text-white">طلبات المشاركة</h2>
-          <span className="px-2 py-1 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-400 rounded text-sm">
-            {requests.filter(r => r.status === "pending").length} قيد الانتظار
-          </span>
+          <h2 className="text-xl font-bold text-gray-800 dark:text-white">{lang === "ar" ? "طلبات المشاركة" : "Participation Requests"}</h2>
+          {pendingRequests > 0 && (
+            <span className="px-2 py-1 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-400 rounded-lg text-sm font-medium">{pendingRequests} {lang === "ar" ? "قيد الانتظار" : "Pending"}</span>
+          )}
         </div>
         
-        <div className="space-y-3">
-          {requests.map((request) => (
-            <div key={request.id} className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-medium text-gray-800 dark:text-white">{request.userName}</h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-300">{request.programName}</p>
-                  <p className="text-xs text-gray-500">{request.date}</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className={`px-2 py-1 rounded text-xs ${
-                    request.status === "pending" ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400" :
-                    request.status === "approved" ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400" :
-                    "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-400"
-                  }`}>
-                    {request.status === "pending" ? "بانتظار الموافقة" :
-                     request.status === "approved" ? "موافق عليه" : "مكتمل"}
-                  </span>
-                  
-                  {request.status === "pending" && (
-                    <div className="flex gap-1">
-                      <button
-                        onClick={() => updateRequestStatus(request.id, "approved")}
-                        className="px-2 py-1 bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 rounded text-xs hover:bg-green-200 dark:hover:bg-green-900/50 transition"
-                      >
-                        موافقة
-                      </button>
-                      <button
-                        onClick={() => updateRequestStatus(request.id, "rejected")}
-                        className="px-2 py-1 bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 rounded text-xs hover:bg-red-200 dark:hover:bg-red-900/50 transition"
-                      >
-                        رفض
-                      </button>
-                    </div>
-                  )}
+        {requests.length === 0 ? (
+          <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 text-center shadow-sm">
+            <p className="text-gray-500 dark:text-gray-400">{lang === "ar" ? "📭 لا توجد طلبات مشاركة حالياً" : "📭 No participation requests yet"}</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {requests.map((request) => (
+              <div key={request.id} className="bg-white dark:bg-gray-800 rounded-2xl p-4 shadow-sm hover:shadow-md transition">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-medium text-gray-800 dark:text-white">{request.userName}</h3>
+                    <p className="text-sm text-gray-600 dark:text-gray-300">{request.programName}</p>
+                    <p className="text-xs text-gray-500">{request.date}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`px-2 py-1 rounded-lg text-xs font-medium ${
+                      request.status === "pending" ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400" :
+                      request.status === "approved" ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400" : 
+                      "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-400"
+                    }`}>
+                      {request.status === "pending" ? (lang === "ar" ? "بانتظار الموافقة" : "Pending") : 
+                       request.status === "approved" ? (lang === "ar" ? "موافق عليه" : "Approved") : 
+                       (lang === "ar" ? "مكتمل" : "Completed")}
+                    </span>
+                    
+                    {request.status === "pending" && (
+                      <div className="flex gap-1">
+                        <button onClick={() => updateRequestStatus(request.id, "approved")} className="px-2 py-1 bg-green-100 text-green-700 rounded-lg text-xs hover:bg-green-200 transition font-medium">موافقة</button>
+                        <button onClick={() => updateRequestStatus(request.id, "rejected")} className="px-2 py-1 bg-red-100 text-red-700 rounded-lg text-xs hover:bg-red-200 transition font-medium">رفض</button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      <div className="mb-6">
+      {/* Guide Programs */}
+      <div>
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-bold text-gray-800 dark:text-white">برامجي السياحية</h2>
-          <button
-            onClick={() => setShowAddProgram(true)}
-            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition flex items-center"
-          >
-            <Plus className="w-4 h-4 ml-1" />
-            {lang === "ar" ? "إضافة برنامج" : "Add Program"}
+          <div>
+            <h2 className="text-xl font-bold text-gray-800 dark:text-white">{lang === "ar" ? "برامجي السياحية" : "My Programs"}</h2>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+              {lang === "ar" 
+                ? "📍 البرامج النشطة تظهر تلقائياً على الخريطة الرئيسية" 
+                : "📍 Active programs appear automatically on the main map"}
+            </p>
+          </div>
+          <button onClick={() => setShowAddProgram(true)} className="px-5 py-2.5 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-xl hover:from-green-600 hover:to-emerald-700 transition flex items-center gap-2 shadow-md hover:shadow-lg">
+            <Plus className="w-4 h-4" />
+            <span className="font-medium">{lang === "ar" ? "إضافة برنامج جديد" : "Add New Program"}</span>
           </button>
         </div>
 
-        <div className="space-y-4">
-          {programs.map((program) => (
-            <div key={program.id} className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm">
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center mb-2">
-                    <h3 className="font-bold text-lg text-gray-800 dark:text-white ml-2">{program.name}</h3>
-                    <span className={`px-2 py-1 rounded text-xs ${
-                      program.status === "active" 
-                        ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400" 
-                        : "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-400"
-                    }`}>
-                      {program.status === "active" ? "نشط" : "متوقف"}
-                    </span>
-                  </div>
-                  
-                  <div className="grid grid-cols-3 gap-3 mb-3">
-                    <div className="text-sm">
-                      <div className="text-gray-500">السعر</div>
-                      <div className="font-medium">{program.price} ريال</div>
-                    </div>
-                    <div className="text-sm">
-                      <div className="text-gray-500">المدة</div>
-                      <div className="font-medium">{program.duration}</div>
-                    </div>
-                    <div className="text-sm">
-                      <div className="text-gray-500">المشاركين</div>
-                      <div className="font-medium">{program.participants}/{program.maxParticipants}</div>
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="flex flex-col gap-2 mr-4">
-                  <button
-                    onClick={() => toggleProgramStatus(program.id)}
-                    className={`px-3 py-1 rounded text-sm ${
-                      program.status === "active"
-                        ? "bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50"
-                        : "bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400 dark:hover:bg-green-900/50"
-                    } transition`}
-                  >
-                    {program.status === "active" ? "إيقاف" : "تفعيل"}
-                  </button>
-                  <button
-                    onClick={() => setPage("messages")}
-                    className="px-3 py-1 bg-blue-100 text-blue-700 rounded text-sm hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50 transition"
-                  >
-                    الرسائل
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {showAddProgram && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="w-full max-w-lg bg-white dark:bg-gray-800 rounded-xl p-6 mx-4">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold dark:text-white">{lang === "ar" ? "إضافة برنامج جديد" : "Add New Program"}</h3>
-              <button onClick={() => setShowAddProgram(false)} className="text-gray-500 hover:text-gray-700 dark:text-gray-400">
-                <XCircle size={20} />
+        {programs.length === 0 ? (
+          <div className="bg-white dark:bg-gray-800 rounded-2xl p-12 text-center shadow-sm border-2 border-dashed border-gray-200 dark:border-gray-700">
+            <Package className="w-16 h-16 mx-auto text-gray-400 mb-4" />
+            <p className="text-gray-500 dark:text-gray-400 mb-3 text-lg">{lang === "ar" ? "لا توجد برامج سياحية بعد" : "No tour programs yet"}</p>
+            <p className="text-sm text-gray-400 dark:text-gray-500 mb-6">
+              {lang === "ar" 
+                ? "أضف برنامجك الأول وسيظهر على الخريطة لجميع المستخدمين" 
+                : "Add your first program and it will appear on the map for all users"}
+            </p>
+            <button onClick={() => setShowAddProgram(true)} className="px-6 py-3 bg-green-600 text-white rounded-xl hover:bg-green-700 transition flex items-center gap-2 mx-auto shadow-md">
+              <Plus className="w-5 h-5" />
+              <span className="font-medium">{lang === "ar" ? "➕ أضف برنامجك الأول" : "➕ Add Your First Program"}</span>
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="mb-4 flex justify-between items-center">
+              <span className="text-sm text-gray-500 dark:text-gray-400">
+                {lang === "ar" ? `📊 لديك ${programs.length} برنامج` : `📊 You have ${programs.length} program(s)`}
+              </span>
+              <button 
+                onClick={() => {
+                  if (setUserPrograms) {
+                    setUserPrograms(programs.filter(p => p.status === 'active').map(p => ({
+                      id: p.id,
+                      name_ar: p.name,
+                      name_en: p.name,
+                      guide_name: p.guide_name,
+                      coords: p.location,
+                      price: p.price,
+                      duration: p.duration,
+                      rating: null,
+                      distance: null,
+                      active: true,
+                      location_name: p.location_name
+                    })));
+                  }
+                  alert(lang === 'ar' ? 'تم تحديث الخريطة' : 'Map updated');
+                }}
+                className="text-green-600 hover:text-green-700 text-sm flex items-center gap-1"
+              >
+                <RefreshCw className="w-3 h-3" />
+                {lang === "ar" ? "تحديث الخريطة" : "Refresh Map"}
               </button>
             </div>
             
-            <div className="space-y-3">
-              <input
-                type="text"
-                placeholder={lang === "ar" ? "اسم البرنامج" : "Program Name"}
-                value={newProgram.name}
-                onChange={(e) => setNewProgram({...newProgram, name: e.target.value})}
-                className="w-full p-3 border dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
-              />
-              <textarea
-                placeholder={lang === "ar" ? "وصف البرنامج" : "Program Description"}
-                value={newProgram.description}
-                onChange={(e) => setNewProgram({...newProgram, description: e.target.value})}
-                className="w-full p-3 border dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
-                rows="3"
-              />
-              <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {programs.map((program) => (
+                <div key={program.id} className="bg-white dark:bg-gray-800 rounded-2xl p-4 shadow-sm border border-gray-100 dark:border-gray-700 hover:shadow-md transition">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-2 flex-wrap">
+                        <h3 className="font-bold text-lg text-gray-800 dark:text-white">{program.name}</h3>
+                        <span className={`px-2 py-1 rounded-lg text-xs font-medium ${
+                          program.status === "active" 
+                            ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400" 
+                            : "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-400"
+                        }`}>
+                          {program.status === "active" ? (lang === "ar" ? "✓ نشط" : "Active") : (lang === "ar" ? "○ متوقف" : "Inactive")}
+                        </span>
+                        {program.location && (
+                          <span className="text-xs text-green-600 bg-green-50 dark:bg-green-900/20 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <MapPin className="w-3 h-3" />
+                            {lang === "ar" ? "يظهر على الخريطة" : "On Map"}
+                          </span>
+                        )}
+                      </div>
+                      
+                      <p className="text-gray-600 dark:text-gray-300 text-sm mb-3 line-clamp-2">{program.description || (lang === "ar" ? "لا يوجد وصف" : "No description")}</p>
+                      
+                      <div className="grid grid-cols-3 gap-3 mb-3">
+                        <div className="text-sm">
+                          <div className="text-gray-500 text-xs">{lang === "ar" ? "السعر" : "Price"}</div>
+                          <div className="font-medium text-green-600">{program.price} ريال</div>
+                        </div>
+                        <div className="text-sm">
+                          <div className="text-gray-500 text-xs">{lang === "ar" ? "المدة" : "Duration"}</div>
+                          <div className="font-medium">{program.duration}</div>
+                        </div>
+                        <div className="text-sm">
+                          <div className="text-gray-500 text-xs">{lang === "ar" ? "المشاركين" : "Participants"}</div>
+                          <div className="font-medium">{program.participants || 0}/{program.maxParticipants || 20}</div>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-2 text-sm text-gray-500">
+                        <MapPin className="w-3 h-3 text-green-600" />
+                        <span className="text-xs truncate">{program.location_name || program.location || (lang === "ar" ? "موقع غير محدد" : "Location not specified")}</span>
+                      </div>
+                    </div>
+                    
+                    <div className="flex flex-col gap-2 ml-4">
+                      <button
+                        onClick={() => toggleProgramStatus(program.id)}
+                        className={`px-3 py-1.5 rounded-xl text-sm transition flex items-center gap-1 font-medium ${
+                          program.status === "active"
+                            ? "bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400"
+                            : "bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400"
+                        }`}
+                        title={program.status === "active" ? (lang === "ar" ? "إيقاف البرنامج (لن يظهر للجميع)" : "Deactivate program") : (lang === "ar" ? "تفعيل البرنامج (سيظهر للجميع)" : "Activate program")}
+                      >
+                        {program.status === "active" ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                        <span>{program.status === "active" ? (lang === "ar" ? "إيقاف" : "Off") : (lang === "ar" ? "تفعيل" : "On")}</span>
+                      </button>
+                      
+                      <button
+                        onClick={() => openEditModal(program)}
+                        className="px-3 py-1.5 bg-yellow-100 text-yellow-700 rounded-xl text-sm hover:bg-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-400 transition flex items-center gap-1 font-medium"
+                      >
+                        <Edit2 className="w-3 h-3" />
+                        <span>{lang === "ar" ? "تعديل" : "Edit"}</span>
+                      </button>
+                      
+                      <button
+                        onClick={() => handleDeleteProgram(program.id)}
+                        className="px-3 py-1.5 bg-red-100 text-red-700 rounded-xl text-sm hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 transition flex items-center gap-1 font-medium"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        <span>{lang === "ar" ? "حذف" : "Delete"}</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Add Program Modal */}
+      {showAddProgram && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="w-full max-w-lg bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="bg-gradient-to-r from-green-600 to-emerald-600 p-5 rounded-t-2xl">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <MapPin className="w-6 h-6 text-white" />
+                  <h3 className="text-white font-bold text-xl">{lang === "ar" ? "إضافة برنامج سياحي جديد" : "Add New Tour Program"}</h3>
+                </div>
+                <button onClick={() => setShowAddProgram(false)} className="text-white/80 hover:text-white transition">
+                  <XCircle size={28} />
+                </button>
+              </div>
+              <p className="text-white/80 text-sm mt-2">
+                {lang === "ar" 
+                  ? '📍 سيظهر هذا البرنامج على الخريطة الرئيسية ليراها جميع المستخدمين ويمكنهم حجزه' 
+                  : '📍 This program will appear on the main map for all users to see and book'}
+              </p>
+            </div>
+            
+            <div className="p-6 space-y-5">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                  {lang === "ar" ? "اسم البرنامج *" : "Program Name *"}
+                </label>
                 <input
                   type="text"
-                  placeholder={lang === "ar" ? "الموقع" : "Location"}
-                  value={newProgram.location}
-                  onChange={(e) => setNewProgram({...newProgram, location: e.target.value})}
-                  className="p-3 border dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
-                />
-                <input
-                  type="number"
-                  placeholder={lang === "ar" ? "السعر (ريال)" : "Price (SAR)"}
-                  value={newProgram.price}
-                  onChange={(e) => setNewProgram({...newProgram, price: e.target.value})}
-                  className="p-3 border dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
-                />
-                <input
-                  type="text"
-                  placeholder={lang === "ar" ? "المدة (ساعات)" : "Duration (hours)"}
-                  value={newProgram.duration}
-                  onChange={(e) => setNewProgram({...newProgram, duration: e.target.value})}
-                  className="p-3 border dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
-                />
-                <input
-                  type="number"
-                  placeholder={lang === "ar" ? "العدد الأقصى" : "Max Participants"}
-                  value={newProgram.maxParticipants}
-                  onChange={(e) => setNewProgram({...newProgram, maxParticipants: e.target.value})}
-                  className="p-3 border dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
+                  placeholder={lang === "ar" ? "مثال: جولة تاريخية في الدرعية" : "e.g., Historical Tour in Diriyah"}
+                  value={newProgram.name}
+                  onChange={(e) => setNewProgram({...newProgram, name: e.target.value})}
+                  className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none transition"
+                  autoFocus
                 />
               </div>
               
-              <div className="flex gap-3 pt-3">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                  {lang === "ar" ? "وصف البرنامج" : "Program Description"}
+                </label>
+                <textarea
+                  placeholder={lang === "ar" ? "وصف تفصيلي للبرنامج..." : "Detailed program description..."}
+                  value={newProgram.description}
+                  onChange={(e) => setNewProgram({...newProgram, description: e.target.value})}
+                  className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none transition"
+                  rows="3"
+                />
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                    {lang === "ar" ? "السعر (ريال)" : "Price (SAR)"}
+                  </label>
+                  <input
+                    type="number"
+                    placeholder="0"
+                    value={newProgram.price}
+                    onChange={(e) => setNewProgram({...newProgram, price: e.target.value})}
+                    className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                    {lang === "ar" ? "المدة" : "Duration"}
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="3 ساعات"
+                    value={newProgram.duration}
+                    onChange={(e) => setNewProgram({...newProgram, duration: e.target.value})}
+                    className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
+                  />
+                </div>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                  {lang === "ar" ? "الموقع *" : "Location *"}
+                </label>
+                <div className="relative">
+                  <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                  <input
+                    type="text"
+                    placeholder={lang === "ar" ? "الرياض، الدرعية" : "Riyadh, Diriyah"}
+                    value={newProgram.location}
+                    onChange={(e) => setNewProgram({...newProgram, location: e.target.value})}
+                    className="w-full p-3 pl-10 border-2 border-gray-200 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
+                  />
+                </div>
+                <p className="text-xs text-gray-500 mt-2 flex items-center gap-1">
+                  <MapPin className="w-3 h-3" />
+                  {lang === "ar" 
+                    ? 'سيتم تحديد موقع البرنامج تلقائياً على الخريطة بناءً على العنوان المدخل' 
+                    : 'The program location will be automatically marked on the map based on the entered address'}
+                </p>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                  {lang === "ar" ? "العدد الأقصى للمشاركين" : "Maximum Participants"}
+                </label>
+                <input
+                  type="number"
+                  placeholder="20"
+                  value={newProgram.maxParticipants}
+                  onChange={(e) => setNewProgram({...newProgram, maxParticipants: e.target.value})}
+                  className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
+                />
+              </div>
+              
+              <div className="flex gap-3 pt-4">
                 <button
                   onClick={handleAddProgram}
-                  className="flex-1 py-3 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 transition"
+                  disabled={loading}
+                  className="flex-1 py-3 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl font-bold hover:from-green-700 hover:to-emerald-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-md"
                 >
-                  {lang === "ar" ? "إضافة البرنامج" : "Add Program"}
+                  {loading ? (
+                    <>
+                      <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
+                      <span>{lang === "ar" ? "جاري الإضافة..." : "Adding..."}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="w-5 h-5" />
+                      <span>{lang === "ar" ? "إضافة البرنامج ونشره على الخريطة" : "Add Program & Publish to Map"}</span>
+                    </>
+                  )}
                 </button>
                 <button
                   onClick={() => setShowAddProgram(false)}
-                  className="px-6 py-3 border dark:border-gray-600 rounded-lg font-medium dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition"
+                  className="px-6 py-3 border-2 border-gray-300 dark:border-gray-600 rounded-xl font-medium dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition"
+                >
+                  {lang === "ar" ? "إلغاء" : "Cancel"}
+                </button>
+              </div>
+              
+              <div className="bg-green-50 dark:bg-green-900/20 p-3 rounded-xl mt-2">
+                <p className="text-xs text-green-700 dark:text-green-400 text-center">
+                  🌍 {lang === "ar" 
+                    ? 'بعد إضافة البرنامج، سيظهر فوراً على الخريطة الرئيسية ويمكن لجميع المستخدمين رؤيته وحجزه' 
+                    : 'After adding the program, it will immediately appear on the main map and all users can see and book it'}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Program Modal */}
+      {showEditModal && editingProgram && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="w-full max-w-lg bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="bg-gradient-to-r from-yellow-600 to-orange-600 p-5 rounded-t-2xl">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Edit2 className="w-6 h-6 text-white" />
+                  <h3 className="text-white font-bold text-xl">{lang === "ar" ? "تعديل البرنامج" : "Edit Program"}</h3>
+                </div>
+                <button onClick={() => {
+                  setShowEditModal(false);
+                  setEditingProgram(null);
+                }} className="text-white/80 hover:text-white transition">
+                  <XCircle size={28} />
+                </button>
+              </div>
+              <p className="text-white/80 text-sm mt-2">
+                📍 {lang === "ar" 
+                  ? 'بعد التعديل، سيتم تحديث البرنامج على الخريطة تلقائياً' 
+                  : 'After editing, the program will be automatically updated on the map'}
+              </p>
+            </div>
+            
+            <div className="p-6 space-y-5">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                  {lang === "ar" ? "اسم البرنامج *" : "Program Name *"}
+                </label>
+                <input
+                  type="text"
+                  value={newProgram.name}
+                  onChange={(e) => setNewProgram({...newProgram, name: e.target.value})}
+                  className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                  {lang === "ar" ? "وصف البرنامج" : "Program Description"}
+                </label>
+                <textarea
+                  value={newProgram.description}
+                  onChange={(e) => setNewProgram({...newProgram, description: e.target.value})}
+                  className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none"
+                  rows="3"
+                />
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                    {lang === "ar" ? "السعر (ريال)" : "Price (SAR)"}
+                  </label>
+                  <input
+                    type="number"
+                    value={newProgram.price}
+                    onChange={(e) => setNewProgram({...newProgram, price: e.target.value})}
+                    className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                    {lang === "ar" ? "المدة" : "Duration"}
+                  </label>
+                  <input
+                    type="text"
+                    value={newProgram.duration}
+                    onChange={(e) => setNewProgram({...newProgram, duration: e.target.value})}
+                    className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none"
+                  />
+                </div>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                  {lang === "ar" ? "الموقع" : "Location"}
+                </label>
+                <div className="relative">
+                  <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                  <input
+                    type="text"
+                    value={newProgram.location}
+                    onChange={(e) => setNewProgram({...newProgram, location: e.target.value})}
+                    className="w-full p-3 pl-10 border-2 border-gray-200 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none"
+                  />
+                </div>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                  {lang === "ar" ? "العدد الأقصى" : "Maximum Participants"}
+                </label>
+                <input
+                  type="number"
+                  value={newProgram.maxParticipants}
+                  onChange={(e) => setNewProgram({...newProgram, maxParticipants: e.target.value})}
+                  className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none"
+                />
+              </div>
+              
+              <div className="flex gap-3 pt-4">
+                <button
+                  onClick={handleUpdateProgram}
+                  disabled={loading}
+                  className="flex-1 py-3 bg-gradient-to-r from-yellow-600 to-orange-600 text-white rounded-xl font-bold hover:from-yellow-700 hover:to-orange-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {loading ? (
+                    <>
+                      <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
+                      <span>{lang === "ar" ? "جاري الحفظ..." : "Saving..."}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Edit2 className="w-5 h-5" />
+                      <span>{lang === "ar" ? "حفظ التغييرات وتحديث الخريطة" : "Save Changes & Update Map"}</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={() => {
+                    setShowEditModal(false);
+                    setEditingProgram(null);
+                  }}
+                  className="px-6 py-3 border-2 border-gray-300 dark:border-gray-600 rounded-xl font-medium dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition"
                 >
                   {lang === "ar" ? "إلغاء" : "Cancel"}
                 </button>
@@ -1316,12 +2062,12 @@ function GuideDashboard({ lang, guide, setPage, user, setUserPrograms }) {
     </div>
   );
 }
-
 // ===================== 👨‍🏫 صفحة المرشدين =====================
 function GuidesPage({ lang, user, setPage }) {
   const [guides, setGuides] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [error, setError] = useState(null);
 
   // جلب المرشدين الحقيقيين من API
   useEffect(() => {
@@ -1330,37 +2076,80 @@ function GuidesPage({ lang, user, setPage }) {
 
   const fetchGuides = async () => {
     setLoading(true);
+    setError(null);
     try {
-      // TODO: استبدل هذا بطلب API حقيقي
-      // const response = await api.getGuides();
-      // if (response.success) {
-      //   setGuides(response.guides);
-      // }
+      // ✅ جلب المرشدين من API - المسار الصحيح مع /api
+      const response = await api.get('/api/guides');
+      console.log('📥 Guides response:', response);
       
-      // للاختبار - سيتم إزالته عند ربط API
-      setGuides([]);
-      setLoading(false);
+      if (response.data?.success) {
+        // ✅ تنسيق البيانات - تحويل specialties إلى مصفوفة
+        const formattedGuides = (response.data.guides || []).map(guide => ({
+          id: guide.id,
+          name: guide.full_name || guide.name,
+          avatar: guide.avatar || null,
+          verified: guide.is_verified || guide.guide_verified || false,
+          rating: guide.rating || 4.5,
+          reviews: guide.reviews_count || 0,
+          // ✅ تحويل specialties إلى مصفوفة إذا كانت سلسلة نصية
+          specialties: Array.isArray(guide.specialties) 
+            ? guide.specialties 
+            : (guide.specialties ? guide.specialties.split(',').map(s => s.trim()).filter(s => s) : []),
+          distance: guide.distance || (Math.random() * 10 + 1).toFixed(1),
+          programs: guide.programs_count || 0,
+          userId: guide.user_id || guide.id,
+          email: guide.email
+        }));
+        setGuides(formattedGuides);
+        console.log('✅ Guides formatted:', formattedGuides.length);
+      } else {
+        setGuides([]);
+      }
     } catch (error) {
       console.error('Error fetching guides:', error);
+      setError(lang === 'ar' ? 'فشل تحميل المرشدين' : 'Failed to load guides');
+      setGuides([]);
+    } finally {
       setLoading(false);
     }
   };
 
-  // دالة المراسلة - لا تعمل إلا بعد تسجيل الدخول
-  const handleStartChat = (guide) => {
+  // دالة المراسلة - تبدأ محادثة دعم مع المرشد
+  const handleStartChat = async (guide) => {
     if (!user) {
       alert(lang === 'ar' 
         ? 'الرجاء تسجيل الدخول أولاً للمراسلة' 
         : 'Please login first to message');
       return;
     }
-    // TODO: تنفيذ المراسلة عند ربط API
-    alert(lang === 'ar' 
-      ? 'سيتم إضافة ميزة المراسلة قريباً' 
-      : 'Messaging feature will be added soon');
+    
+    try {
+      // بدء محادثة دعم جديدة مع المرشد
+      const response = await api.startSupportChat({
+        userId: guide.userId,
+        userName: guide.name,
+        subject: `محادثة مع المرشد ${guide.name}`,
+        message: `مرحباً ${guide.name}، أود التواصل معك بخصوص جولاتك السياحية`,
+        type: 'guide'
+      });
+      
+      if (response.success) {
+        // الانتقال إلى صفحة المحادثة
+        setPage('support');
+      } else {
+        alert(lang === 'ar' 
+          ? 'فشل بدء المحادثة، يرجى المحاولة لاحقاً' 
+          : 'Failed to start chat, please try again later');
+      }
+    } catch (error) {
+      console.error('Error starting chat:', error);
+      alert(lang === 'ar' 
+        ? 'حدث خطأ في بدء المحادثة' 
+        : 'Error starting chat');
+    }
   };
 
-  // دالة عرض البرامج - لا تعمل إلا بعد تسجيل الدخول
+  // دالة عرض البرامج
   const handleViewPrograms = (guideId) => {
     if (!user) {
       alert(lang === 'ar' 
@@ -1368,13 +2157,16 @@ function GuidesPage({ lang, user, setPage }) {
         : 'Please login first');
       return;
     }
-    // TODO: عرض برامج المرشد عند ربط API
-    console.log('Viewing programs for guide:', guideId);
+    // حفظ معرف المرشد في localStorage مؤقتاً
+    localStorage.setItem('selectedGuideId', guideId);
+    // الانتقال إلى صفحة برامج المرشد
+    setPage('guidePrograms');
   };
 
+  // ✅ فلترة المرشدين حسب البحث - مع التحقق من أن specialties مصفوفة
   const filteredGuides = guides.filter(guide => 
     guide.name?.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    guide.specialties?.some(s => s.toLowerCase().includes(searchTerm.toLowerCase()))
+    (Array.isArray(guide.specialties) && guide.specialties.some(s => s.toLowerCase().includes(searchTerm.toLowerCase())))
   );
 
   return (
@@ -1386,7 +2178,7 @@ function GuidesPage({ lang, user, setPage }) {
           {lang === "ar" ? "المرشدين السياحيين" : "Tourist Guides"}
         </h1>
         <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-          {guides.length} {lang === "ar" ? "مرشد معتمد" : "Verified Guides"}
+          {filteredGuides.length} {lang === "ar" ? "مرشد معتمد" : "Verified Guides"}
         </p>
       </div>
 
@@ -1404,6 +2196,19 @@ function GuidesPage({ lang, user, setPage }) {
         </div>
       </div>
 
+      {/* عرض الخطأ */}
+      {error && (
+        <div className="mb-4 p-4 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 rounded-xl text-center">
+          {error}
+          <button 
+            onClick={fetchGuides}
+            className="mr-3 underline hover:no-underline"
+          >
+            {lang === 'ar' ? 'إعادة المحاولة' : 'Retry'}
+          </button>
+        </div>
+      )}
+
       {/* حالة التحميل */}
       {loading ? (
         <div className="flex justify-center items-center py-20">
@@ -1412,22 +2217,31 @@ function GuidesPage({ lang, user, setPage }) {
       ) : (
         <>
           {/* رسالة عند عدم وجود مرشدين */}
-          {guides.length === 0 && (
+          {filteredGuides.length === 0 && (
             <div className="text-center py-12 bg-white dark:bg-gray-800 rounded-xl shadow-sm">
               <Users className="w-16 h-16 mx-auto text-gray-400 mb-4" />
               <p className="text-gray-600 dark:text-gray-400 mb-2">
-                {lang === 'ar' ? 'لا يوجد مرشدين حالياً' : 'No guides available at the moment'}
+                {searchTerm 
+                  ? (lang === 'ar' ? 'لا توجد نتائج مطابقة للبحث' : 'No matching results')
+                  : (lang === 'ar' ? 'لا يوجد مرشدين حالياً' : 'No guides available at the moment')}
               </p>
+              {searchTerm && (
+                <button
+                  onClick={() => setSearchTerm('')}
+                  className="text-green-600 hover:text-green-700 text-sm"
+                >
+                  {lang === 'ar' ? 'مسح البحث' : 'Clear search'}
+                </button>
+              )}
             </div>
           )}
 
-          {/* بطاقات المرشدين - من API حقيقي */}
+          {/* بطاقات المرشدين */}
           {filteredGuides.map((guide) => (
             <div 
               key={guide.id} 
               className="bg-white dark:bg-gray-800 rounded-xl p-5 shadow-md hover:shadow-lg transition-all duration-300 border border-gray-100 dark:border-gray-700 mb-4"
             >
-              {/* محتوى بطاقة المرشد - سيأتي من API */}
               <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center">
                   <div className="relative">
@@ -1449,26 +2263,32 @@ function GuidesPage({ lang, user, setPage }) {
                       {guide.name}
                     </h3>
                     <div className="flex items-center mt-1">
-                      {/* التقييم سيأتي من API */}
-                      <span className="text-sm text-gray-600 dark:text-gray-400">
-                        {guide.rating} ⭐ ({guide.reviews})
+                      <Star className="w-4 h-4 text-yellow-500 fill-current" />
+                      <span className="text-sm text-gray-600 dark:text-gray-400 mr-1">
+                        {guide.rating} ({guide.reviews})
                       </span>
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* التخصصات */}
+              {/* ✅ التخصصات - مع التحقق من أن specialties مصفوفة */}
               <div className="mb-4">
                 <div className="flex flex-wrap gap-2">
-                  {guide.specialties?.map((specialty, index) => (
-                    <span
-                      key={index}
-                      className="px-3 py-1.5 bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 text-green-700 dark:text-green-400 rounded-lg text-xs font-medium border border-green-100 dark:border-green-800"
-                    >
-                      {specialty}
+                  {Array.isArray(guide.specialties) && guide.specialties.length > 0 ? (
+                    guide.specialties.map((specialty, index) => (
+                      <span
+                        key={index}
+                        className="px-3 py-1.5 bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 text-green-700 dark:text-green-400 rounded-lg text-xs font-medium border border-green-100 dark:border-green-800"
+                      >
+                        {specialty}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="px-3 py-1.5 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 rounded-lg text-xs">
+                      {lang === 'ar' ? 'لا توجد تخصصات' : 'No specialties'}
                     </span>
-                  ))}
+                  )}
                 </div>
               </div>
 
@@ -1480,11 +2300,11 @@ function GuidesPage({ lang, user, setPage }) {
                 </div>
                 <div className="flex items-center">
                   <Package className="w-4 h-4 ml-1 text-green-600 dark:text-green-400" />
-                  <span>{guide.programs} برنامج</span>
+                  <span>{guide.programs} {lang === "ar" ? "برنامج" : "programs"}</span>
                 </div>
               </div>
 
-              {/* أزرار الإجراءات - تعمل فقط للمسجلين */}
+              {/* أزرار الإجراءات */}
               <div className="flex gap-3">
                 <button
                   onClick={() => handleStartChat(guide)}
@@ -1523,7 +2343,7 @@ function GuidesPage({ lang, user, setPage }) {
             </div>
           ))}
 
-          {/* ✅ قسم ترحيب بسيط مع زر تسجيل الدخول فقط - للمستخدمين غير المسجلين */}
+          {/* قسم ترحيب للمستخدمين غير المسجلين */}
           {!user && (
             <div className="mt-8 p-6 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 rounded-xl border border-blue-200 dark:border-blue-800 text-center">
               <div className="max-w-md mx-auto">
@@ -1536,26 +2356,27 @@ function GuidesPage({ lang, user, setPage }) {
                     : "Login to access all features and connect with guides"}
                 </p>
                 
-                {/* زر تسجيل الدخول فقط */}
                 <button
-                  onClick={() => window.location.href = '/login'}
+                  onClick={() => setPage('profile')}
                   className="px-8 py-3 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl font-bold hover:from-green-700 hover:to-emerald-700 transition-all transform hover:scale-105 shadow-lg"
                 >
                   {lang === "ar" ? "تسجيل الدخول" : "Login"}
                 </button>
 
-                {/* رابط إنشاء حساب جديد */}
                 <p className="text-sm text-gray-500 dark:text-gray-400 mt-4">
                   {lang === "ar" ? "ليس لديك حساب؟" : "Don't have an account?"}{' '}
-                  <a href="/register" className="text-green-600 hover:text-green-700 dark:text-green-400 font-medium">
+                  <button 
+                    onClick={() => setPage('profile')}
+                    className="text-green-600 hover:text-green-700 dark:text-green-400 font-medium"
+                  >
                     {lang === "ar" ? "إنشاء حساب جديد" : "Create account"}
-                  </a>
+                  </button>
                 </p>
               </div>
             </div>
           )}
 
-          {/* ✅ قسم خاص للمستخدمين المسجلين فقط - خيار الترقية إلى مرشد */}
+          {/* قسم ترقية للمستخدمين المسجلين */}
           {user && !user.isGuide && (
             <div className="mt-6 p-5 bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 rounded-xl border border-purple-200 dark:border-purple-800">
               <div className="flex items-center gap-4">
@@ -2290,7 +3111,8 @@ function SettingsPage({ lang, dark, setDark, setLang, setPage, locationEnabled, 
   );
 }
 
- // ===================== 📱 Main App Component =====================
+
+// ===================== 📱 Main App Component =====================
 
 export function TouristAppPrototype() {
   const [lang, setLang] = useState("ar");
@@ -2304,11 +3126,72 @@ export function TouristAppPrototype() {
   const [userPrograms, setUserPrograms] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const mapContainerRef = useRef(null);
-
+  
+  // ✅ أضف هذه المتغيرات الجديدة
+  const [transport, setTransport] = useState("driving");
+  const [refreshMap, setRefreshMap] = useState(false);
   const [isTestMode, setIsTestMode] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   
+  // ✅ التحقق الشامل من أن المستخدم مرشد
+  const isGuide = user?.isGuide === true || 
+                  user?.role === 'guide' || 
+                  user?.type === 'guide' || 
+                  user?.guide_status === 'approved';
+
+  // ✅ دالة لتحديث الخريطة
+  const handleProgramAdded = () => {
+    console.log('🔄 Program added, refreshing map...');
+    setRefreshMap(prev => !prev);
+    if (page === 'explore') {
+      toast.success(lang === 'ar' ? '🗺️ تم تحديث الخريطة بالبرامج الجديدة' : '🗺️ Map updated with new programs');
+    }
+  };
+
+  // ✅ تحميل المستخدم من localStorage عند بدء التطبيق
+  useEffect(() => {
+    const savedUser = localStorage.getItem('touristAppUser');
+    if (savedUser) {
+      try {
+        const parsedUser = JSON.parse(savedUser);
+        console.log('📦 [App] Loaded user from localStorage:', parsedUser);
+        setUser(parsedUser);
+        if (parsedUser.isGuide || parsedUser.role === 'guide') {
+          setGuide(parsedUser);
+        }
+      } catch (e) {
+        console.error('Error parsing user:', e);
+      }
+    }
+  }, []);
+
+  // ✅ مراقبة تغييرات المستخدم
+  useEffect(() => {
+    console.log('🔍 [App] User state changed:', {
+      user,
+      isGuide: isGuide,
+      role: user?.role,
+      type: user?.type,
+      guide_status: user?.guide_status,
+      page: page
+    });
+  }, [user, isGuide, page]);
+  
   const handleLoginSuccess = (response) => {
+    console.log('📥 [App] Login response:', response);
+    console.log('📥 [App] response.user.role:', response.user.role);
+    console.log('📥 [App] response.user.type:', response.user.type);
+    console.log('📥 [App] response.user.isGuide:', response.user.isGuide);
+    console.log('📥 [App] response.user.guide_status:', response.user.guide_status);
+    
+    // ✅ التحقق من أن المستخدم مرشد
+    const isUserGuide = response.user.isGuide === true || 
+                        response.user.role === 'guide' || 
+                        response.user.type === 'guide' || 
+                        response.user.guide_status === 'approved';
+    
+    console.log('📥 [App] isUserGuide:', isUserGuide);
+    
     const unifiedUser = {
       id: response.user.id,
       email: response.user.email,
@@ -2320,16 +3203,22 @@ export function TouristAppPrototype() {
       walletNumber: response.user.walletNumber,
       chatId: response.user.chatId,
       balance: response.user.balance || 0,
-      isGuide: response.user.isGuide || false,
-      guideStatus: response.user.guideStatus || null,
+      isGuide: isUserGuide,
+      role: isUserGuide ? 'guide' : (response.user.role || 'user'),
+      type: isUserGuide ? 'guide' : (response.user.type || 'user'),
+      guide_status: response.user.guide_status || null,
       licenseNumber: response.user.licenseNumber || null,
       civilId: response.user.civilId || null,
       specialties: response.user.specialties || null,
       experience: response.user.experience || null,
       guideVerified: response.user.guideVerified || false,
       programsCount: response.user.programsCount || 0,
-      type: response.user.isGuide ? 'guide' : 'user'
     };
+    
+    console.log('✅ [App] User after login:', unifiedUser);
+    console.log('✅ [App] Is Guide:', unifiedUser.isGuide);
+    console.log('✅ [App] Role:', unifiedUser.role);
+    console.log('✅ [App] Type:', unifiedUser.type);
     
     setUser(unifiedUser);
     if (unifiedUser.isGuide) {
@@ -2361,13 +3250,13 @@ export function TouristAppPrototype() {
     
     const savedUser = localStorage.getItem('touristAppUser');
     const savedToken = localStorage.getItem('touristAppToken');
-    const savedUserType = localStorage.getItem('userType');
     
     if (savedUser && savedToken && !isTestMode) {
       api.verifyToken(savedToken)
         .then((response) => {
           if (response.valid) {
             const parsedUser = JSON.parse(savedUser);
+            console.log('✅ [App] User loaded from storage:', parsedUser);
             setUser(parsedUser);
             if (parsedUser.isGuide) {
               setGuide(parsedUser);
@@ -2438,12 +3327,28 @@ export function TouristAppPrototype() {
   };
 
   const handleUserUpdate = (updatedUserData) => {
+    console.log('🔄 [App] handleUserUpdate called with:', updatedUserData);
+    
     const updatedUser = { ...user, ...updatedUserData };
+    
+    if (updatedUserData.isGuide === true || 
+        updatedUserData.role === 'guide' || 
+        updatedUserData.type === 'guide' || 
+        updatedUserData.guide_status === 'approved') {
+      updatedUser.type = 'guide';
+      updatedUser.isGuide = true;
+      updatedUser.role = 'guide';
+    }
+    
+    console.log('🔄 [App] Updated user:', updatedUser);
+    console.log('🔄 [App] Is guide after update:', updatedUser.isGuide);
+    
     setUser(updatedUser);
     if (updatedUser.isGuide) {
       setGuide(updatedUser);
     }
     localStorage.setItem('touristAppUser', JSON.stringify(updatedUser));
+    localStorage.setItem('userType', updatedUser.type);
   };
 
   const t = (k) => LOCALES[lang][k] || k;
@@ -2467,7 +3372,7 @@ export function TouristAppPrototype() {
       )}
       
       <div className="flex-1 overflow-hidden relative">
-        {console.log('🔄 Current page in App:', page)}
+        {console.log('🔄 [App] Current page:', page)}
         
         {page === "home" && (
           <HomePage 
@@ -2486,8 +3391,13 @@ export function TouristAppPrototype() {
             lang={lang} 
             mapContainerRef={mapContainerRef}
             setPage={setPage}
+            transport={transport}
+            setTransport={setTransport}
             user={user}
             programs={userPrograms}
+            setPrograms={setUserPrograms}
+            unreadCount={unreadCount}
+            refreshTrigger={refreshMap}
           />
         )}
         
@@ -2510,6 +3420,27 @@ export function TouristAppPrototype() {
           />
         )}
         
+        {page === "support" && (
+          <SupportChatPage setPage={setPage} />
+        )}
+        
+        {page === "upgrade-requests" && (
+          <SupportUpgradeRequestsPage setPage={setPage} />
+        )}
+        
+        {/* ✅ تم إصلاح المشكلة - إضافة دعم لكل من admin-support و adminSupport */}
+        {(page === "admin-support" || page === "adminSupport") && (
+          <AdminSupportPage setPage={setPage} />
+        )}
+        
+        {page === "admin-notifications" && (
+          <AdminNotificationsPage setPage={setPage} />
+        )}
+        
+        {page === "admin-upgrade-requests" && (
+          <AdminUpgradeRequestsPage setPage={setPage} />
+        )}
+        
         {page === "favorites" && <FavoritesPage lang={lang} />}
         
         {page === "events" && <EventsPage lang={lang} />}
@@ -2522,14 +3453,56 @@ export function TouristAppPrototype() {
           />
         )}
         
-        {page === "guideDashboard" && user?.isGuide && (
-          <GuideDashboard 
-            lang={lang} 
-            guide={guide || user}
-            setPage={setPage}
-            user={user}
-            setUserPrograms={setUserPrograms}
-          />
+        {/* ✅ صفحة لوحة تحكم المرشد - مع التحقق الشامل */}
+        {page === "guideDashboard" && (
+          (() => {
+            console.log('🔴🔴🔴 [App] Rendering guideDashboard section 🔴🔴🔴');
+            console.log('[App] isGuide value:', isGuide);
+            console.log('[App] user:', user);
+            console.log('[App] user?.isGuide:', user?.isGuide);
+            console.log('[App] user?.role:', user?.role);
+            console.log('[App] user?.type:', user?.type);
+            console.log('[App] user?.guide_status:', user?.guide_status);
+            
+            if (isGuide) {
+              console.log('✅✅✅ [App] Rendering GuideDashboard ✅✅✅');
+              return (
+                <GuideDashboard 
+                  lang={lang} 
+                  guide={user}
+                  setPage={setPage}
+                  user={user}
+                  setUserPrograms={setUserPrograms}
+                  onProgramAdded={handleProgramAdded}
+                />
+              );
+            } else {
+              console.log('❌❌❌ [App] Showing Access Denied ❌❌❌');
+              return (
+                <div className="h-full flex items-center justify-center bg-gray-50 dark:bg-gray-900">
+                  <div className="text-center p-8">
+                    <div className="w-24 h-24 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center mx-auto mb-6">
+                      <Shield className="w-12 h-12 text-red-600 dark:text-red-400" />
+                    </div>
+                    <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-4">
+                      {lang === 'ar' ? 'غير مصرح بالوصول' : 'Access Denied'}
+                    </h2>
+                    <p className="text-gray-600 dark:text-gray-400 mb-6">
+                      {lang === 'ar' 
+                        ? `أنت لست مرشداً سياحياً. البيانات: isGuide=${user?.isGuide}, role=${user?.role}, type=${user?.type}, status=${user?.guide_status}`
+                        : `You are not a guide. Data: isGuide=${user?.isGuide}, role=${user?.role}, type=${user?.type}, status=${user?.guide_status}`}
+                    </p>
+                    <button
+                      onClick={() => setPage('profile')}
+                      className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
+                    >
+                      {lang === 'ar' ? 'العودة للملف الشخصي' : 'Back to Profile'}
+                    </button>
+                  </div>
+                </div>
+              );
+            }
+          })()
         )}
         
         {page === "messages" && (
