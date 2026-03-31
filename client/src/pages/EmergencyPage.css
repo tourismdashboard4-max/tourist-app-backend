@@ -1,4 +1,4 @@
-/* pages/EmergencyPage.css */
+/* client/src/pages/EmergencyPage.css */
 .emergency-page {
   min-height: 100vh;
   background: linear-gradient(135deg, #fff5f5 0%, #fff 100%);
@@ -41,6 +41,10 @@
   transition: all 0.3s;
   box-shadow: 0 10px 30px rgba(220, 38, 38, 0.3);
   animation: emergency-pulse 1.5s infinite;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto;
 }
 
 @keyframes emergency-pulse {
@@ -66,11 +70,15 @@
   cursor: pointer;
   transition: all 0.3s;
   margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
 }
 
 .call-button:hover {
-  background: #1d4ed8;
   transform: translateY(-2px);
+  filter: brightness(1.05);
 }
 
 .back-button {
@@ -164,12 +172,11 @@
 }
 
 .severity-card:hover {
-  border-color: #dc2626;
   transform: translateY(-2px);
 }
 
 .severity-card.selected {
-  border-color: #dc2626;
+  border-color: currentColor;
   background: #fee2e2;
 }
 
@@ -208,6 +215,7 @@
   resize: vertical;
   font-size: 14px;
   transition: all 0.3s;
+  font-family: inherit;
 }
 
 .form-textarea:focus {
@@ -257,12 +265,14 @@
 .service-label {
   display: flex;
   align-items: center;
-  gap: 5px;
+  justify-content: center;
+  gap: 8px;
   padding: 10px;
   background: #f9fafb;
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.3s;
+  font-size: 14px;
 }
 
 .service-label:hover {
@@ -305,6 +315,7 @@
   border-radius: 8px;
   text-align: center;
   border: 1px solid #fecaca;
+  margin-bottom: 20px;
 }
 
 .success-icon {
@@ -322,6 +333,11 @@
   padding: 20px;
   border-radius: 12px;
   border: 1px solid #e5e7eb;
+  text-align: right;
+}
+
+.info-card p {
+  margin: 8px 0;
 }
 
 .safety-tips {
@@ -329,6 +345,7 @@
   padding: 20px;
   border-radius: 12px;
   text-align: right;
+  margin-top: 20px;
 }
 
 .home-button {
@@ -342,6 +359,10 @@
   font-weight: bold;
   cursor: pointer;
   transition: all 0.3s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
 }
 
 .home-button:hover {
