@@ -1,4 +1,4 @@
-// ExplorePage.jsx - النسخة الصحيحة
+// client/src/pages/ExplorePage.jsx
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
@@ -241,6 +241,20 @@ const ExplorePage = ({ setPage, programs = [], user, refreshTrigger }) => {
   const requestJoin = () => {
     alert(`✅ تم إرسال طلب المشاركة في برنامج "${selectedProgram?.name_ar || selectedProgram?.name}" بنجاح. سيتم التواصل معك من قبل المرشد.`);
   };
+
+  // ✅ إذا لم يكن المستخدم مسجلاً
+  if (!user) {
+    return (
+      <div style={{ height: '100vh', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f5f5f5' }}>
+        <div style={{ textAlign: 'center', padding: '20px', background: 'white', borderRadius: '16px', maxWidth: '300px' }}>
+          <div style={{ fontSize: '48px', marginBottom: '16px' }}>🗺️</div>
+          <h3 style={{ marginBottom: '12px' }}>الخريطة متاحة للأعضاء فقط</h3>
+          <p style={{ color: '#666', marginBottom: '20px' }}>سجل دخول للاستفادة من الخريطة والبرامج القريبة</p>
+          <button onClick={() => setPage('profile')} style={{ padding: '10px 24px', background: '#10b981', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>تسجيل الدخول</button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ height: '100vh', width: '100%', position: 'relative', direction: 'rtl' }}>
