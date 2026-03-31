@@ -1,10 +1,10 @@
-/* App.css */
+/* client/src/App.css */
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    'Ubuntu', 'Canterell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
 }
 
@@ -17,7 +17,125 @@ html, body, #root {
 body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #18b35b;
+  /* خلفية متناسقة مع صفحة الدعم */
+  background: linear-gradient(135deg, #115e59 0%, #155e75 50%, #065f46 100%);
+  background-attachment: fixed;
+}
+
+/* ============================================
+   إزالة خلفية النجوم (تم تعطيلها بالكامل)
+   ============================================ */
+.stars-bg,
+.stars,
+.stars-1,
+.stars-2,
+.stars-3,
+.shooting-star {
+  display: none !important;
+}
+
+/* تعطيل حركات النجوم */
+@keyframes starsMove {
+  0%, 100% { background-position: 0 0; }
+}
+
+@keyframes shootingStar {
+  0%, 100% { opacity: 0; transform: translateX(0) translateY(0); }
+}
+
+/* ============================================
+   خلفيات الصفحات المختلفة - موحدة مع صفحة الدعم
+   ============================================ */
+
+/* الخلفية الرئيسية للتطبيق */
+.app-main-bg {
+  background: linear-gradient(135deg, #115e59 0%, #155e75 50%, #065f46 100%);
+  min-height: 100vh;
+}
+
+/* خلفية صفحة الدعم */
+.support-bg {
+  background: linear-gradient(135deg, #115e59 0%, #155e75 50%, #065f46 100%);
+  position: relative;
+}
+
+/* خلفية صفحة الإشعارات */
+.notifications-bg {
+  background: linear-gradient(135deg, #115e59 0%, #155e75 50%, #065f46 100%);
+}
+
+/* خلفية الصفحة الرئيسية */
+.home-bg {
+  background: linear-gradient(135deg, #115e59 0%, #155e75 50%, #065f46 100%);
+}
+
+/* خلفية صفحة الملف الشخصي */
+.profile-bg {
+  background: linear-gradient(135deg, #115e59 0%, #155e75 50%, #065f46 100%);
+}
+
+/* خلفية صفحة الخريطة */
+.map-bg {
+  background: linear-gradient(135deg, #115e59 0%, #155e75 50%, #065f46 100%);
+}
+
+/* خلفية صفحة المرشدين */
+.guides-bg {
+  background: linear-gradient(135deg, #115e59 0%, #155e75 50%, #065f46 100%);
+}
+
+/* خلفية صفحة الإعدادات */
+.settings-bg {
+  background: linear-gradient(135deg, #115e59 0%, #155e75 50%, #065f46 100%);
+}
+
+/* ============================================
+   ألوان الهيدر - نفس تصميم صفحة الدعم (teal-cyan)
+   ============================================ */
+
+/* الهيدر العام - بنفس ألوان صفحة الدعم */
+.app-header-custom {
+  background: linear-gradient(135deg, #14b89a 0%, #06b6d4 100%);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* الهيدر في جميع الصفحات - نفس تدرج teal-cyan */
+.bg-gradient-to-r.from-teal-600,
+.bg-gradient-to-r.from-green-500,
+.support-bg .bg-gradient-to-r,
+.notifications-bg .bg-gradient-to-r,
+.home-bg .bg-gradient-to-r,
+.profile-bg .bg-gradient-to-r,
+[class*="bg-gradient-to-r from-teal-600"],
+[class*="bg-gradient-to-r from-green-500"] {
+  background: linear-gradient(135deg, #14b89a 0%, #06b6d4 100%) !important;
+  background-image: linear-gradient(135deg, #14b89a 0%, #06b6d4 100%) !important;
+}
+
+/* تدرج teal-cyan الخاص بالهيدر */
+.from-teal-600,
+.to-cyan-600 {
+  --tw-gradient-from: #14b89a !important;
+  --tw-gradient-to: #06b6d4 !important;
+  background-image: linear-gradient(135deg, #14b89a 0%, #06b6d4 100%) !important;
+}
+
+/* ============================================
+   ألوان الأزرار والتدرجات
+   ============================================ */
+
+/* الأزرار الرئيسية */
+.gradient-primary {
+  background: linear-gradient(135deg, #14b89a 0%, #06b6d4 100%);
+}
+
+.gradient-teal {
+  background: linear-gradient(135deg, #14b89a 0%, #0e9f84 100%);
+}
+
+.gradient-cyan {
+  background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);
 }
 
 /* إخفاء scrollbar في Chrome/Safari */
@@ -54,7 +172,7 @@ button, [role="button"] {
 /* دعم الوضع الداكن */
 .dark {
   background-color: #111827 !important;
-  color: #456483 !important;
+  color: #e5e7eb !important;
 }
 
 .dark .bg-white {
@@ -62,19 +180,19 @@ button, [role="button"] {
 }
 
 .dark .text-gray-800 {
-  color: #4f638b !important;
+  color: #f3f4f6 !important;
 }
 
 .dark .text-gray-600 {
-  color: #566d8f !important;
-}
-
-.dark .text-gray-500 {
   color: #9ca3af !important;
 }
 
+.dark .text-gray-500 {
+  color: #6b7280 !important;
+}
+
 .dark .text-gray-400 {
-  color: #8a8a8b !important;
+  color: #9ca3af !important;
 }
 
 .dark .border {
@@ -82,49 +200,68 @@ button, [role="button"] {
 }
 
 .dark .bg-gray-50 {
-  background-color: #1f2937 !important;
+  background-color: #111827 !important;
 }
 
 .dark .bg-gray-100 {
-  background-color: #374151 !important;
+  background-color: #1f2937 !important;
 }
 
 .dark .bg-gray-200 {
-  background-color: #4b5563 !important;
+  background-color: #374151 !important;
 }
 
 .dark .bg-green-50 {
-  background-color: rgba(6, 78, 59, 0.2) !important;
+  background-color: rgba(16, 185, 129, 0.1) !important;
+}
+
+.dark .bg-teal-50 {
+  background-color: rgba(20, 184, 166, 0.1) !important;
+}
+
+.dark .bg-cyan-50 {
+  background-color: rgba(6, 182, 212, 0.1) !important;
 }
 
 .dark .bg-blue-50 {
-  background-color: rgba(30, 58, 138, 0.2) !important;
+  background-color: rgba(59, 130, 246, 0.1) !important;
 }
 
 .dark .bg-red-50 {
-  background-color: rgba(127, 29, 29, 0.2) !important;
+  background-color: rgba(239, 68, 68, 0.1) !important;
 }
 
 .dark .bg-yellow-50 {
-  background-color: rgba(113, 63, 18, 0.2) !important;
+  background-color: rgba(245, 158, 11, 0.1) !important;
 }
 
 .dark .bg-purple-50 {
-  background-color: rgba(76, 29, 149, 0.2) !important;
+  background-color: rgba(139, 92, 246, 0.1) !important;
 }
 
 .dark .bg-orange-50 {
-  background-color: rgba(154, 52, 18, 0.2) !important;
+  background-color: rgba(249, 115, 22, 0.1) !important;
 }
 
 .dark .ring-2 {
-  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.5);
+  box-shadow: 0 0 0 2px rgba(20, 184, 166, 0.5);
 }
 
-/* تحسينات خاصة بالتطبيق */
-.app-header-custom {
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-  backdrop-filter: blur(10px);
+/* ألوان teal و cyan للوضع الليلي */
+.dark .text-teal-400 {
+  color: #2dd4bf !important;
+}
+
+.dark .text-cyan-400 {
+  color: #22d3ee !important;
+}
+
+.dark .border-teal-500 {
+  border-color: #14b89a !important;
+}
+
+.dark .border-cyan-500 {
+  border-color: #06b6d4 !important;
 }
 
 .mobile-padding {
@@ -188,23 +325,12 @@ button, [role="button"] {
     padding-bottom: 0.5rem !important;
   }
 }
-/* تحسينات للوضع الأفقي */
-@media (orientation: landscape) and (max-height: 500px) {
-  .landscape-hide {
-    display: none !important;
-  }
-  
-  .landscape-padding {
-    padding-top: 0.5rem !important;
-    padding-bottom: 0.5rem !important;
-  }
-}
 
 /* تحسينات للإدخال */
 input:focus, textarea:focus, select:focus {
   outline: none;
-  box-shadow: 0 0 0 2px #33bd8f;
-  border-color: #1edb9c;
+  box-shadow: 0 0 0 2px #14b89a;
+  border-color: #0e9f84;
 }
 
 /* تخصيص scrollbar للوضع الداكن */
@@ -213,12 +339,12 @@ input:focus, textarea:focus, select:focus {
 }
 
 .dark ::-webkit-scrollbar-thumb {
-  background: #4d80e6;
+  background: #14b89a;
   border-radius: 4px;
 }
 
 .dark ::-webkit-scrollbar-thumb:hover {
-  background: #737f94;
+  background: #2dd4bf;
 }
 
 /* تأثيرات hover */
@@ -250,7 +376,7 @@ input:focus, textarea:focus, select:focus {
 
 /* تدرجات لونية */
 .gradient-primary {
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  background: linear-gradient(135deg, #14b89a 0%, #06b6d4 100%);
 }
 
 .gradient-secondary {
@@ -263,7 +389,7 @@ input:focus, textarea:focus, select:focus {
 
 /* تأثيرات النص */
 .text-gradient {
-  background: linear-gradient(135deg, #10b981 0%, #3b82f6 100%);
+  background: linear-gradient(135deg, #14b89a 0%, #06b6d4 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -271,24 +397,24 @@ input:focus, textarea:focus, select:focus {
 
 /* تحسينات للوضع الداكن للنصوص */
 .dark .text-gray-700 {
-  color: #d1d5db !important;
+  color: #e5e7eb !important;
 }
 
 .dark .text-gray-300 {
-  color: #b5c2d8 !important;
+  color: #d1d5db !important;
 }
 
 .dark .text-gray-200 {
-  color: #e5e7eb !important;
+  color: #f3f4f6 !important;
 }
 
 /* تحسينات للخلفيات الشفافة */
 .bg-white\/90 {
-  background-color: rgba(202, 162, 162, 0.9);
+  background-color: rgba(255, 255, 255, 0.9);
 }
 
 .dark .bg-white\/10 {
-  background-color: rgba(14, 16, 94, 0.1);
+  background-color: rgba(255, 255, 255, 0.1);
 }
 
 /* تحسينات للصور */
@@ -320,4 +446,238 @@ input:focus, textarea:focus, select:focus {
 
 .animation-delay-300 {
   animation-delay: 300ms;
+}
+
+/* ============================================
+   أيقونة الطوارئ العائمة
+   ============================================ */
+
+.emergency-float-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.emergency-float-button {
+  width: 70px;
+  height: 70px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 36px;
+  box-shadow: 0 10px 30px rgba(220, 38, 38, 0.5);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  animation: emergency-pulse 2s infinite;
+  text-decoration: none;
+  border: 3px solid white;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+
+.emergency-float-button::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 5px;
+  height: 5px;
+  background: rgba(255, 255, 255, 0.5);
+  opacity: 0;
+  border-radius: 100%;
+  transform: scale(1, 1) translate(-50%);
+  transform-origin: 50% 50%;
+}
+
+.emergency-float-button:active::after {
+  animation: ripple 0.6s ease-out;
+}
+
+@keyframes ripple {
+  0% {
+    transform: scale(0, 0);
+    opacity: 0.5;
+  }
+  100% {
+    transform: scale(20, 20);
+    opacity: 0;
+  }
+}
+
+@keyframes emergency-pulse {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 10px 30px rgba(220, 38, 38, 0.5);
+  }
+  50% {
+    transform: scale(1.1);
+    box-shadow: 0 20px 40px rgba(220, 38, 38, 0.7);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 10px 30px rgba(220, 38, 38, 0.5);
+  }
+}
+
+.emergency-float-button:hover {
+  transform: scale(1.15) rotate(5deg);
+  background: linear-gradient(135deg, #b91c1c 0%, #7f1d1d 100%);
+  box-shadow: 0 20px 40px rgba(220, 38, 38, 0.8);
+}
+
+.emergency-tooltip {
+  background: white;
+  color: #1f2937;
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 600;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+  margin-bottom: 8px;
+  opacity: 0;
+  transform: translateX(20px);
+  transition: all 0.3s ease;
+  pointer-events: none;
+  border-left: 4px solid #dc2626;
+  white-space: nowrap;
+}
+
+.emergency-float-container:hover .emergency-tooltip {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.emergency-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  background: #ef4444;
+  color: white;
+  font-size: 12px;
+  font-weight: bold;
+  min-width: 22px;
+  height: 22px;
+  border-radius: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  border: 2px solid white;
+  animation: badge-pulse 1.5s infinite;
+}
+
+@keyframes badge-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+}
+
+@media (max-width: 640px) {
+  .emergency-float-button {
+    width: 60px;
+    height: 60px;
+    font-size: 30px;
+    bottom: 16px;
+    right: 16px;
+  }
+  
+  .emergency-tooltip {
+    font-size: 12px;
+    padding: 6px 12px;
+  }
+}
+
+.dark .emergency-tooltip {
+  background: #1f2937;
+  color: white;
+  border-left-color: #dc2626;
+}
+
+.dark .emergency-badge {
+  border-color: #1f2937;
+}
+
+.dark .emergency-float-button {
+  background: linear-gradient(135deg, #b91c1c 0%, #7f1d1d 100%);
+  box-shadow: 0 10px 30px rgba(185, 28, 28, 0.4);
+}
+
+.emergency-float-button {
+  animation: slide-in 0.5s ease-out, emergency-pulse 2s infinite;
+}
+
+@keyframes slide-in {
+  from {
+    transform: translateX(100px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+/* ============================================
+   إضافات خاصة لصفحة الدعم
+   ============================================ */
+
+.support-card {
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 24px;
+}
+
+.dark .support-card {
+  background: rgba(31, 41, 55, 0.5);
+  border-color: rgba(75, 85, 99, 0.5);
+}
+
+.message-bubble-user {
+  background: linear-gradient(135deg, #14b89a, #0e9f84);
+  border-radius: 20px 20px 4px 20px;
+}
+
+.message-bubble-support {
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(4px);
+  border-radius: 20px 20px 20px 4px;
+}
+
+.dark .message-bubble-support {
+  background: rgba(55, 65, 81, 0.8);
+}
+
+.support-scroll::-webkit-scrollbar {
+  display: block;
+  width: 6px;
+}
+
+.support-scroll::-webkit-scrollbar-track {
+  background: rgba(20, 184, 166, 0.1);
+  border-radius: 10px;
+}
+
+.support-scroll::-webkit-scrollbar-thumb {
+  background: linear-gradient(135deg, #2a6358, #06b6d4);
+  border-radius: 10px;
+}
+
+.support-scroll::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(135deg, #2dd4bf, #22d3ee);
+}
+
+.dark .support-scroll::-webkit-scrollbar-track {
+  background: rgba(20, 184, 166, 0.2);
+}
+
+.dark .support-scroll::-webkit-scrollbar-thumb {
+  background: linear-gradient(135deg, #2dd4bf, #22d3ee);
 }
