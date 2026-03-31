@@ -11,19 +11,32 @@ import {
   FaCheckCircle,
   FaTimesCircle,
   FaSpinner,
-  FaArrowRight,
+  FaArrowLeft,
   FaShieldAlt,
   FaGraduationCap,
   FaCreditCard,
-  FaMobile
+  FaMobile,
+  FaHourglassHalf,
+  FaClock
 } from 'react-icons/fa';
-import api from '../services/apiService';
+import api from '../services/api';
 import toast from 'react-hot-toast';
 
 const UpgradeToGuidePage = ({ setPage, onUpgradeSuccess }) => {
   const { user, updateUser } = useAuth();
   const licenseFileInputRef = useRef(null);
   const idFileInputRef = useRef(null);
+  
+  // ✅ التحقق الشامل من أن المستخدم مرشد بالفعل
+  const isGuide = user?.role === 'guide' || 
+                  user?.type === 'guide' || 
+                  user?.isGuide === true || 
+                  user?.guide_status === 'approved';
+
+  // حالة طلب الترقية الموجود
+  const [existingRequest, setExistingRequest] = useState(null);
+  const [loadingRequest, setLoadingRequest] = useState(true);
+  const [showExistingRequestMessage, setShowExistingRequestMessage] = useState(false);
   
   const [formData, setFormData] = useState({
     civilId: '',
@@ -55,6 +68,98 @@ const UpgradeToGuidePage = ({ setPage, onUpgradeSuccess }) => {
       setPage('profile');
     }
   }, [user, setPage]);
+
+  // ✅ التحقق من أن المستخدم ليس مرشداً بالفعل
+  useEffect(() => {
+    if (isGuide) {
+      toast.success('🎉 أنت بالفعل مرشد سياحي معتمد!');
+      setTimeout(() => {
+        setPage('guideDashboard');
+      }, 2000);
+    }
+  }, [isGuide, setPage]);
+
+  // ✅ التحقق من وجود طلب ترقية سابق
+  useEffect(() => {
+    const checkExistingUpgradeRequest = async () => {
+      if (!user) return;
+      
+      // ✅ إذا كان المستخدم مرشداً بالفعل - لا حاجة للتحقق
+      if (isGuide) {
+        setLoadingRequest(false);
+        return;
+      }
+      
+      // ✅ إذا كان المستخدم لديه طلب مرفوض
+      if (user?.guide_status === 'rejected') {
+        setShowExistingRequestMessage(false);
+        setLoadingRequest(false);
+        return;
+      }
+      
+      // ✅ إذا كان المستخدم لديه طلب قيد المراجعة
+      if (user?.guide_status === 'pending') {
+        setExistingRequest({ status: 'pending', created_at: user?.guide_request_date });
+        setShowExistingRequestMessage(true);
+        setLoadingRequest(false);
+        return;
+      }
+      
+      try {
+        setLoadingRequest(true);
+        console.log('🔍 Checking existing upgrade request for user:', user.id);
+        
+        const response = await api.getUserUpgradeRequestStatus();
+        console.log('📥 Existing upgrade request response:', response);
+        
+        if (response.success && response.request) {
+          setExistingRequest(response.request);
+          setShowExistingRequestMessage(true);
+          
+          if (response.request.status === 'pending') {
+            toast.error('لديك طلب ترقية قيد المراجعة بالفعل');
+            setTimeout(() => {
+              setPage('upgrade-status');
+            }, 3000);
+          } else if (response.request.status === 'approved') {
+            toast.success('تمت الموافقة على طلبك بالفعل! أنت الآن مرشد سياحي');
+            
+            // ✅ تحديث المستخدم في السياق
+            const updatedUser = { 
+              ...user, 
+              role: 'guide', 
+              type: 'guide', 
+              isGuide: true,
+              guide_status: 'approved' 
+            };
+            updateUser(updatedUser);
+            localStorage.setItem('user', JSON.stringify(updatedUser));
+            localStorage.setItem('userType', 'guide');
+            localStorage.setItem('touristAppUser', JSON.stringify(updatedUser));
+            
+            setTimeout(() => {
+              setPage('guideDashboard');
+            }, 2000);
+          } else if (response.request.status === 'rejected') {
+            toast.error('تم رفض طلبك السابق. يمكنك تقديم طلب جديد');
+            setShowExistingRequestMessage(false);
+          }
+        }
+      } catch (error) {
+        // لا يوجد طلب سابق - يمكن المتابعة
+        console.log('No existing upgrade request, can proceed');
+        setShowExistingRequestMessage(false);
+      } finally {
+        setLoadingRequest(false);
+      }
+    };
+    
+    if (user && !isGuide) {
+      checkExistingUpgradeRequest();
+    } else {
+      setLoadingRequest(false);
+    }
+  }, [user, setPage, updateUser, isGuide]);
 
   const validateCivilId = (id) => {
     return /^\d{10}$/.test(id);
@@ -258,19 +363,24 @@ const UpgradeToGuidePage = ({ setPage, onUpgradeSuccess }) => {
       console.log('📥 Response:', response);
       
       if (response.success) {
-        toast.success(`✅ تم إرسال طلب الترقية بنجاح! رقم الطلب: ${response.requestId || ''}`);
+        toast.success(`✅ تم إرسال طلب الترقية بنجاح!`);
         
         localStorage.setItem('lastRequestId', response.requestId || Date.now().toString());
         
-        updateUser({ 
-          guideStatus: 'pending',
+        // ✅ تحديث المستخدم في السياق
+        const updatedUser = { 
+          ...user, 
+          guide_status: 'pending',
           guideRequestId: response.requestId || Date.now().toString(),
           licenseNumber: formData.licenseNumber,
           civilId: formData.civilId,
           specialties: formData.specialties,
           experience: formData.experience,
           phone: formData.phone
-        });
+        };
+        
+        updateUser(updatedUser);
+        localStorage.setItem('touristAppUser', JSON.stringify(updatedUser));
         
         if (onUpgradeSuccess) {
           onUpgradeSuccess(response);
@@ -290,6 +400,107 @@ const UpgradeToGuidePage = ({ setPage, onUpgradeSuccess }) => {
     }
   };
 
+  // ✅ إذا كان المستخدم مرشداً بالفعل - عرض شاشة خاصة
+  if (isGuide) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-green-900 to-emerald-900 flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8 text-center">
+          <div className="w-20 h-20 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
+            <FaCheckCircle className="text-green-600 dark:text-green-400 text-4xl" />
+          </div>
+          <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-3">
+            🎉 أنت مرشد سياحي بالفعل!
+          </h2>
+          <p className="text-gray-600 dark:text-gray-400 mb-6">
+            حسابك تم ترقيته إلى مرشد سياحي. يمكنك الآن إدارة برامجك السياحية.
+          </p>
+          <button
+            onClick={() => setPage('guideDashboard')}
+            className="w-full py-3 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl font-bold hover:from-green-700 hover:to-emerald-700 transition"
+          >
+            الذهاب إلى لوحة المرشد
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // عرض شاشة التحميل أثناء التحقق من الطلب الموجود
+  if (loadingRequest) {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
+        <div className="text-center">
+          <FaSpinner className="animate-spin text-green-600 text-4xl mx-auto mb-4" />
+          <p className="text-gray-600 dark:text-gray-400">جاري التحقق من حالة الطلب...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // إذا كان هناك طلب قيد المراجعة
+  if (existingRequest && existingRequest.status === 'pending') {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8 text-center">
+          <div className="w-20 h-20 bg-yellow-100 dark:bg-yellow-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
+            <FaHourglassHalf className="text-yellow-600 dark:text-yellow-400 text-4xl" />
+          </div>
+          <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-3">
+            طلب ترقية قيد المراجعة
+          </h2>
+          <p className="text-gray-600 dark:text-gray-400 mb-4">
+            لديك طلب ترقية إلى مرشد سياحي قيد المراجعة بالفعل.
+          </p>
+          <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg mb-6 text-right">
+            <p className="text-sm text-blue-800 dark:text-blue-400">
+              📅 تاريخ الطلب: {new Date(existingRequest.created_at).toLocaleDateString('ar-EG')}
+            </p>
+            <p className="text-sm text-blue-800 dark:text-blue-400 mt-1">
+              🕐 سيتم إشعارك بنتيجة الطلب خلال 24 ساعة
+            </p>
+          </div>
+          <button
+            onClick={() => setPage('upgrade-status')}
+            className="w-full py-3 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl font-bold hover:from-green-700 hover:to-emerald-700 transition"
+          >
+            متابعة حالة الطلب
+          </button>
+          <button
+            onClick={() => setPage('profile')}
+            className="w-full mt-3 py-3 border-2 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-xl font-bold hover:bg-gray-50 dark:hover:bg-gray-700 transition"
+          >
+            العودة للملف الشخصي
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // إذا كان هناك طلب تمت الموافقة عليه
+  if (existingRequest && existingRequest.status === 'approved') {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8 text-center">
+          <div className="w-20 h-20 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
+            <FaCheckCircle className="text-green-600 dark:text-green-400 text-4xl" />
+          </div>
+          <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-3">
+            🎉 أنت الآن مرشد سياحي!
+          </h2>
+          <p className="text-gray-600 dark:text-gray-400 mb-6">
+            تمت الموافقة على طلب الترقية الخاص بك. يمكنك الآن البدء في إضافة برامج سياحية.
+          </p>
+          <button
+            onClick={() => setPage('guideDashboard')}
+            className="w-full py-3 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl font-bold hover:from-green-700 hover:to-emerald-700 transition"
+          >
+            الذهاب إلى لوحة المرشد
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (!user) return null;
 
   return (
@@ -304,13 +515,13 @@ const UpgradeToGuidePage = ({ setPage, onUpgradeSuccess }) => {
       <div className="py-8 px-4">
         <div className="max-w-3xl mx-auto pb-10">
           
-          {/* زر العودة والعنوان */}
+          {/* ✅ زر العودة */}
           <div className="mb-8">
             <button
               onClick={() => setPage('profile')}
               className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 mb-4 transition"
             >
-              <FaArrowRight />
+              <FaArrowLeft />
               <span>العودة إلى الملف الشخصي</span>
             </button>
 
@@ -755,7 +966,6 @@ const UpgradeToGuidePage = ({ setPage, onUpgradeSuccess }) => {
                   <div className="bg-gray-50 dark:bg-gray-700/50 p-4 rounded-lg">
                     <h3 className="font-bold text-gray-800 dark:text-white mb-3">الوثائق المرفوعة</h3>
                     <div className="space-y-3">
-                      {/* وثيقة مزاولة المهنة */}
                       <div className="flex items-center gap-3">
                         {licensePreview ? (
                           <img src={licensePreview} alt="license" className="w-16 h-16 object-cover rounded" />
@@ -770,7 +980,6 @@ const UpgradeToGuidePage = ({ setPage, onUpgradeSuccess }) => {
                         </div>
                       </div>
                       
-                      {/* صورة البطاقة */}
                       <div className="flex items-center gap-3">
                         {idPreview ? (
                           <img src={idPreview} alt="ID" className="w-16 h-16 object-cover rounded" />
