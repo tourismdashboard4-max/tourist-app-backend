@@ -7,7 +7,16 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import pkg from 'pg';
 import jwt from 'jsonwebtoken';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+
 const { Pool } = pkg;
+
+// الحصول على __dirname في ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // استيراد المسارات
 import authRoutes from './src/routes/authRoutes.js';
@@ -18,7 +27,7 @@ import bookingRoutes from './src/routes/bookingRoutes.js';
 import chatRoutes from './src/routes/chatRoutes.js';
 import notificationRoutes from './src/routes/notificationRoutes.js';
 import supportRoutes from './src/routes/supportRoutes.js';
-import upgradeRoutes from './src/routes/upgradeRoutes.js'; // ✅ إضافة مسار الترقيات
+import upgradeRoutes from './src/routes/upgradeRoutes.js';
 
 // استيراد دوال الوقت المساعدة
 import { createExpiryDate, isOTPValid, getTimeRemaining } from './src/utils/timeUtils.js';
@@ -106,7 +115,7 @@ console.log('☁️ Connecting to Supabase Cloud via DATABASE_URL');
 poolConfig = {
   connectionString: process.env.DATABASE_URL,
   ssl: {
-    rejectUnauthorized: false // ضروري لـ Supabase
+    rejectUnauthorized: false
   },
   max: 20,
   idleTimeoutMillis: 30000,
@@ -117,12 +126,42 @@ poolConfig = {
 
 pool = new Pool(poolConfig);
 
+// ===================== إعداد رفع الصور =====================
+
+// إنشاء مجلد uploads إذا لم يكن موجوداً
+const uploadDir = path.join(__dirname, 'uploads', 'avatars');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+  console.log(`📁 Created upload directory: ${uploadDir}`);
+}
+
+// إعداد multer للتخزين المؤقت في الذاكرة
+const storage = multer.memoryStorage();
+
+// فلترة الملفات
+const fileFilter = (req, file, cb) => {
+  const allowedTypes = /jpeg|jpg|png|gif|webp/;
+  const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+  const mimetype = allowedTypes.test(file.mimetype);
+
+  if (mimetype && extname) {
+    return cb(null, true);
+  } else {
+    cb(new Error('Only images are allowed (jpeg, jpg, png, gif, webp)'));
+  }
+};
+
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 2 * 1024 * 1024 }, // 2MB
+  fileFilter: fileFilter
+});
+
 // اختبار الاتصال بقاعدة البيانات السحابية
 const connectDB = async () => {
   try {
     const client = await pool.connect();
     
-    // استخراج معلومات المضيف من connectionString
     const hostMatch = process.env.DATABASE_URL.match(/@([^:]+)/);
     const host = hostMatch ? hostMatch[1] : 'supabase.co';
     
@@ -190,7 +229,6 @@ app.use(cors({
   credentials: true
 }));
 
-// Middleware لإضافة معلومات الوقت لكل طلب
 app.use((req, res, next) => {
   console.log(`🕐 Request received at: ${new Date().toISOString()}`);
   next();
@@ -199,6 +237,9 @@ app.use((req, res, next) => {
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));
+
+// خدمة الملفات الثابتة (للحل المحلي)
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // ===================== Routes الرئيسية =====================
 app.get('/', (req, res) => {
@@ -216,7 +257,8 @@ app.get('/', (req, res) => {
       chats: '/api/chats',
       notifications: '/api/notifications',
       support: '/api/support',
-      upgrade: '/api/upgrade' // ✅ إضافة نقطة نهاية الترقيات
+      upgrade: '/api/upgrade',
+      users: '/api/users'
     }
   });
 });
@@ -229,7 +271,195 @@ app.use('/api/bookings', bookingRoutes);
 app.use('/api/chats', chatRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/support', supportRoutes);
-app.use('/api/upgrade', upgradeRoutes); // ✅ إضافة مسار الترقيات
+app.use('/api/upgrade', upgradeRoutes);
+
+// ===================== مسارات المستخدمين والصور =====================
+
+// ✅ رفع الصورة الشخصية
+app.post('/api/users/:userId/avatar', upload.single('avatar'), async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const file = req.file;
+    
+    if (!file) {
+      return res.status(400).json({ success: false, message: 'No file uploaded' });
+    }
+
+    console.log(`📤 Uploading avatar for user: ${userId}`);
+    console.log(`📤 File size: ${file.size} bytes, Type: ${file.mimetype}`);
+
+    const fileExt = path.extname(file.originalname).split('.').pop();
+    const fileName = `${userId}-${Date.now()}.${fileExt}`;
+    
+    // حل بديل: حفظ محلياً
+    const localPath = path.join(uploadDir, fileName);
+    fs.writeFileSync(localPath, file.buffer);
+    const avatarUrl = `${req.protocol}://${req.get('host')}/uploads/avatars/${fileName}`;
+    
+    // تحديث قاعدة البيانات
+    await pool.query(
+      `UPDATE users SET avatar = $1, updated_at = NOW() WHERE id = $2`,
+      [avatarUrl, userId]
+    );
+    
+    res.json({ 
+      success: true, 
+      avatar: avatarUrl,
+      message: 'تم رفع الصورة بنجاح'
+    });
+    
+  } catch (error) {
+    console.error('Upload error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message || 'حدث خطأ في رفع الصورة'
+    });
+  }
+});
+
+// ✅ حذف الصورة الشخصية
+app.delete('/api/users/:userId/avatar', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    const result = await pool.query(
+      `SELECT avatar FROM users WHERE id = $1`,
+      [userId]
+    );
+    
+    const currentAvatar = result.rows[0]?.avatar;
+    
+    if (currentAvatar && currentAvatar.includes('/uploads/')) {
+      const fileName = currentAvatar.split('/').pop();
+      const filePath = path.join(uploadDir, fileName);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    }
+    
+    await pool.query(
+      `UPDATE users SET avatar = NULL, updated_at = NOW() WHERE id = $1`,
+      [userId]
+    );
+    
+    res.json({ 
+      success: true, 
+      message: 'تم حذف الصورة بنجاح'
+    });
+    
+  } catch (error) {
+    console.error('Delete error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message || 'حدث خطأ في حذف الصورة'
+    });
+  }
+});
+
+// ✅ تحديث الملف الشخصي
+app.put('/api/users/:userId/profile', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { name, phone, bio, location } = req.body;
+    
+    const updates = [];
+    const values = [];
+    let paramIndex = 1;
+    
+    if (name !== undefined) {
+      updates.push(`name = $${paramIndex++}`);
+      values.push(name);
+    }
+    if (phone !== undefined) {
+      updates.push(`phone = $${paramIndex++}`);
+      values.push(phone);
+    }
+    if (bio !== undefined) {
+      updates.push(`bio = $${paramIndex++}`);
+      values.push(bio);
+    }
+    if (location !== undefined) {
+      updates.push(`location = $${paramIndex++}`);
+      values.push(location);
+    }
+    
+    if (updates.length === 0) {
+      return res.status(400).json({ success: false, message: 'لا توجد بيانات للتحديث' });
+    }
+    
+    updates.push(`updated_at = NOW()`);
+    values.push(userId);
+    
+    const query = `
+      UPDATE users 
+      SET ${updates.join(', ')} 
+      WHERE id = $${paramIndex}
+      RETURNING id, name, email, role, phone, avatar, is_guide, guide_status, bio, location, created_at, updated_at
+    `;
+    
+    const result = await pool.query(query, values);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'المستخدم غير موجود' });
+    }
+    
+    res.json({ 
+      success: true, 
+      user: result.rows[0],
+      message: 'تم تحديث الملف الشخصي بنجاح'
+    });
+    
+  } catch (error) {
+    console.error('Update error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message || 'حدث خطأ في تحديث الملف الشخصي'
+    });
+  }
+});
+
+// ✅ جلب معلومات المستخدم
+app.get('/api/users/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    const result = await pool.query(
+      `SELECT id, name, email, role, phone, avatar, is_guide, guide_status, bio, location, created_at, updated_at 
+       FROM users 
+       WHERE id = $1`,
+      [userId]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'المستخدم غير موجود' });
+    }
+    
+    res.json({ success: true, user: result.rows[0] });
+    
+  } catch (error) {
+    console.error('Fetch error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message || 'حدث خطأ في جلب البيانات'
+    });
+  }
+});
+
+// ✅ جلب جميع المستخدمين (للمسؤول)
+app.get('/api/users', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, name, email, role, phone, avatar, is_guide, guide_status, bio, location, created_at 
+       FROM users 
+       ORDER BY created_at DESC`
+    );
+    
+    res.json({ success: true, users: result.rows });
+  } catch (error) {
+    console.error('Fetch users error:', error);
+    res.status(500).json({ success: false, message: 'حدث خطأ في جلب المستخدمين' });
+  }
+});
 
 // ===================== Route إضافي للمحفظة =====================
 app.get('/api/wallet/:userId', async (req, res) => {
@@ -238,7 +468,7 @@ app.get('/api/wallet/:userId', async (req, res) => {
     console.log(`📥 Fetching wallet for user: ${userId}`);
     
     const result = await pool.query(
-      'SELECT * FROM app.wallets WHERE user_id = $1',
+      'SELECT * FROM wallets WHERE user_id = $1',
       [userId]
     );
     
@@ -280,7 +510,6 @@ app.get('/api/test', (req, res) => {
 app.get('/health', async (req, res) => {
   const dbConnected = await connectDB().catch(() => false);
   
-  // استعلام إضافي للحصول على معلومات Supabase
   let dbInfo = {};
   if (dbConnected) {
     try {
@@ -310,11 +539,10 @@ app.get('/health', async (req, res) => {
 // 📢 ADMIN NOTIFICATIONS API
 // ============================================
 
-// إرسال إشعار لمسؤول معين
 async function sendAdminNotification(adminId, type, title, message, relatedId = null, priority = 'normal', actionUrl = null, metadata = {}) {
   try {
     const result = await pool.query(
-      `INSERT INTO app.admin_notifications 
+      `INSERT INTO admin_notifications 
        (admin_id, type, title, message, related_id, priority, action_url, metadata, created_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
        RETURNING *`,
@@ -327,11 +555,10 @@ async function sendAdminNotification(adminId, type, title, message, relatedId = 
   }
 }
 
-// إرسال إشعار لجميع المسؤولين والدعم الفني
 async function sendNotificationToAllAdmins(type, title, message, relatedId = null, priority = 'normal', actionUrl = null, metadata = {}) {
   try {
     const admins = await pool.query(
-      `SELECT id FROM app.users WHERE role IN ('admin', 'support')`
+      `SELECT id FROM users WHERE role IN ('admin', 'support')`
     );
     
     for (const admin of admins.rows) {
@@ -344,10 +571,8 @@ async function sendNotificationToAllAdmins(type, title, message, relatedId = nul
   }
 }
 
-// الحصول على إشعارات المسؤول
 app.get('/api/admin/notifications', async (req, res) => {
   try {
-    // التحقق من التوكن
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
@@ -366,7 +591,7 @@ app.get('/api/admin/notifications', async (req, res) => {
     const { status, limit = 50, offset = 0 } = req.query;
     
     let query = `
-      SELECT * FROM app.admin_notifications 
+      SELECT * FROM admin_notifications 
       WHERE admin_id = $1
     `;
     const params = [adminId];
@@ -383,9 +608,8 @@ app.get('/api/admin/notifications', async (req, res) => {
     
     const result = await pool.query(query, params);
     
-    // حساب عدد غير المقروءة
     const unreadResult = await pool.query(
-      `SELECT COUNT(*) FROM app.admin_notifications 
+      `SELECT COUNT(*) FROM admin_notifications 
        WHERE admin_id = $1 AND status = 'unread'`,
       [adminId]
     );
@@ -402,7 +626,6 @@ app.get('/api/admin/notifications', async (req, res) => {
   }
 });
 
-// تحديث إشعار كمقروء
 app.put('/api/admin/notifications/:id/read', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -423,7 +646,7 @@ app.put('/api/admin/notifications/:id/read', async (req, res) => {
     const { id } = req.params;
     
     const result = await pool.query(
-      `UPDATE app.admin_notifications 
+      `UPDATE admin_notifications 
        SET status = 'read', read_at = NOW()
        WHERE id = $1 AND admin_id = $2
        RETURNING *`,
@@ -441,7 +664,6 @@ app.put('/api/admin/notifications/:id/read', async (req, res) => {
   }
 });
 
-// تحديث جميع الإشعارات كمقروءة
 app.put('/api/admin/notifications/read-all', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -460,7 +682,7 @@ app.put('/api/admin/notifications/read-all', async (req, res) => {
     }
     
     await pool.query(
-      `UPDATE app.admin_notifications 
+      `UPDATE admin_notifications 
        SET status = 'read', read_at = NOW()
        WHERE admin_id = $1 AND status = 'unread'`,
       [adminId]
@@ -473,7 +695,6 @@ app.put('/api/admin/notifications/read-all', async (req, res) => {
   }
 });
 
-// حذف إشعار
 app.delete('/api/admin/notifications/:id', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -494,7 +715,7 @@ app.delete('/api/admin/notifications/:id', async (req, res) => {
     const { id } = req.params;
     
     const result = await pool.query(
-      `DELETE FROM app.admin_notifications 
+      `DELETE FROM admin_notifications 
        WHERE id = $1 AND admin_id = $2
        RETURNING id`,
       [id, adminId]
@@ -511,7 +732,6 @@ app.delete('/api/admin/notifications/:id', async (req, res) => {
   }
 });
 
-// أرشفة إشعار
 app.put('/api/admin/notifications/:id/archive', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -532,7 +752,7 @@ app.put('/api/admin/notifications/:id/archive', async (req, res) => {
     const { id } = req.params;
     
     const result = await pool.query(
-      `UPDATE app.admin_notifications 
+      `UPDATE admin_notifications 
        SET status = 'archived', archived_at = NOW()
        WHERE id = $1 AND admin_id = $2
        RETURNING *`,
@@ -574,6 +794,7 @@ const startServer = async () => {
   ║  ▶ Timezone:    UTC
   ║  ▶ Test API:    /api/test
   ║  ▶ Health:      /health
+  ║  ▶ Uploads:     /uploads/avatars
   ╚══════════════════════════════════════════════╝
       `);
       console.log(`🕐 Server started at: ${new Date().toISOString()}`);
@@ -584,5 +805,5 @@ const startServer = async () => {
 
 startServer();
 
-// ===================== التصدير مرة واحدة فقط =====================
+// ===================== التصدير =====================
 export { io, onlineUsers, pool, createExpiryDate, isOTPValid, getTimeRemaining };
