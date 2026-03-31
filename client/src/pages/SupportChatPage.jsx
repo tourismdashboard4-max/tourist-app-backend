@@ -1,1474 +1,500 @@
 // client/src/pages/SupportChatPage.jsx
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { MessageCircle, Send, Loader2, Phone, Mail, ArrowLeft } from 'lucide-react';
 import api from '../services/api';
-import { 
-  FaHeadset, 
-  FaArrowLeft, 
-  FaSpinner, 
-  FaPaperPlane, 
-  FaCheck, 
-  FaExclamationCircle,
-  FaImage,
-  FaSmile,
-  FaPaperclip,
-  FaStar,
-  FaRegStar,
-  FaTimes,
-  FaEllipsisH,
-  FaCheckDouble,
-  FaUserCircle
-} from 'react-icons/fa';
-import { IoMdSend } from 'react-icons/io';
-import { MdAttachFile, MdInsertEmoticon, MdImage } from 'react-icons/md';
 import toast from 'react-hot-toast';
-import EmojiPicker from 'emoji-picker-react';
-import Lightbox from 'react-image-lightbox';
-import 'react-image-lightbox/style.css';
 
-// ========== رسائل التشخيص ==========
-console.log('🔥🔥🔥 SupportChatPage is being imported!', new Date().toLocaleTimeString());
-
-const SupportChatPage = ({ setPage }) => {
-  // ========== تشخيص التحميل ==========
-  console.log('🎯 SupportChatPage mounted at:', new Date().toLocaleTimeString());
-  console.log('📦 Props received:', { setPage: !!setPage });
-
-  const { user, isAuthenticated } = useAuth();
-  
-  // تشخيص الـ Auth
-  console.log('👤 Auth State:', { 
-    user: user?.email, 
-    isAuthenticated,
-    hasUser: !!user 
-  });
-
-  const [loading, setLoading] = useState(true);
-  const [sending, setSending] = useState(false);
+const SupportChatPage = ({ setPage, lang = 'ar' }) => {
+  const { user } = useAuth();
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
   const [conversationId, setConversationId] = useState(null);
-  const [isTyping, setIsTyping] = useState(false);
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const [showRating, setShowRating] = useState(false);
-  const [rating, setRating] = useState(0);
-  const [hoverRating, setHoverRating] = useState(0);
-  const [lightboxOpen, setLightboxOpen] = useState(false);
-  const [selectedImage, setSelectedImage] = useState(null);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [showAttachMenu, setShowAttachMenu] = useState(false);
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [reconnecting, setReconnecting] = useState(false);
-  const [page_, setPage_] = useState(1);
-  const [hasMore, setHasMore] = useState(true);
-  const [error, setError] = useState(null);
-  const [supportInfo, setSupportInfo] = useState({
-    name: 'فريق الدعم الفني',
-    status: 'online',
-    avatar: null,
-    responseTime: 'عادةً يرد خلال دقائق'
-  });
-
+  const [supportStatus, setSupportStatus] = useState('online');
+  const [typing, setTyping] = useState(false);
+  
   const messagesEndRef = useRef(null);
-  const fileInputRef = useRef(null);
-  const imageInputRef = useRef(null);
-  const chatContainerRef = useRef(null);
-  const wsRef = useRef(null);
-  const typingTimeoutRef = useRef(null);
-  const reconnectTimeoutRef = useRef(null);
-
-  // WebSocket connection
-  const connectWebSocket = useCallback(() => {
-    if (!conversationId) return;
-
-    const wsUrl = process.env.REACT_APP_WS_URL || 'ws://localhost:3001';
-    wsRef.current = new WebSocket(`${wsUrl}/chat/${conversationId}?userId=${user?.id}`);
-
-    wsRef.current.onopen = () => {
-      console.log('✅ WebSocket connected');
-      setReconnecting(false);
-      toast.success('متصل بالدعم الفني', { icon: '🔌', duration: 2000 });
-    };
-
-    wsRef.current.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      
-      switch (data.type) {
-        case 'message':
-          setMessages(prev => [...prev, { ...data.message, status: 'delivered' }]);
-          break;
-        case 'typing':
-          handleSupportTyping(data.isTyping);
-          break;
-        case 'read':
-          markMessagesAsRead(data.messageIds);
-          break;
-        case 'status':
-          setSupportInfo(prev => ({ ...prev, status: data.status }));
-          break;
-        default:
-          break;
-      }
-    };
-
-    wsRef.current.onclose = () => {
-      console.log('❌ WebSocket disconnected');
-      handleReconnection();
-    };
-
-    wsRef.current.onerror = (error) => {
-      console.error('WebSocket error:', error);
-    };
-  }, [conversationId, user?.id]);
-
-  // Handle reconnection
-  const handleReconnection = useCallback(() => {
-    if (reconnecting) return;
-    
-    setReconnecting(true);
-    toast.loading('جاري إعادة الاتصال...', { id: 'reconnecting' });
-    
-    let attempts = 0;
-    const maxAttempts = 5;
-    
-    const attemptReconnect = () => {
-      if (attempts >= maxAttempts) {
-        toast.error('تعذر إعادة الاتصال، يرجى تحديث الصفحة', { id: 'reconnecting' });
-        setReconnecting(false);
-        return;
-      }
-      
-      attempts++;
-      console.log(`🔄 محاولة إعادة الاتصال ${attempts}/${maxAttempts}`);
-      
-      setTimeout(() => {
-        if (navigator.onLine) {
-          connectWebSocket();
-        } else {
-          attemptReconnect();
-        }
-      }, 3000 * attempts);
-    };
-    
-    attemptReconnect();
-  }, [reconnecting, connectWebSocket]);
-
-  // تحميل المحادثة عند فتح الصفحة
-  useEffect(() => {
-    console.log('📋 useEffect - checking authentication');
-    
-    if (!isAuthenticated) {
-      console.log('❌ User not authenticated, redirecting to profile');
-      toast.error('يرجى تسجيل الدخول أولاً');
-      setPage('profile');
-      return;
-    }
-    
-    console.log('✅ User authenticated, loading chat...');
-    loadOrCreateChat();
-  }, [isAuthenticated]);
-
-  // WebSocket connection
-  useEffect(() => {
-    if (conversationId) {
-      console.log('🔌 Connecting WebSocket for conversation:', conversationId);
-      connectWebSocket();
-    }
-    return () => {
-      if (wsRef.current) {
-        console.log('🔌 Disconnecting WebSocket');
-        wsRef.current.close();
-      }
-    };
-  }, [conversationId, connectWebSocket]);
-
-  // Online/Offline detection
-  useEffect(() => {
-    const handleOnline = () => {
-      setIsOnline(true);
-      toast.success('تم استعادة الاتصال بالإنترنت');
-      if (conversationId && !wsRef.current) {
-        connectWebSocket();
-      }
-    };
-    
-    const handleOffline = () => {
-      setIsOnline(false);
-      toast.error('انقطع الاتصال بالإنترنت');
-    };
-    
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-    
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, [conversationId, connectWebSocket]);
-
-  // التمرير لآخر رسالة
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
-  // تحميل المزيد من الرسائل عند التمرير للأعلى
-  useEffect(() => {
-    const chatContainer = chatContainerRef.current;
-    if (!chatContainer) return;
-
-    const handleScroll = () => {
-      if (chatContainer.scrollTop === 0 && hasMore && !loading) {
-        loadMoreMessages();
-      }
-    };
-
-    chatContainer.addEventListener('scroll', handleScroll);
-    return () => chatContainer.removeEventListener('scroll', handleScroll);
-  }, [hasMore, loading]);
+  const messagesContainerRef = useRef(null);
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    setTimeout(() => {
+      if (messagesContainerRef.current) {
+        messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+      }
+      if (messagesEndRef.current) {
+        messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      }
+    }, 100);
   };
 
-  // تحميل أو إنشاء محادثة الدعم
-  const loadOrCreateChat = async () => {
+  useEffect(() => {
+    if (messages.length > 0) {
+      scrollToBottom();
+    }
+  }, [messages]);
+
+  // ✅ دالة الرجوع إلى صفحة الإشعارات
+  const handleBack = () => {
+    console.log('🔙 [SupportChat] Returning to notifications page');
+    setPage('notifications');
+  };
+
+  // دالة للتحقق من صحة التذكرة
+  const validateTicketOwnership = async (ticketId) => {
     try {
+      console.log('🔍 [SupportChat] Validating ticket:', ticketId, 'for user:', user.id);
+      
+      const response = await api.getSupportTickets({ id: ticketId });
+      console.log('🔍 [SupportChat] Ticket details:', response);
+      
+      if (response.success && response.tickets && response.tickets.length > 0) {
+        const ticket = response.tickets[0];
+        const ticketUserId = ticket.user_id;
+        
+        if (ticketUserId !== user.id) {
+          console.error('❌❌❌ TICKET MISMATCH DETECTED!');
+          return false;
+        }
+        
+        console.log('✅ [SupportChat] Ticket ownership verified');
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('❌ [SupportChat] Error validating ticket:', error);
+      return true;
+    }
+  };
+
+  // تحميل التذكرة أو إنشاؤها
+  useEffect(() => {
+    const loadOrCreateTicket = async () => {
       setLoading(true);
-      setError(null);
-      console.log('🔍 البحث عن محادثة دعم...');
-
-      const convResponse = await api.getUserConversations();
-      console.log('📥 Conversations response:', convResponse);
-      
-      if (convResponse.success && convResponse.conversations) {
-        const existingChat = convResponse.conversations.find(
-          conv => conv.type === 'support'
-        );
-
-        if (existingChat) {
-          console.log('✅ Found existing support chat:', existingChat);
-          const chatId = existingChat._id || existingChat.id;
-          setConversationId(chatId);
-          await loadMessages(chatId, 1);
-          setLoading(false);
-          return;
+      try {
+        // ✅ قراءة ticketId من localStorage إذا كان موجوداً
+        const savedTicketId = localStorage.getItem('selectedTicketId');
+        if (savedTicketId) {
+          console.log('📤 Loading specific ticket from localStorage:', savedTicketId);
+          localStorage.removeItem('selectedTicketId');
+          
+          // التحقق من صحة التذكرة
+          const ticketResponse = await api.getSupportTicket(savedTicketId);
+          if (ticketResponse.success && ticketResponse.ticket) {
+            setConversationId(savedTicketId);
+            await loadMessages(savedTicketId);
+            setLoading(false);
+            return;
+          }
         }
-      }
-
-      // إنشاء محادثة جديدة
-      console.log('🔄 إنشاء محادثة جديدة...');
-      const response = await api.startSupportChat({
-        subject: 'طلب دعم جديد',
-        manual: true
-      });
-
-      console.log('📥 Start chat response:', response);
-
-      if (response.success) {
-        const chatId = response.chat._id || response.chat.id;
-        setConversationId(chatId);
-        setMessages([]);
         
-        // رسالة ترحيب
-        setTimeout(() => {
-          const welcomeMessage = {
-            id: Date.now(),
-            senderId: 'support',
-            text: 'مرحباً بك في الدعم الفني! كيف يمكنني مساعدتك اليوم؟',
-            createdAt: new Date().toISOString(),
-            status: 'delivered'
-          };
-          setMessages([welcomeMessage]);
-        }, 1000);
-      }
-    } catch (error) {
-      console.error('❌ خطأ في تحميل المحادثة:', error);
-      setError(error.message);
-      toast.error('فشل تحميل المحادثة');
-      
-      // عرض رسائل تجريبية في حالة الخطأ
-      setMessages([
-        {
-          id: 1,
-          senderId: 'support',
-          text: 'مرحباً بك في الدعم الفني! (وضع التجربة)',
-          createdAt: new Date().toISOString(),
-          status: 'delivered'
+        console.log('🔍 [SupportChat] Loading ticket for user:', user?.id);
+        
+        const ticketsResponse = await api.getSupportTickets({ 
+          user_id: user.id,
+          status: 'open'
+        });
+        
+        console.log('📥 [SupportChat] Tickets response:', ticketsResponse);
+        
+        if (ticketsResponse.success && ticketsResponse.tickets && ticketsResponse.tickets.length > 0) {
+          const ticket = ticketsResponse.tickets[0];
+          
+          if (ticket.user_id !== user.id) {
+            console.error('❌ Ticket belongs to different user, creating new...');
+            await createNewTicket();
+            return;
+          }
+          
+          console.log('✅ [SupportChat] Using existing ticket ID:', ticket.id);
+          setConversationId(ticket.id);
+          await loadMessages(ticket.id);
+        } else {
+          console.log('🆕 [SupportChat] No open ticket found, creating new one...');
+          await createNewTicket();
         }
-      ]);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // تحميل الرسائل
-  const loadMessages = async (chatId, pageNum) => {
-    try {
-      console.log('📥 Loading messages for chat:', chatId, 'page:', pageNum);
-      const response = await api.getConversationMessages(chatId, pageNum);
-      if (response.success) {
-        setMessages(response.messages || []);
-        setHasMore(response.hasMore || false);
+      } catch (error) {
+        console.error('❌ [SupportChat] Error loading ticket:', error);
+        setMessages([
+          {
+            id: 1,
+            message: lang === 'ar' 
+              ? 'مرحباً بك في الدعم الفني! كيف يمكنني مساعدتك اليوم؟'
+              : 'Welcome to support! How can I help you today?',
+            is_from_user: false,
+            created_at: new Date().toISOString(),
+            sender_name: lang === 'ar' ? 'فريق الدعم' : 'Support Team'
+          }
+        ]);
+      } finally {
+        setLoading(false);
       }
-    } catch (error) {
-      console.error('خطأ في تحميل الرسائل:', error);
-    }
-  };
-
-  // تحميل المزيد من الرسائل
-  const loadMoreMessages = async () => {
-    try {
-      const nextPage = page_ + 1;
-      const response = await api.getConversationMessages(conversationId, nextPage);
-      
-      if (response.success && response.messages.length > 0) {
-        setMessages(prev => [...response.messages, ...prev]);
-        setPage_(nextPage);
-        setHasMore(response.hasMore);
-        
-        // الحفاظ على موضع التمرير
-        const oldHeight = chatContainerRef.current.scrollHeight;
-        setTimeout(() => {
-          const newHeight = chatContainerRef.current.scrollHeight;
-          chatContainerRef.current.scrollTop = newHeight - oldHeight;
-        }, 100);
-      } else {
-        setHasMore(false);
-      }
-    } catch (error) {
-      console.error('خطأ في تحميل المزيد:', error);
-    }
-  };
-
-  // إرسال رسالة نصية
-  const sendMessage = async () => {
-    if (!newMessage.trim() || !conversationId || sending) return;
-
-    // رسالة مؤقتة
-    const tempId = Date.now();
-    const tempMessage = {
-      id: tempId,
-      senderId: user?.id,
-      text: newMessage,
-      createdAt: new Date().toISOString(),
-      status: 'sending'
     };
 
-    setMessages(prev => [...prev, tempMessage]);
-    const messageText = newMessage;
-    setNewMessage('');
-    setSending(true);
-
-    // إرسال عبر WebSocket إذا كان متاحاً
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({
-        type: 'message',
-        text: messageText,
-        tempId
-      }));
+    if (user) {
+      loadOrCreateTicket();
     }
+  }, [user]);
 
+  // تحميل الرسائل
+  const loadMessages = async (ticketId) => {
     try {
-      const response = await api.sendTextMessage(conversationId, messageText);
+      console.log('📥 [SupportChat] Loading messages for ticket:', ticketId);
       
-      if (response.success) {
-        setMessages(prev => 
-          prev.map(msg => msg.id === tempId ? { ...response.data, status: 'sent' } : msg)
-        );
-        
-        // تأكيد الاستلام عبر WebSocket
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({
-            type: 'received',
-            messageId: response.data.id
-          }));
-        }
+      const response = await api.getSupportMessages(ticketId);
+      console.log('📥 [SupportChat] Messages response:', response);
+      
+      if (response.success && response.messages) {
+        const formattedMessages = response.messages.map(msg => ({
+          id: msg.id,
+          message: msg.message,
+          is_from_user: msg.is_from_user,
+          created_at: msg.created_at,
+          sender_name: msg.sender_name
+        }));
+        console.log('✅ [SupportChat] Loaded', formattedMessages.length, 'messages');
+        setMessages(formattedMessages);
+      } else {
+        setMessages([]);
       }
     } catch (error) {
-      console.error('خطأ في إرسال الرسالة:', error);
-      setMessages(prev => 
-        prev.map(msg => msg.id === tempId ? { ...msg, status: 'error' } : msg)
-      );
-      toast.error('فشل إرسال الرسالة');
+      console.error('❌ [SupportChat] Error loading messages:', error);
+    }
+  };
+
+  // إنشاء تذكرة جديدة
+  const createNewTicket = async () => {
+    try {
+      console.log('🆕 [SupportChat] Creating new ticket for user:', user.id);
+      
+      const response = await api.createSupportTicket({
+        subject: lang === 'ar' ? 'طلب دعم جديد' : 'New Support Request',
+        type: 'general',
+        priority: 'normal',
+        user_id: user.id,
+        email: user.email,
+        fullName: user.fullName || user.name
+      });
+      
+      console.log('📥 [SupportChat] Create ticket response:', response);
+      
+      if (response.success && response.ticket) {
+        console.log('✅ [SupportChat] Created ticket ID:', response.ticket.id);
+        setConversationId(response.ticket.id);
+        
+        setMessages([
+          {
+            id: Date.now(),
+            message: lang === 'ar' 
+              ? 'مرحباً بك في الدعم الفني! كيف يمكنني مساعدتك اليوم؟'
+              : 'Welcome to support! How can I help you today?',
+            is_from_user: false,
+            created_at: new Date().toISOString(),
+            sender_name: lang === 'ar' ? 'فريق الدعم' : 'Support Team'
+          }
+        ]);
+      }
+    } catch (error) {
+      console.error('❌ [SupportChat] Error creating ticket:', error);
+      throw error;
+    }
+  };
+
+  // ✅ إرسال رسالة مع إشعار للمسؤولين (إشعار واحد لكل محادثة)
+  const sendMessage = async () => {
+    if (!newMessage.trim() || sending) return;
+
+    const messageText = newMessage.trim();
+    console.log('📤 [SupportChat] Sending message:', messageText);
+    
+    setNewMessage('');
+    setSending(true);
+    
+    const tempMessage = {
+      id: Date.now(),
+      message: messageText,
+      is_from_user: true,
+      created_at: new Date().toISOString(),
+      sender_name: user?.fullName || user?.name || 'أنت',
+      status: 'sending'
+    };
+    setMessages(prev => [...prev, tempMessage]);
+    scrollToBottom();
+
+    try {
+      let response;
+      let currentTicketId = conversationId;
+      
+      if (conversationId) {
+        response = await api.sendSupportMessage(conversationId, messageText);
+      } else {
+        const ticketResponse = await api.createSupportTicket({
+          subject: lang === 'ar' ? 'طلب دعم جديد' : 'New Support Request',
+          type: 'general',
+          priority: 'normal',
+          user_id: user.id,
+          email: user.email
+        });
+        
+        if (ticketResponse.success && ticketResponse.ticket) {
+          currentTicketId = ticketResponse.ticket.id;
+          setConversationId(currentTicketId);
+          response = await api.sendSupportMessage(currentTicketId, messageText);
+        } else {
+          throw new Error('Failed to create ticket');
+        }
+      }
+      
+      if (response && response.success) {
+        setMessages(prev => 
+          prev.map(m => m.id === tempMessage.id 
+            ? { ...m, status: 'sent' } 
+            : m
+          )
+        );
+        
+        // ✅ إرسال إشعار للمسؤولين (يتم إنشاء إشعار واحد فقط لكل محادثة)
+        try {
+          const token = localStorage.getItem('token');
+          if (!token) {
+            console.log('⚠️ No token found, skipping admin notification');
+            return;
+          }
+          
+          // إرسال إشعار للمسؤولين
+          const adminIds = [3, 4, 5]; // معرفات المسؤولين
+          for (const adminId of adminIds) {
+            await fetch('https://tourist-app-api.onrender.com/api/notifications/admin-message', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                userId: user.id,
+                ticketId: currentTicketId,
+                message: messageText,
+                userName: user?.fullName || user?.name
+              })
+            });
+          }
+          console.log('📤 Sent notification to admins');
+        } catch (notifError) {
+          console.error('Error sending admin notification:', notifError);
+        }
+        
+      } else {
+        setMessages(prev => prev.filter(m => m.id !== tempMessage.id));
+        toast.error(lang === 'ar' ? 'فشل إرسال الرسالة' : 'Failed to send message');
+      }
+    } catch (error) {
+      console.error('❌ [SupportChat] Error sending message:', error);
+      setMessages(prev => prev.filter(m => m.id !== tempMessage.id));
+      toast.error(lang === 'ar' ? 'فشل إرسال الرسالة' : 'Failed to send message');
     } finally {
       setSending(false);
     }
   };
 
-  // إرسال صورة
-  const sendImage = async (file) => {
-    if (!file || !conversationId) return;
-
-    const formData = new FormData();
-    formData.append('image', file);
-    formData.append('conversationId', conversationId);
-
-    // رسالة مؤقتة
-    const tempId = Date.now();
-    const tempMessage = {
-      id: tempId,
-      senderId: user?.id,
-      type: 'image',
-      image: URL.createObjectURL(file),
-      fileName: file.name,
-      fileSize: file.size,
-      createdAt: new Date().toISOString(),
-      status: 'uploading',
-      uploadProgress: 0
-    };
-
-    setMessages(prev => [...prev, tempMessage]);
-    setUploadProgress(0);
-
-    try {
-      const response = await api.sendImageMessage(formData, (progress) => {
-        setUploadProgress(progress);
-        setMessages(prev => 
-          prev.map(msg => msg.id === tempId ? { ...msg, uploadProgress: progress } : msg)
-        );
-      });
-
-      if (response.success) {
-        setMessages(prev => 
-          prev.map(msg => msg.id === tempId ? { ...response.data, status: 'sent' } : msg)
-        );
-        toast.success('تم إرسال الصورة بنجاح');
-      }
-    } catch (error) {
-      console.error('خطأ في إرسال الصورة:', error);
-      setMessages(prev => 
-        prev.map(msg => msg.id === tempId ? { ...msg, status: 'error' } : msg)
-      );
-      toast.error('فشل إرسال الصورة');
-    } finally {
-      setUploadProgress(0);
+  // محاكاة كتابة الدعم
+  useEffect(() => {
+    if (messages.length > 0 && messages[messages.length - 1]?.is_from_user && !sending) {
+      setTyping(true);
+      const timer = setTimeout(() => {
+        setTyping(false);
+      }, 2000);
+      return () => clearTimeout(timer);
     }
-  };
+  }, [messages, sending]);
 
-  // إرسال ملف
-  const sendFile = async (file) => {
-    if (!file || !conversationId) return;
-
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('conversationId', conversationId);
-
-    const tempId = Date.now();
-    const tempMessage = {
-      id: tempId,
-      senderId: user?.id,
-      type: 'file',
-      fileName: file.name,
-      fileSize: file.size,
-      fileType: file.type,
-      createdAt: new Date().toISOString(),
-      status: 'uploading'
-    };
-
-    setMessages(prev => [...prev, tempMessage]);
-
-    try {
-      const response = await api.sendFileMessage(formData);
-      
-      if (response.success) {
-        setMessages(prev => 
-          prev.map(msg => msg.id === tempId ? { ...response.data, status: 'sent' } : msg)
-        );
-        toast.success('تم إرسال الملف بنجاح');
-      }
-    } catch (error) {
-      console.error('خطأ في إرسال الملف:', error);
-      setMessages(prev => 
-        prev.map(msg => msg.id === tempId ? { ...msg, status: 'error' } : msg)
-      );
-      toast.error('فشل إرسال الملف');
-    }
-  };
-
-  // مؤشر الكتابة
-  const handleTyping = () => {
-    if (!isTyping && wsRef.current?.readyState === WebSocket.OPEN) {
-      setIsTyping(true);
-      wsRef.current.send(JSON.stringify({ type: 'typing', isTyping: true }));
-      
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-      }
-      
-      typingTimeoutRef.current = setTimeout(() => {
-        setIsTyping(false);
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({ type: 'typing', isTyping: false }));
-        }
-      }, 3000);
-    }
-  };
-
-  // مؤشر كتابة الدعم
-  const handleSupportTyping = (typing) => {
-    setSupportInfo(prev => ({ ...prev, isTyping: typing }));
-  };
-
-  // تحديد الرسائل كمقروءة
-  const markMessagesAsRead = (messageIds) => {
-    setMessages(prev => 
-      prev.map(msg => 
-        messageIds.includes(msg.id) ? { ...msg, status: 'read' } : msg
-      )
-    );
-  };
-
-  // إرسال بالضغط على Enter
-  const handleKeyPress = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
-  };
-
-  // اختيار إيموجي
-  const onEmojiClick = (emojiData) => {
-    setNewMessage(prev => prev + emojiData.emoji);
-    setShowEmojiPicker(false);
-  };
-
-  // فتح صورة
-  const openImage = (imageUrl) => {
-    setSelectedImage(imageUrl);
-    setLightboxOpen(true);
-  };
-
-  // تحميل ملف
-  const downloadFile = async (fileUrl, fileName) => {
-    try {
-      const response = await fetch(fileUrl);
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = fileName;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
-      toast.success('تم تحميل الملف');
-    } catch (error) {
-      console.error('خطأ في تحميل الملف:', error);
-      toast.error('فشل تحميل الملف');
-    }
-  };
-
-  // تقييم المحادثة
-  const submitRating = async () => {
-    if (rating === 0) {
-      toast.error('يرجى اختيار تقييم');
-      return;
-    }
-
-    try {
-      await api.rateConversation(conversationId, rating);
-      toast.success('شكراً لتقييمك!');
-      setShowRating(false);
-      
-      // رسالة شكر
-      const thankYouMessage = {
-        id: Date.now(),
-        senderId: 'support',
-        text: 'شكراً لتقييمك! نسعد دائماً بخدمتك',
-        createdAt: new Date().toISOString(),
-        status: 'delivered'
-      };
-      setMessages(prev => [...prev, thankYouMessage]);
-    } catch (error) {
-      console.error('خطأ في إرسال التقييم:', error);
-      toast.error('فشل إرسال التقييم');
-    }
-  };
-
-  // إنهاء المحادثة
-  const endConversation = () => {
-    setShowRating(true);
-  };
-
-  // تنسيق الوقت
-  const formatTime = (timestamp) => {
-    if (!timestamp) return '';
-    const date = new Date(timestamp);
+  const formatTime = (dateString) => {
+    if (!dateString) return '';
+    const date = new Date(dateString);
     const now = new Date();
     const diff = now - date;
-    const diffMinutes = Math.floor(diff / 60000);
-    const diffHours = Math.floor(diff / 3600000);
-    const diffDays = Math.floor(diff / 86400000);
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
 
-    if (diffMinutes < 1) return 'الآن';
-    if (diffMinutes < 60) return `منذ ${diffMinutes} دقيقة`;
-    if (diffHours < 24) return `منذ ${diffHours} ساعة`;
-    if (diffDays === 1) return 'أمس';
-    return date.toLocaleDateString('ar-EG');
+    if (minutes < 1) return lang === 'ar' ? 'الآن' : 'Just now';
+    if (minutes < 60) return `${minutes} ${lang === 'ar' ? 'دقيقة' : 'min'}`;
+    if (hours < 24) return `${hours} ${lang === 'ar' ? 'ساعة' : 'hr'}`;
+    if (days < 7) return `${days} ${lang === 'ar' ? 'يوم' : 'day'}`;
+    return date.toLocaleDateString(lang === 'ar' ? 'ar-EG' : 'en-US');
   };
 
-  // تنسيق حجم الملف
-  const formatFileSize = (bytes) => {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  };
-
-  // إذا كان هناك خطأ
-  if (error) {
+  if (!user) {
     return (
-      <div style={styles.errorContainer}>
-        <FaExclamationCircle size={48} color="#f44336" />
-        <h3>حدث خطأ في تحميل المحادثة</h3>
-        <p>{error}</p>
-        <button 
-          onClick={() => setPage('profile')}
-          style={styles.errorButton}
-        >
-          العودة للصفحة الرئيسية
-        </button>
+      <div className="h-full flex items-center justify-center bg-gradient-to-br from-teal-900 via-cyan-900 to-emerald-900">
+        <div className="text-center">
+          <div className="w-20 h-20 bg-gradient-to-r from-teal-500 to-cyan-500 rounded-full flex items-center justify-center mx-auto mb-4">
+            <MessageCircle className="w-10 h-10 text-white" />
+          </div>
+          <p className="text-gray-300 mb-4">يرجى تسجيل الدخول أولاً</p>
+          <button 
+            onClick={() => setPage('profile')} 
+            className="px-6 py-3 bg-gradient-to-r from-teal-500 to-cyan-500 text-white rounded-xl font-semibold hover:from-teal-600 hover:to-cyan-600 transition shadow-lg"
+          >
+            تسجيل الدخول
+          </button>
+        </div>
       </div>
     );
   }
-
-  // حالة التحميل
-  if (loading) {
-    return (
-      <div style={styles.loadingContainer}>
-        <FaSpinner size={48} style={{ animation: 'spin 1s linear infinite', color: '#2196F3' }} />
-        <p style={styles.loadingText}>جاري تحميل المحادثة...</p>
-      </div>
-    );
-  }
-
-  console.log('🎨 Rendering SupportChatPage UI with', messages.length, 'messages');
 
   return (
-    <div style={styles.container}>
-      {/* رأس الصفحة */}
-      <div style={styles.header}>
-        <button onClick={() => setPage('profile')} style={styles.backButton}>
-          <FaArrowLeft /> رجوع
-        </button>
-        
-        <div style={styles.supportInfo}>
-          <div style={styles.supportAvatar}>
-            {supportInfo.avatar ? (
-              <img src={supportInfo.avatar} alt="Support" style={styles.avatarImage} />
-            ) : (
-              <FaHeadset size={24} />
-            )}
-            <span style={{
-              ...styles.statusDot,
-              backgroundColor: supportInfo.status === 'online' ? '#4CAF50' : '#FFC107'
-            }} />
-          </div>
-          
-          <div style={styles.supportDetails}>
-            <h3 style={styles.supportName}>{supportInfo.name}</h3>
-            <p style={styles.supportStatus}>
-              {supportInfo.isTyping ? (
-                <span style={styles.typingText}>يكتب...</span>
-              ) : (
-                <>
-                  <span style={{
-                    ...styles.statusText,
-                    color: supportInfo.status === 'online' ? '#4CAF50' : '#FFC107'
-                  }}>
-                    {supportInfo.status === 'online' ? 'متصل' : 'غير متصل'}
-                  </span>
-                  <span style={styles.responseTime}>{supportInfo.responseTime}</span>
-                </>
-              )}
-            </p>
+    <div className="h-screen flex flex-col bg-gradient-to-br from-teal-900 via-cyan-900 to-emerald-900 overflow-hidden">
+      {/* Header - تم تعديل زر الرجوع */}
+      <div className="bg-gradient-to-r from-teal-600 to-cyan-600 shadow-lg flex-shrink-0">
+        <div className="px-4 py-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleBack}
+                className="p-2 hover:bg-white/20 rounded-xl transition"
+              >
+                <ArrowLeft size={22} className="text-white" />
+              </button>
+              <div className="relative">
+                <div className="w-10 h-10 bg-gradient-to-r from-teal-400 to-cyan-500 rounded-full flex items-center justify-center shadow-lg">
+                  <MessageCircle className="w-5 h-5 text-white" />
+                </div>
+                <span className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-white ${
+                  supportStatus === 'online' ? 'bg-green-500' : 
+                  supportStatus === 'away' ? 'bg-yellow-500' : 'bg-gray-500'
+                }`}></span>
+              </div>
+              <div>
+                <h1 className="text-base font-bold text-white">
+                  {lang === 'ar' ? 'الدعم الفني' : 'Support'}
+                </h1>
+                <p className="text-xs text-white/80">
+                  {supportStatus === 'online' 
+                    ? (lang === 'ar' ? 'متصل الآن' : 'Online now')
+                    : supportStatus === 'away'
+                      ? (lang === 'ar' ? 'غائب حالياً' : 'Away')
+                      : (lang === 'ar' ? 'غير متصل' : 'Offline')}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button className="p-1.5 hover:bg-white/20 rounded-xl transition">
+                <Phone size={18} className="text-white" />
+              </button>
+              <button className="p-1.5 hover:bg-white/20 rounded-xl transition">
+                <Mail size={18} className="text-white" />
+              </button>
+            </div>
           </div>
         </div>
-
-        <button onClick={endConversation} style={styles.endChatButton}>
-          <FaTimes />
-        </button>
       </div>
 
-      {/* حالة الاتصال */}
-      {!isOnline && (
-        <div style={styles.offlineBanner}>
-          <FaExclamationCircle /> أنت غير متصل بالإنترنت
-        </div>
-      )}
-
-      {reconnecting && (
-        <div style={styles.reconnectingBanner}>
-          <FaSpinner style={{ animation: 'spin 1s linear infinite' }} /> جاري إعادة الاتصال...
-        </div>
-      )}
-
-      {/* منطقة عرض الرسائل */}
-      <div ref={chatContainerRef} style={styles.messagesContainer}>
-        {!hasMore && messages.length > 0 && (
-          <div style={styles.conversationStart}>
-            <span>بداية المحادثة</span>
+      {/* منطقة الرسائل */}
+      <div 
+        ref={messagesContainerRef}
+        className="flex-1 overflow-y-auto px-4 py-3 space-y-3"
+      >
+        {loading ? (
+          <div className="flex justify-center items-center h-full">
+            <Loader2 className="animate-spin text-teal-400 text-2xl" />
           </div>
-        )}
-
-        {messages.length === 0 ? (
-          <div style={styles.emptyMessages}>
-            <FaHeadset size={60} color="#ccc" />
-            <p>لا توجد رسائل بعد. ابدأ المحادثة الآن!</p>
+        ) : messages.length === 0 ? (
+          <div className="text-center py-8">
+            <MessageCircle className="w-12 h-12 text-white/50 mx-auto mb-2" />
+            <p className="text-white/70 text-base">
+              {lang === 'ar' ? 'لا توجد رسائل بعد' : 'No messages yet'}
+            </p>
+            <p className="text-white/50 text-sm mt-1">
+              {lang === 'ar' 
+                ? 'اكتب رسالتك لتبدأ المحادثة'
+                : 'Type your message to start the conversation'}
+            </p>
           </div>
         ) : (
-          messages.map((msg, index) => {
-            const isMe = msg.senderId === user?.id;
-            const showDate = index === 0 || 
-              new Date(msg.createdAt).toDateString() !== new Date(messages[index - 1]?.createdAt).toDateString();
-
-            return (
-              <React.Fragment key={msg.id || index}>
-                {showDate && (
-                  <div style={styles.dateSeparator}>
-                    <span>{new Date(msg.createdAt).toLocaleDateString('ar-EG', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</span>
-                  </div>
-                )}
-                
-                <div style={{
-                  ...styles.messageWrapper,
-                  justifyContent: isMe ? 'flex-end' : 'flex-start'
-                }}>
-                  {!isMe && (
-                    <div style={styles.supportAvatarSmall}>
-                      <FaHeadset size={20} color="#2196F3" />
+          messages.map((msg, idx) => (
+            <div 
+              key={msg.id || idx} 
+              className={`flex ${msg.is_from_user ? 'justify-end' : 'justify-start'}`}
+            >
+              <div className={`max-w-[80%] ${msg.is_from_user ? 'order-2' : 'order-1'}`}>
+                <div className={`rounded-2xl px-3 py-2 ${
+                  msg.is_from_user
+                    ? 'bg-gradient-to-r from-teal-500 to-cyan-500 text-white shadow-md'
+                    : 'bg-white/20 text-white shadow-sm'
+                }`}>
+                  {!msg.is_from_user && msg.sender_name && (
+                    <div className="text-xs opacity-80 mb-1">
+                      {msg.sender_name}
                     </div>
                   )}
-                  
-                  <div style={{
-                    ...styles.messageContent,
-                    maxWidth: msg.type === 'image' ? '300px' : '70%'
-                  }}>
-                    {/* رسالة نصية */}
-                    {!msg.type && (
-                      <div style={{
-                        ...styles.messageBubble,
-                        backgroundColor: isMe ? '#2196F3' : 'white',
-                        color: isMe ? 'white' : '#333',
-                        borderBottomRightRadius: isMe ? '4px' : '18px',
-                        borderBottomLeftRadius: isMe ? '18px' : '4px'
-                      }}>
-                        <div style={styles.messageText}>{msg.text}</div>
-                      </div>
-                    )}
-
-                    {/* رسالة صورة */}
-                    {msg.type === 'image' && (
-                      <div style={styles.imageMessage}>
-                        <img 
-                          src={msg.image || msg.url} 
-                          alt={msg.fileName}
-                          style={styles.messageImage}
-                          onClick={() => openImage(msg.image || msg.url)}
-                        />
-                        {msg.status === 'uploading' && (
-                          <div style={styles.uploadProgress}>
-                            <div style={{ ...styles.progressBar, width: `${msg.uploadProgress}%` }} />
-                            <span>{msg.uploadProgress}%</span>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* رسالة ملف */}
-                    {msg.type === 'file' && (
-                      <div style={{
-                        ...styles.fileMessage,
-                        backgroundColor: isMe ? '#E3F2FD' : 'white'
-                      }}>
-                        <div style={styles.fileIcon}>
-                          <FaPaperclip size={24} color="#2196F3" />
-                        </div>
-                        <div style={styles.fileInfo}>
-                          <div style={styles.fileName}>{msg.fileName}</div>
-                          <div style={styles.fileSize}>{formatFileSize(msg.fileSize)}</div>
-                        </div>
-                        <button 
-                          onClick={() => downloadFile(msg.url, msg.fileName)}
-                          style={styles.downloadButton}
-                        >
-                          تحميل
-                        </button>
-                      </div>
-                    )}
-
-                    {/* وقت الرسالة والحالة */}
-                    <div style={{
-                      ...styles.messageFooter,
-                      justifyContent: isMe ? 'flex-end' : 'flex-start'
-                    }}>
-                      <span style={styles.messageTime}>{formatTime(msg.createdAt)}</span>
-                      
-                      {isMe && msg.status && (
-                        <span style={styles.messageStatus}>
-                          {msg.status === 'sending' && <FaSpinner size={10} style={{ animation: 'spin 1s linear infinite' }} />}
-                          {msg.status === 'sent' && <FaCheck size={10} />}
-                          {msg.status === 'delivered' && <FaCheckDouble size={10} color="#4CAF50" />}
-                          {msg.status === 'read' && <FaCheckDouble size={10} color="#2196F3" />}
-                          {msg.status === 'error' && <FaExclamationCircle size={10} color="#f44336" />}
-                        </span>
-                      )}
-                    </div>
-                  </div>
+                  <p className="text-base whitespace-pre-wrap break-words">{msg.message}</p>
                 </div>
-              </React.Fragment>
-            );
-          })
-        )}
-
-        {/* مؤشر كتابة الدعم */}
-        {supportInfo.isTyping && (
-          <div style={styles.typingIndicator}>
-            <div style={styles.supportAvatarSmall}>
-              <FaHeadset size={20} color="#2196F3" />
+                <div className={`text-xs text-white/50 mt-1 ${msg.is_from_user ? 'text-left' : 'text-right'}`}>
+                  {formatTime(msg.created_at)}
+                  {msg.is_from_user && msg.status === 'sending' && (
+                    <span className="ml-1">⏳</span>
+                  )}
+                  {msg.is_from_user && msg.status === 'sent' && (
+                    <span className="ml-1">✓</span>
+                  )}
+                </div>
+              </div>
             </div>
-            <div style={styles.typingDots}>
-              <span></span>
-              <span></span>
-              <span></span>
+          ))
+        )}
+        
+        {/* مؤشر كتابة الدعم */}
+        {typing && (
+          <div className="flex justify-start">
+            <div className="bg-white/20 rounded-2xl px-3 py-2">
+              <div className="flex gap-1">
+                <span className="w-1.5 h-1.5 bg-white/70 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
+                <span className="w-1.5 h-1.5 bg-white/70 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                <span className="w-1.5 h-1.5 bg-white/70 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
+              </div>
             </div>
           </div>
         )}
-
+        
         <div ref={messagesEndRef} />
       </div>
 
-      {/* منطقة إدخال الرسالة */}
-      <div style={styles.inputArea}>
-        {/* قائمة المرفقات */}
-        {showAttachMenu && (
-          <div style={styles.attachMenu}>
-            <button 
-              onClick={() => imageInputRef.current?.click()}
-              style={styles.attachButton}
+      {/* ✅ إدخال الرسالة - ثابت في أسفل الصفحة (تم إزالة التحويل) */}
+      <div className="flex-shrink-0 bg-white/10 backdrop-blur-sm border-t border-white/20">
+        <div className="px-4 py-4">
+          <div className="flex gap-3">
+            <input
+              type="text"
+              value={newMessage}
+              onChange={(e) => setNewMessage(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+              placeholder={lang === 'ar' ? 'اكتب رسالتك...' : 'Type your message...'}
+              className="flex-1 px-5 py-3 border border-white/30 rounded-xl bg-white/20 text-white placeholder-white/60 focus:ring-2 focus:ring-teal-400 focus:border-transparent outline-none transition-all text-base"
+              disabled={sending}
+              autoFocus
+            />
+            <button
+              onClick={sendMessage}
+              disabled={!newMessage.trim() || sending}
+              className="px-5 py-3 bg-gradient-to-r from-teal-500 to-cyan-500 text-white rounded-xl transition-all disabled:opacity-50 hover:from-teal-600 hover:to-cyan-600 hover:scale-105 active:scale-95 shadow-md flex items-center justify-center"
             >
-              <MdImage size={20} />
-              <span>صورة</span>
-            </button>
-            <button 
-              onClick={() => fileInputRef.current?.click()}
-              style={styles.attachButton}
-            >
-              <MdAttachFile size={20} />
-              <span>ملف</span>
+              {sending ? (
+                <Loader2 className="animate-spin" size={22} />
+              ) : (
+                <Send size={22} />
+              )}
             </button>
           </div>
-        )}
-
-        <div style={styles.inputWrapper}>
-          <button 
-            onClick={() => setShowAttachMenu(!showAttachMenu)}
-            style={styles.attachFileButton}
-          >
-            <FaPaperclip size={20} color="#666" />
-          </button>
-
-          <button 
-            onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-            style={styles.emojiButton}
-          >
-            <FaSmile size={20} color="#666" />
-          </button>
-
-          {/* منتقي الإيموجي */}
-          {showEmojiPicker && (
-            <div style={styles.emojiPicker}>
-              <EmojiPicker onEmojiClick={onEmojiClick} />
-            </div>
-          )}
-
-          <input
-            type="text"
-            value={newMessage}
-            onChange={(e) => {
-              setNewMessage(e.target.value);
-              handleTyping();
-            }}
-            onKeyPress={handleKeyPress}
-            placeholder={isOnline ? "اكتب رسالتك هنا..." : "أنت غير متصل بالإنترنت"}
-            disabled={sending || !isOnline}
-            style={styles.messageInput}
-          />
-
-          <input
-            ref={imageInputRef}
-            type="file"
-            accept="image/*"
-            onChange={(e) => {
-              if (e.target.files[0]) {
-                sendImage(e.target.files[0]);
-                setShowAttachMenu(false);
-              }
-            }}
-            style={{ display: 'none' }}
-          />
-
-          <input
-            ref={fileInputRef}
-            type="file"
-            onChange={(e) => {
-              if (e.target.files[0]) {
-                sendFile(e.target.files[0]);
-                setShowAttachMenu(false);
-              }
-            }}
-            style={{ display: 'none' }}
-          />
-
-          <button
-            onClick={sendMessage}
-            disabled={!newMessage.trim() || sending || !isOnline}
-            style={{
-              ...styles.sendButton,
-              backgroundColor: (!newMessage.trim() || sending || !isOnline) ? '#ccc' : '#2196F3'
-            }}
-          >
-            {sending ? (
-              <FaSpinner style={{ animation: 'spin 1s linear infinite' }} size={20} />
-            ) : (
-              <IoMdSend size={20} />
-            )}
-          </button>
+          <p className="text-sm text-center text-white/60 mt-2">
+            {lang === 'ar' 
+              ? 'فريق الدعم يرد عادةً خلال دقائق'
+              : 'Support team usually responds within minutes'}
+          </p>
         </div>
       </div>
-
-      {/* نافذة تقييم المحادثة */}
-      {showRating && (
-        <div style={styles.modalOverlay}>
-          <div style={styles.ratingModal}>
-            <h3 style={styles.ratingTitle}>تقييم المحادثة</h3>
-            <p style={styles.ratingSubtitle}>كيف كانت تجربتك مع الدعم الفني؟</p>
-            
-            <div style={styles.starsContainer}>
-              {[1, 2, 3, 4, 5].map((star) => (
-                <span
-                  key={star}
-                  onClick={() => setRating(star)}
-                  onMouseEnter={() => setHoverRating(star)}
-                  onMouseLeave={() => setHoverRating(0)}
-                  style={styles.star}
-                >
-                  {(hoverRating || rating) >= star ? (
-                    <FaStar size={40} color="#FFC107" />
-                  ) : (
-                    <FaRegStar size={40} color="#FFC107" />
-                  )}
-                </span>
-              ))}
-            </div>
-
-            <div style={styles.ratingButtons}>
-              <button onClick={submitRating} style={styles.submitRatingButton}>
-                إرسال التقييم
-              </button>
-              <button onClick={() => setShowRating(false)} style={styles.cancelRatingButton}>
-                لاحقاً
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* نافذة عرض الصور */}
-      {lightboxOpen && selectedImage && (
-        <Lightbox
-          mainSrc={selectedImage}
-          onCloseRequest={() => setLightboxOpen(false)}
-          reactModalStyle={{ overlay: { zIndex: 9999 } }}
-        />
-      )}
-
-      {/* أنيميشن */}
-      <style>{`
-        @keyframes spin {
-          0% { transform: rotate(0deg); }
-          100% { transform: rotate(360deg); }
-        }
-        
-        @keyframes typing {
-          0%, 60%, 100% { transform: translateY(0); }
-          30% { transform: translateY(-10px); }
-        }
-      `}</style>
     </div>
   );
-};
-
-// Styles object
-const styles = {
-  container: {
-    height: '100vh',
-    display: 'flex',
-    flexDirection: 'column',
-    backgroundColor: '#f5f5f5',
-    direction: 'rtl',
-    fontFamily: 'Cairo, sans-serif'
-  },
-  loadingContainer: {
-    height: '100vh',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#f5f5f5'
-  },
-  loadingText: {
-    marginTop: '20px',
-    color: '#666',
-    fontSize: '16px'
-  },
-  errorContainer: {
-    height: '100vh',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#f5f5f5',
-    padding: '20px',
-    textAlign: 'center'
-  },
-  errorButton: {
-    marginTop: '20px',
-    padding: '10px 20px',
-    backgroundColor: '#2196F3',
-    color: 'white',
-    border: 'none',
-    borderRadius: '5px',
-    cursor: 'pointer'
-  },
-  header: {
-    backgroundColor: '#2196F3',
-    color: 'white',
-    padding: '12px 20px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
-  },
-  backButton: {
-    background: 'rgba(255,255,255,0.2)',
-    border: 'none',
-    color: 'white',
-    fontSize: '16px',
-    cursor: 'pointer',
-    padding: '8px 12px',
-    borderRadius: '8px',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '5px',
-    transition: 'background 0.2s'
-  },
-  supportInfo: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-    flex: 1,
-    marginRight: '15px'
-  },
-  supportAvatar: {
-    width: '45px',
-    height: '45px',
-    borderRadius: '50%',
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: '24px',
-    position: 'relative'
-  },
-  avatarImage: {
-    width: '100%',
-    height: '100%',
-    borderRadius: '50%',
-    objectFit: 'cover'
-  },
-  statusDot: {
-    position: 'absolute',
-    bottom: '2px',
-    right: '2px',
-    width: '10px',
-    height: '10px',
-    borderRadius: '50%',
-    border: '2px solid white'
-  },
-  supportDetails: {
-    flex: 1
-  },
-  supportName: {
-    margin: 0,
-    fontSize: '16px',
-    fontWeight: '600'
-  },
-  supportStatus: {
-    margin: '4px 0 0',
-    fontSize: '12px',
-    opacity: 0.9,
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px'
-  },
-  typingText: {
-    color: '#fff',
-    animation: 'pulse 1.5s infinite'
-  },
-  statusText: {
-    fontWeight: '500'
-  },
-  responseTime: {
-    fontSize: '11px',
-    opacity: 0.8
-  },
-  endChatButton: {
-    background: 'rgba(255,255,255,0.2)',
-    border: 'none',
-    color: 'white',
-    width: '35px',
-    height: '35px',
-    borderRadius: '50%',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    cursor: 'pointer',
-    fontSize: '16px',
-    transition: 'all 0.2s'
-  },
-  offlineBanner: {
-    backgroundColor: '#f44336',
-    color: 'white',
-    textAlign: 'center',
-    padding: '8px',
-    fontSize: '14px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '8px'
-  },
-  reconnectingBanner: {
-    backgroundColor: '#FFC107',
-    color: '#333',
-    textAlign: 'center',
-    padding: '8px',
-    fontSize: '14px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '8px'
-  },
-  messagesContainer: {
-    flex: 1,
-    overflowY: 'auto',
-    padding: '20px',
-    backgroundColor: '#f0f2f5'
-  },
-  emptyMessages: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: '100%',
-    color: '#999',
-    gap: '10px'
-  },
-  conversationStart: {
-    textAlign: 'center',
-    margin: '20px 0',
-    position: 'relative'
-  },
-  dateSeparator: {
-    textAlign: 'center',
-    margin: '20px 0',
-    position: 'relative'
-  },
-  messageWrapper: {
-    display: 'flex',
-    marginBottom: '12px',
-    alignItems: 'flex-end'
-  },
-  supportAvatarSmall: {
-    width: '30px',
-    height: '30px',
-    borderRadius: '50%',
-    backgroundColor: 'rgba(33,150,243,0.1)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: '8px',
-    flexShrink: 0
-  },
-  messageContent: {
-    maxWidth: '70%'
-  },
-  messageBubble: {
-    padding: '12px 16px',
-    borderRadius: '18px 18px 18px 4px',
-    boxShadow: '0 2px 5px rgba(0,0,0,0.1)',
-    wordBreak: 'break-word'
-  },
-  messageText: {
-    fontSize: '14px',
-    lineHeight: '1.5'
-  },
-  imageMessage: {
-    position: 'relative',
-    borderRadius: '12px',
-    overflow: 'hidden',
-    cursor: 'pointer'
-  },
-  messageImage: {
-    width: '100%',
-    maxWidth: '300px',
-    maxHeight: '300px',
-    objectFit: 'cover',
-    borderRadius: '12px',
-    transition: 'transform 0.2s'
-  },
-  uploadProgress: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: '4px',
-    backgroundColor: 'rgba(0,0,0,0.1)'
-  },
-  progressBar: {
-    height: '100%',
-    backgroundColor: '#2196F3',
-    transition: 'width 0.2s'
-  },
-  fileMessage: {
-    display: 'flex',
-    alignItems: 'center',
-    padding: '12px',
-    borderRadius: '12px',
-    gap: '12px',
-    boxShadow: '0 2px 5px rgba(0,0,0,0.1)',
-    minWidth: '250px'
-  },
-  fileIcon: {
-    width: '40px',
-    height: '40px',
-    borderRadius: '8px',
-    backgroundColor: 'rgba(33,150,243,0.1)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  fileInfo: {
-    flex: 1
-  },
-  fileName: {
-    fontSize: '14px',
-    fontWeight: '500',
-    marginBottom: '4px',
-    color: '#333'
-  },
-  fileSize: {
-    fontSize: '12px',
-    color: '#666'
-  },
-  downloadButton: {
-    padding: '6px 12px',
-    backgroundColor: '#2196F3',
-    color: 'white',
-    border: 'none',
-    borderRadius: '6px',
-    fontSize: '12px',
-    cursor: 'pointer',
-    transition: 'all 0.2s'
-  },
-  messageFooter: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '5px',
-    marginTop: '4px',
-    padding: '0 4px'
-  },
-  messageTime: {
-    fontSize: '11px',
-    color: '#999'
-  },
-  messageStatus: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '2px'
-  },
-  typingIndicator: {
-    display: 'flex',
-    alignItems: 'center',
-    marginBottom: '12px'
-  },
-  typingDots: {
-    backgroundColor: 'white',
-    padding: '12px 16px',
-    borderRadius: '18px 18px 18px 4px',
-    display: 'flex',
-    gap: '4px',
-    boxShadow: '0 2px 5px rgba(0,0,0,0.1)'
-  },
-  inputArea: {
-    backgroundColor: 'white',
-    padding: '15px 20px',
-    borderTop: '1px solid #e0e0e0',
-    position: 'relative'
-  },
-  attachMenu: {
-    position: 'absolute',
-    bottom: '80px',
-    right: '20px',
-    backgroundColor: 'white',
-    borderRadius: '12px',
-    boxShadow: '0 5px 20px rgba(0,0,0,0.15)',
-    padding: '8px',
-    zIndex: 10,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '5px'
-  },
-  attachButton: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px',
-    padding: '10px 15px',
-    border: 'none',
-    backgroundColor: 'transparent',
-    borderRadius: '8px',
-    cursor: 'pointer',
-    width: '100%',
-    fontSize: '14px',
-    transition: 'background 0.2s'
-  },
-  inputWrapper: {
-    display: 'flex',
-    gap: '10px',
-    alignItems: 'center',
-    position: 'relative'
-  },
-  attachFileButton: {
-    width: '40px',
-    height: '40px',
-    borderRadius: '50%',
-    border: 'none',
-    backgroundColor: '#f5f5f5',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    cursor: 'pointer',
-    transition: 'all 0.2s'
-  },
-  emojiButton: {
-    width: '40px',
-    height: '40px',
-    borderRadius: '50%',
-    border: 'none',
-    backgroundColor: '#f5f5f5',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    cursor: 'pointer',
-    transition: 'all 0.2s'
-  },
-  emojiPicker: {
-    position: 'absolute',
-    bottom: '60px',
-    left: '60px',
-    zIndex: 1000
-  },
-  messageInput: {
-    flex: 1,
-    padding: '12px 18px',
-    border: '2px solid #e0e0e0',
-    borderRadius: '30px',
-    fontSize: '14px',
-    outline: 'none',
-    transition: 'border-color 0.2s',
-    fontFamily: 'Cairo, sans-serif'
-  },
-  sendButton: {
-    width: '45px',
-    height: '45px',
-    borderRadius: '50%',
-    border: 'none',
-    color: 'white',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    cursor: 'pointer',
-    transition: 'all 0.2s',
-    boxShadow: '0 4px 10px rgba(33,150,243,0.3)'
-  },
-  modalOverlay: {
-    position: 'fixed',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 1000
-  },
-  ratingModal: {
-    backgroundColor: 'white',
-    borderRadius: '20px',
-    padding: '30px',
-    maxWidth: '400px',
-    width: '90%',
-    textAlign: 'center'
-  },
-  ratingTitle: {
-    margin: '0 0 10px',
-    color: '#333',
-    fontSize: '24px'
-  },
-  ratingSubtitle: {
-    margin: '0 0 20px',
-    color: '#666',
-    fontSize: '16px'
-  },
-  starsContainer: {
-    display: 'flex',
-    justifyContent: 'center',
-    gap: '10px',
-    marginBottom: '30px'
-  },
-  star: {
-    cursor: 'pointer',
-    transition: 'transform 0.2s'
-  },
-  ratingButtons: {
-    display: 'flex',
-    gap: '10px',
-    justifyContent: 'center'
-  },
-  submitRatingButton: {
-    padding: '12px 25px',
-    backgroundColor: '#2196F3',
-    color: 'white',
-    border: 'none',
-    borderRadius: '8px',
-    fontSize: '16px',
-    cursor: 'pointer',
-    transition: 'all 0.2s',
-    flex: 1
-  },
-  cancelRatingButton: {
-    padding: '12px 25px',
-    backgroundColor: '#f5f5f5',
-    color: '#666',
-    border: 'none',
-    borderRadius: '8px',
-    fontSize: '16px',
-    cursor: 'pointer',
-    transition: 'all 0.2s',
-    flex: 1
-  }
 };
 
 export default SupportChatPage;
