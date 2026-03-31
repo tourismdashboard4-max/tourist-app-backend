@@ -36,6 +36,54 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     location_lng: ""
   });
 
+  // ✅ حفظ البرامج في localStorage العام (ليراها جميع المستخدمين)
+  const saveToPublicStorage = (programsList) => {
+    const activePrograms = programsList.filter(p => p.status === 'active');
+    const publicPrograms = activePrograms.map(p => ({
+      id: p.id,
+      name: p.name,
+      name_ar: p.name,
+      name_en: p.name,
+      guide_name: p.guide_name,
+      guide_id: p.guide_id,
+      coords: p.coords,
+      location_lng: p.location_lng,
+      location_lat: p.location_lat,
+      price: p.price,
+      duration: p.duration,
+      description: p.description,
+      location_name: p.location_name || p.location,
+      maxParticipants: p.maxParticipants,
+      participants: p.participants || 0,
+      status: p.status,
+      created_at: p.created_at
+    }));
+    
+    localStorage.setItem('public_programs', JSON.stringify(publicPrograms));
+    console.log('💾 Saved', publicPrograms.length, 'programs to public storage');
+    
+    // تحديث الخريطة مباشرة
+    if (setUserPrograms) {
+      setUserPrograms(publicPrograms);
+    }
+  };
+
+  // ✅ تحميل البرامج العامة عند بدء التشغيل
+  const loadPublicPrograms = () => {
+    const saved = localStorage.getItem('public_programs');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (setUserPrograms && parsed.length > 0) {
+          setUserPrograms(parsed);
+          console.log('📦 Loaded', parsed.length, 'public programs');
+        }
+      } catch(e) {
+        console.error('Error parsing public programs:', e);
+      }
+    }
+  };
+
   // ✅ التحقق من أن المستخدم مرشد
   const isGuide = user?.role === 'guide' || 
                   user?.type === 'guide' || 
@@ -77,38 +125,8 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
       localStorage.setItem(`guide_programs_${guideId}`, JSON.stringify(programsList));
       console.log('💾 Saved', programsList.length, 'programs to localStorage (guide)');
     }
-  };
-
-  // ✅ حفظ البرامج في localStorage العام (ليراها جميع المستخدمين)
-  const saveProgramsToPublic = (programsList) => {
-    const activePrograms = programsList.filter(p => p.status === 'active');
-    const publicPrograms = activePrograms.map(p => ({
-      id: p.id,
-      name: p.name,
-      name_ar: p.name,
-      name_en: p.name,
-      guide_name: p.guide_name,
-      guide_id: p.guide_id,
-      coords: p.coords,
-      location_lng: p.location_lng,
-      location_lat: p.location_lat,
-      price: p.price,
-      duration: p.duration,
-      description: p.description,
-      location_name: p.location_name || p.location,
-      maxParticipants: p.maxParticipants,
-      participants: p.participants || 0,
-      status: p.status,
-      created_at: p.created_at
-    }));
-    
-    localStorage.setItem('public_programs', JSON.stringify(publicPrograms));
-    console.log('💾 Saved', publicPrograms.length, 'programs to public storage');
-    
-    // تحديث الخريطة مباشرة
-    if (setUserPrograms) {
-      setUserPrograms(publicPrograms);
-    }
+    // ✅ حفظ في التخزين العام أيضاً
+    saveToPublicStorage(programsList);
   };
 
   // ✅ الحصول على جميع البرامج العامة
@@ -143,7 +161,7 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
           const parsed = JSON.parse(saved);
           setPrograms(parsed);
           updateMapWithPrograms(parsed);
-          saveProgramsToPublic(parsed);
+          saveToPublicStorage(parsed);
           
           const activeProgs = parsed.filter(p => p.status === 'active');
           setStats({
@@ -268,7 +286,7 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
           const programsData = response.data.programs;
           setPrograms(programsData);
           saveProgramsToLocal(programsData);
-          saveProgramsToPublic(programsData);
+          saveToPublicStorage(programsData);
           updateMapWithPrograms(programsData);
           
           const activeProgs = programsData.filter(p => p.status === 'active');
@@ -391,7 +409,7 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
       );
       setPrograms(updatedPrograms);
       saveProgramsToLocal(updatedPrograms);
-      saveProgramsToPublic(updatedPrograms);
+      saveToPublicStorage(updatedPrograms);
       updateMapWithPrograms(updatedPrograms);
       
       setShowEditModal(false);
@@ -433,7 +451,7 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
       const updatedPrograms = programs.filter(p => p.id !== programId);
       setPrograms(updatedPrograms);
       saveProgramsToLocal(updatedPrograms);
-      saveProgramsToPublic(updatedPrograms);
+      saveToPublicStorage(updatedPrograms);
       updateMapWithPrograms(updatedPrograms);
       
       if (onProgramAdded) onProgramAdded();
@@ -511,7 +529,7 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
       const updatedPrograms = [...programs, newProgramObj];
       setPrograms(updatedPrograms);
       saveProgramsToLocal(updatedPrograms);
-      saveProgramsToPublic(updatedPrograms);
+      saveToPublicStorage(updatedPrograms);
       updateMapWithPrograms(updatedPrograms);
       
       const activeProgs = updatedPrograms.filter(p => p.status === 'active');
@@ -559,7 +577,7 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
       );
       setPrograms(updatedPrograms);
       saveProgramsToLocal(updatedPrograms);
-      saveProgramsToPublic(updatedPrograms);
+      saveToPublicStorage(updatedPrograms);
       updateMapWithPrograms(updatedPrograms);
       
       const activeProgs = updatedPrograms.filter(p => p.status === 'active');
@@ -615,6 +633,11 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
       setLoading(false);
     }
   }, [isGuide]);
+
+  // ✅ تحميل البرامج العامة عند بدء التشغيل
+  useEffect(() => {
+    loadPublicPrograms();
+  }, []);
 
   // ✅ إذا لم يكن المستخدم مرشداً
   if (!isGuide) {
