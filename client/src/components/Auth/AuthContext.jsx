@@ -1,6 +1,7 @@
 // src/components/Auth/AuthContext.jsx
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import { AUTH_TYPES, AUTH_STATUS } from './index.js';
+import api from '../../services/api.js'; // ✅ استيراد api الحقيقي
 
 // إنشاء السياق
 const AuthContext = createContext();
@@ -24,16 +25,24 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     const loadUserFromStorage = () => {
       try {
-        const storedUser = localStorage.getItem('tourist_app_user');
-        const storedToken = localStorage.getItem('tourist_app_token');
+        const storedUser = localStorage.getItem('touristAppUser'); // ✅ تغيير المفتاح
+        const storedToken = localStorage.getItem('touristAppToken'); // ✅ تغيير المفتاح
         
         if (storedUser && storedToken) {
-          setUser(JSON.parse(storedUser));
+          const parsedUser = JSON.parse(storedUser);
+          setUser(parsedUser);
+          
+          // ✅ التحقق من صحة التوكن مع الخادم
+          api.verifyToken(storedToken).then(result => {
+            if (!result.valid) {
+              logout();
+            }
+          });
         }
       } catch (error) {
         console.error('خطأ في تحميل بيانات المستخدم:', error);
-        localStorage.removeItem('tourist_app_user');
-        localStorage.removeItem('tourist_app_token');
+        localStorage.removeItem('touristAppUser');
+        localStorage.removeItem('touristAppToken');
       } finally {
         setLoading(false);
       }
@@ -42,157 +51,187 @@ export const AuthProvider = ({ children }) => {
     loadUserFromStorage();
   }, []);
 
-  // تسجيل الدخول
+  // ✅ تسجيل الدخول - اتصال حقيقي بالـ API
   const login = async (email, password, userType = AUTH_TYPES.USER) => {
     setAuthStatus(AUTH_STATUS.LOADING);
     
     try {
-      // محاكاة API call
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      // ✅ استخدام API الحقيقي
+      const response = await api.login(email, password);
       
-      // بيانات مستخدم وهمية للاختبار
-      const mockUser = {
-        id: Date.now().toString(),
-        email,
-        fullName: email.split('@')[0],
-        userType,
-        phone: '0512345678',
-        avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(email.split('@')[0])}&background=random`,
-        createdAt: new Date().toISOString(),
-        permissions: userType === AUTH_TYPES.GUIDE ? ['create_tours', 'manage_bookings'] : ['browse_tours', 'book_tours']
-      };
-
-      const mockToken = 'mock_jwt_token_' + Date.now();
-      
-      // حفظ في localStorage
-      localStorage.setItem('tourist_app_user', JSON.stringify(mockUser));
-      localStorage.setItem('tourist_app_token', mockToken);
-      
-      setUser(mockUser);
-      setAuthStatus(AUTH_STATUS.SUCCESS);
-      
-      return { success: true, user: mockUser, token: mockToken };
+      if (response.token) {
+        const userData = response.user;
+        
+        // تخزين البيانات
+        localStorage.setItem('touristAppUser', JSON.stringify(userData));
+        localStorage.setItem('touristAppToken', response.token);
+        localStorage.setItem('userType', userData.type || userData.role);
+        
+        setUser(userData);
+        setAuthStatus(AUTH_STATUS.SUCCESS);
+        
+        return { success: true, user: userData, token: response.token };
+      } else {
+        throw new Error(response.message || 'فشل تسجيل الدخول');
+      }
     } catch (error) {
       setAuthStatus(AUTH_STATUS.ERROR);
       throw new Error('فشل تسجيل الدخول: ' + error.message);
     }
   };
 
-  // تسجيل الدخول كمرشد
+  // ✅ تسجيل الدخول كمرشد - اتصال حقيقي بالـ API
   const guideLogin = async (licenseNumber, email, password) => {
     setAuthStatus(AUTH_STATUS.LOADING);
     
     try {
-      // محاكاة API call
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      // ✅ استخدام API الحقيقي للمرشدين
+      const response = await api.guideLogin(licenseNumber, email, password);
       
-      // بيانات مرشد وهمية
-      const mockGuide = {
-        id: Date.now().toString(),
-        email,
-        licenseNumber,
-        fullName: `المرشد ${licenseNumber}`,
-        userType: AUTH_TYPES.GUIDE,
-        phone: '0512345678',
-        avatar: `https://ui-avatars.com/api/?name=Guide&background=green`,
-        rating: 4.5,
-        toursCount: 12,
-        verified: true,
-        specialties: ['سياحة تاريخية', 'رحلات برية'],
-        languages: ['العربية', 'الإنجليزية'],
-        createdAt: new Date().toISOString(),
-        permissions: ['create_tours', 'manage_bookings', 'chat_with_users', 'manage_profile']
-      };
-
-      const mockToken = 'mock_guide_token_' + Date.now();
-      
-      localStorage.setItem('tourist_app_user', JSON.stringify(mockGuide));
-      localStorage.setItem('tourist_app_token', mockToken);
-      
-      setUser(mockGuide);
-      setAuthStatus(AUTH_STATUS.SUCCESS);
-      
-      return { success: true, user: mockGuide, token: mockToken };
+      if (response.token) {
+        const userData = response.user;
+        
+        localStorage.setItem('touristAppUser', JSON.stringify(userData));
+        localStorage.setItem('touristAppToken', response.token);
+        localStorage.setItem('userType', 'guide');
+        
+        setUser(userData);
+        setAuthStatus(AUTH_STATUS.SUCCESS);
+        
+        return { success: true, user: userData, token: response.token };
+      } else {
+        throw new Error(response.message || 'فشل تسجيل دخول المرشد');
+      }
     } catch (error) {
       setAuthStatus(AUTH_STATUS.ERROR);
       throw new Error('فشل تسجيل دخول المرشد: ' + error.message);
     }
   };
 
-  // التسجيل
+  // ✅ التسجيل - اتصال حقيقي بالـ API
   const register = async (userData) => {
     setAuthStatus(AUTH_STATUS.LOADING);
     
     try {
-      // محاكاة API call
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      // ✅ استخدام API الحقيقي
+      const response = await api.register(userData.email, userData.fullName, userData.password);
       
-      const newUser = {
-        id: Date.now().toString(),
-        ...userData,
-        createdAt: new Date().toISOString(),
-        verified: false,
-        avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(userData.fullName)}&background=random`
-      };
-
-      const mockToken = 'mock_register_token_' + Date.now();
-      
-      localStorage.setItem('tourist_app_user', JSON.stringify(newUser));
-      localStorage.setItem('tourist_app_token', mockToken);
-      
-      setUser(newUser);
-      setAuthStatus(AUTH_STATUS.SUCCESS);
-      
-      return { success: true, user: newUser, token: mockToken };
+      if (response.token) {
+        const newUser = response.user;
+        
+        localStorage.setItem('touristAppUser', JSON.stringify(newUser));
+        localStorage.setItem('touristAppToken', response.token);
+        
+        setUser(newUser);
+        setAuthStatus(AUTH_STATUS.SUCCESS);
+        
+        return { success: true, user: newUser, token: response.token };
+      } else {
+        throw new Error(response.message || 'فشل التسجيل');
+      }
     } catch (error) {
       setAuthStatus(AUTH_STATUS.ERROR);
       throw new Error('فشل التسجيل: ' + error.message);
     }
   };
 
-  // تسجيل الخروج
+  // ✅ تسجيل الخروج
   const logout = () => {
-    localStorage.removeItem('tourist_app_user');
-    localStorage.removeItem('tourist_app_token');
+    localStorage.removeItem('touristAppUser');
+    localStorage.removeItem('touristAppToken');
+    localStorage.removeItem('userType');
     setUser(null);
     setAuthStatus(AUTH_STATUS.IDLE);
   };
 
-  // استعادة كلمة المرور
+  // ✅ استعادة كلمة المرور - اتصال حقيقي
   const forgotPassword = async (email) => {
     setAuthStatus(AUTH_STATUS.LOADING);
     
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      const response = await api.forgotPassword(email);
       setAuthStatus(AUTH_STATUS.SUCCESS);
-      return { success: true, message: 'تم إرسال رابط الاستعادة إلى بريدك' };
+      return { success: true, message: response.message || 'تم إرسال رابط الاستعادة إلى بريدك' };
     } catch (error) {
       setAuthStatus(AUTH_STATUS.ERROR);
-      throw new Error('فشل إرسال رابط الاستعادة');
+      throw new Error('فشل إرسال رابط الاستعادة: ' + error.message);
     }
   };
 
-  // تحديث بيانات المستخدم
-  const updateUser = (updates) => {
+  // ✅ تحديث بيانات المستخدم - اتصال حقيقي
+  const updateUser = async (updates) => {
     if (!user) return;
     
-    const updatedUser = { ...user, ...updates };
-    localStorage.setItem('tourist_app_user', JSON.stringify(updatedUser));
-    setUser(updatedUser);
+    try {
+      const response = await api.updateUserProfile(user.id, updates);
+      
+      if (response.success) {
+        const updatedUser = { ...user, ...response.user };
+        localStorage.setItem('touristAppUser', JSON.stringify(updatedUser));
+        setUser(updatedUser);
+        return { success: true, user: updatedUser };
+      }
+    } catch (error) {
+      console.error('Error updating user:', error);
+      throw error;
+    }
   };
 
-  // التحقق من الصلاحيات
+  // ✅ رفع الصورة الشخصية
+  const uploadAvatar = async (file) => {
+    if (!user) return;
+    
+    try {
+      const formData = new FormData();
+      formData.append('avatar', file);
+      
+      const response = await api.uploadAvatar(user.id, formData);
+      
+      if (response.success) {
+        const updatedUser = { ...user, avatar: response.avatar };
+        localStorage.setItem('touristAppUser', JSON.stringify(updatedUser));
+        setUser(updatedUser);
+        return { success: true, avatar: response.avatar };
+      }
+    } catch (error) {
+      console.error('Error uploading avatar:', error);
+      throw error;
+    }
+  };
+
+  // ✅ التحقق من الصلاحيات
   const hasPermission = (permission) => {
-    if (!user || !user.permissions) return false;
-    return user.permissions.includes(permission);
+    if (!user) return false;
+    
+    // صلاحيات المسؤول
+    if (user.role === 'admin') return true;
+    
+    // صلاحيات الدعم الفني
+    if (user.role === 'support' && permission.startsWith('support_')) return true;
+    
+    // صلاحيات المرشد
+    if ((user.role === 'guide' || user.isGuide) && permission.startsWith('guide_')) return true;
+    
+    return false;
   };
 
-  // التحقق من نوع المستخدم
+  // ✅ التحقق من نوع المستخدم
   const isUserType = (type) => {
-    return user?.userType === type;
+    if (!user) return false;
+    
+    if (type === 'guide') {
+      return user.role === 'guide' || user.isGuide === true;
+    }
+    if (type === 'admin') {
+      return user.role === 'admin';
+    }
+    if (type === 'support') {
+      return user.role === 'support';
+    }
+    return user.role === 'user' || (!user.role && !user.isGuide);
   };
 
-  // قيمة السياق
+  // ✅ قيمة السياق
   const value = {
     user,
     loading,
@@ -204,11 +243,13 @@ export const AuthProvider = ({ children }) => {
     logout,
     forgotPassword,
     updateUser,
+    uploadAvatar, // ✅ إضافة دالة رفع الصورة
     hasPermission,
     isUserType,
-    isUser: user?.userType === AUTH_TYPES.USER,
-    isGuide: user?.userType === AUTH_TYPES.GUIDE,
-    isAdmin: user?.userType === AUTH_TYPES.ADMIN
+    isUser: isUserType('user'),
+    isGuide: isUserType('guide'),
+    isAdmin: isUserType('admin'),
+    isSupport: isUserType('support')
   };
 
   return (
