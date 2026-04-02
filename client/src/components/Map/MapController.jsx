@@ -2,7 +2,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { Sun, Moon, Globe } from 'lucide-react';
+import { Sun, Moon, Globe, MapPin, Star } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 
@@ -13,8 +13,10 @@ const MapController = ({
   center = [46.713, 24.774],
   zoom = 12,
   markers = [],
+  programs = [], // ✅ إضافة prop للبرامج
   onMapClick,
   onMarkerClick,
+  onProgramSelect, // ✅ إضافة prop لتحديد البرنامج
   showUserLocation = true,
   interactive = true
 }) => {
@@ -23,6 +25,7 @@ const MapController = ({
   const [mapLoaded, setMapLoaded] = useState(false);
   const [userLocation, setUserLocation] = useState(null);
   const [styleLoading, setStyleLoading] = useState(false);
+  const programMarkersRef = useRef([]); // ✅ لتتبع علامات البرامج
   
   // ✅ استخدام Context
   const { darkMode, toggleDarkMode } = useTheme();
@@ -38,7 +41,166 @@ const MapController = ({
   }, [darkMode]);
 
   // ============================================
-  // 📍 إضافة علامة على الخريطة
+  // 📍 إضافة علامة برنامج سياحي (مخصصة)
+  // ============================================
+  const addProgramMarker = useCallback((program) => {
+    if (!map.current || !mapLoaded) return;
+    
+    // التحقق من وجود إحداثيات
+    let coords = program.coordinates || program.coords;
+    if (!coords && program.location_lng && program.location_lat) {
+      coords = [program.location_lng, program.location_lat];
+    }
+    
+    if (!coords || coords.length !== 2) {
+      console.warn('Invalid coordinates for program:', program);
+      return;
+    }
+
+    // إنشاء عنصر HTML مخصص للعلامة
+    const el = document.createElement('div');
+    el.className = 'program-marker';
+    el.innerHTML = `
+      <div class="relative cursor-pointer transform transition-transform hover:scale-110" style="filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2));">
+        <div class="w-12 h-12 rounded-full flex items-center justify-center shadow-lg border-2 border-white" 
+             style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
+          <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
+          </svg>
+        </div>
+        ${program.price ? `<div class="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-bold shadow-md">${program.price}</div>` : ''}
+      </div>
+    `;
+
+    // إضافة بعض التنسيقات
+    const styleId = 'program-marker-styles';
+    if (!document.getElementById(styleId)) {
+      const style = document.createElement('style');
+      style.id = styleId;
+      style.textContent = `
+        .program-marker {
+          cursor: pointer;
+          transition: transform 0.2s ease;
+        }
+        .program-marker:hover {
+          transform: scale(1.05);
+        }
+        .program-popup .mapboxgl-popup-content {
+          padding: 0;
+          border-radius: 12px;
+          overflow: hidden;
+          direction: ${language === 'ar' ? 'rtl' : 'ltr'};
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
+    // إنشاء محتوى البوب أب
+    const popupContent = `
+      <div class="w-72 max-w-full">
+        <!-- صورة البرنامج (إذا وجدت) -->
+        ${program.image ? `
+          <div class="h-32 bg-cover bg-center" style="background-image: url('${program.image}');"></div>
+        ` : `
+          <div class="h-32 bg-gradient-to-r from-green-500 to-emerald-600 flex items-center justify-center">
+            <svg class="w-12 h-12 text-white opacity-75" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
+            </svg>
+          </div>
+        `}
+        
+        <div class="p-4">
+          <h3 class="font-bold text-lg text-gray-800 dark:text-white mb-1">
+            ${program.name || program.name_ar || 'برنامج سياحي'}
+          </h3>
+          
+          ${program.guide_name ? `
+            <div class="flex items-center gap-2 text-sm text-gray-500 mb-2">
+              <span class="text-green-600">👤</span>
+              <span>${program.guide_name}</span>
+            </div>
+          ` : ''}
+          
+          ${program.description ? `
+            <p class="text-sm text-gray-600 dark:text-gray-300 mb-3 line-clamp-2">
+              ${program.description}
+            </p>
+          ` : ''}
+          
+          <div class="grid grid-cols-2 gap-2 mb-3 text-sm">
+            ${program.price ? `
+              <div class="flex items-center gap-1">
+                <span class="text-green-600">💰</span>
+                <span class="font-bold text-green-600">${program.price} ريال</span>
+              </div>
+            ` : ''}
+            
+            ${program.duration ? `
+              <div class="flex items-center gap-1">
+                <span>⏱️</span>
+                <span>${program.duration}</span>
+              </div>
+            ` : ''}
+            
+            ${program.location_name || program.location ? `
+              <div class="flex items-center gap-1 col-span-2">
+                <span>📍</span>
+                <span class="text-xs">${program.location_name || program.location}</span>
+              </div>
+            ` : ''}
+            
+            <div class="flex items-center gap-1">
+              <span>👥</span>
+              <span>${program.participants || 0}/${program.maxParticipants || 20}</span>
+            </div>
+          </div>
+          
+          <button 
+            class="program-book-btn w-full py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition font-medium text-sm"
+            data-program-id="${program.id}"
+          >
+            ${language === 'ar' ? '📅 احجز الآن' : '📅 Book Now'}
+          </button>
+        </div>
+      </div>
+    `;
+
+    // إنشاء العلامة
+    const marker = new mapboxgl.Marker(el)
+      .setLngLat([coords[0], coords[1]])
+      .setPopup(new mapboxgl.Popup({ 
+        offset: 25, 
+        className: 'program-popup',
+        maxWidth: '300px'
+      }).setHTML(popupContent));
+    
+    marker.addTo(map.current);
+    
+    // إضافة حدث للنقر على زر الحجز
+    const popupElement = marker.getPopup().getElement();
+    if (popupElement) {
+      popupElement.addEventListener('click', (e) => {
+        const bookBtn = e.target.closest('.program-book-btn');
+        if (bookBtn) {
+          const programId = parseInt(bookBtn.dataset.programId);
+          console.log('Booking program:', programId);
+          if (onProgramSelect) {
+            onProgramSelect(program);
+          } else {
+            alert(language === 'ar' 
+              ? `جاري التوجيه لحجز البرنامج: ${program.name}` 
+              : `Redirecting to book: ${program.name}`);
+          }
+        }
+      });
+    }
+    
+    return marker;
+  }, [map, mapLoaded, language, onProgramSelect]);
+
+  // ============================================
+  // 📍 إضافة علامة عادية على الخريطة
   // ============================================
   const addMarker = useCallback((markerData) => {
     if (!map.current) return;
@@ -69,6 +231,29 @@ const MapController = ({
   }, [darkMode, language, onMarkerClick]);
 
   // ============================================
+  // 📍 إضافة جميع برامج المرشدين
+  // ============================================
+  const addAllProgramMarkers = useCallback(() => {
+    if (!map.current || !mapLoaded || !programs || programs.length === 0) return;
+    
+    // إزالة العلامات القديمة
+    programMarkersRef.current.forEach(marker => {
+      if (marker && marker.remove) marker.remove();
+    });
+    programMarkersRef.current = [];
+    
+    // إضافة العلامات الجديدة
+    programs.forEach(program => {
+      const marker = addProgramMarker(program);
+      if (marker) {
+        programMarkersRef.current.push(marker);
+      }
+    });
+    
+    console.log(`✅ Added ${programMarkersRef.current.length} program markers to map`);
+  }, [programs, mapLoaded, addProgramMarker]);
+
+  // ============================================
   // 📍 إضافة موقع المستخدم
   // ============================================
   const addUserLocationMarker = useCallback((location) => {
@@ -78,7 +263,7 @@ const MapController = ({
       .setLngLat(location)
       .setPopup(
         new mapboxgl.Popup({ offset: 25 })
-          .setHTML(language === 'ar' ? 'موقعك الحالي' : 'Your location')
+          .setHTML(language === 'ar' ? '📍 موقعك الحالي' : '📍 Your location')
       )
       .addTo(map.current);
   }, [showUserLocation, language]);
@@ -135,6 +320,15 @@ const MapController = ({
   }, []); // مرة واحدة فقط عند التحميل
 
   // ============================================
+  // 📍 إضافة برامج المرشدين بعد تحميل الخريطة
+  // ============================================
+  useEffect(() => {
+    if (mapLoaded && programs && programs.length > 0) {
+      addAllProgramMarkers();
+    }
+  }, [mapLoaded, programs, addAllProgramMarkers]);
+
+  // ============================================
   // 🔄 تحديث نمط الخريطة عند تغيير الوضع الليلي
   // ============================================
   useEffect(() => {
@@ -152,9 +346,14 @@ const MapController = ({
         map.current.once('style.load', () => {
           console.log('✅ New style loaded');
           
-          // إعادة إضافة العلامات
+          // إعادة إضافة العلامات العادية
           if (markers.length > 0) {
             markers.forEach(addMarker);
+          }
+          
+          // ✅ إعادة إضافة برامج المرشدين
+          if (programs.length > 0) {
+            addAllProgramMarkers();
           }
           
           // إعادة إضافة موقع المستخدم
@@ -177,7 +376,7 @@ const MapController = ({
     };
 
     updateMapStyle();
-  }, [darkMode, mapLoaded]);
+  }, [darkMode, mapLoaded, programs, addAllProgramMarkers]);
 
   // ============================================
   // 🔄 تحديث لغة الخريطة
@@ -224,13 +423,13 @@ const MapController = ({
   }, [mapLoaded, showUserLocation, addUserLocationMarker]);
 
   // ============================================
-  // 📍 تحديث العلامات عند تغييرها
+  // 📍 تحديث العلامات العادية عند تغييرها
   // ============================================
   useEffect(() => {
     if (!map.current || !mapLoaded) return;
 
-    // حذف كل العلامات القديمة
-    const markersElements = document.querySelectorAll('.mapboxgl-marker');
+    // حذف كل العلامات القديمة (غير برامج المرشدين)
+    const markersElements = document.querySelectorAll('.mapboxgl-marker:not(.program-marker)');
     markersElements.forEach(marker => marker.remove());
 
     // إضافة العلامات الجديدة
@@ -295,8 +494,21 @@ const MapController = ({
         <span className="text-xs font-medium">{language === 'ar' ? 'AR' : 'EN'}</span>
       </button>
 
+      {/* عداد البرامج */}
+      {programs && programs.length > 0 && (
+        <div className="absolute bottom-4 right-4 z-10 bg-white dark:bg-gray-800 rounded-lg shadow-lg px-4 py-2">
+          <div className="flex items-center gap-2">
+            <MapPin size={16} className="text-green-600" />
+            <span className="text-green-600 font-bold text-lg">{programs.length}</span>
+            <span className="text-gray-600 dark:text-gray-300 text-sm">
+              {language === 'ar' ? 'برنامج سياحي' : 'Tour Programs'}
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* مؤشر الوضع الحالي للاختبار */}
-      <div className="absolute bottom-4 right-4 z-10 bg-white dark:bg-gray-800 rounded-lg shadow-lg px-3 py-1 text-xs">
+      <div className="absolute bottom-4 left-4 z-10 bg-white dark:bg-gray-800 rounded-lg shadow-lg px-3 py-1 text-xs">
         <span className="text-gray-600 dark:text-gray-400">
           {darkMode ? '🌙' : '☀️'} | {language === 'ar' ? 'عربي' : 'EN'}
         </span>
