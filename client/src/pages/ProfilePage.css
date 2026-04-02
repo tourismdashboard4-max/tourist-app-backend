@@ -5,7 +5,7 @@
   max-width: 800px;
   margin: 0 auto;
   padding: 20px;
-  background: #3066b8;
+  background: #f5f7fa;
   min-height: 100vh;
   direction: rtl;
 }
@@ -38,7 +38,7 @@
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   border-radius: 20px;
   padding: 25px;
-  margin-bottom: 25px;
+  margin-bottom: 0;
   color: white;
   display: flex;
   align-items: center;
@@ -121,31 +121,6 @@
   position: relative;
   overflow: hidden;
   box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3);
-}
-
-.wallet-card-bg {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  z-index: 0;
-}
-
-.wallet-bg-pattern {
-  position: absolute;
-  top: -50%;
-  right: -50%;
-  width: 200%;
-  height: 200%;
-  background-image: radial-gradient(circle, rgba(255,255,255,0.1) 1px, transparent 1px);
-  background-size: 20px 20px;
-  animation: patternMove 20s linear infinite;
-}
-
-@keyframes patternMove {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
 }
 
 .wallet-card-header {
