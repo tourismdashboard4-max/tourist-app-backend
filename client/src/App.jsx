@@ -34,7 +34,7 @@ import SupportUpgradeRequestsPage from './pages/SupportUpgradeRequestsPage';
 import AdminSupportPage from './pages/AdminSupportPage';
 import AdminNotificationsPage from './pages/AdminNotificationsPage';
 import AdminUpgradeRequestsPage from './pages/AdminUpgradeRequestsPage';
-
+import EmergencyPage from './pages/EmergencyPage';
 
 
 
@@ -3451,6 +3451,11 @@ export function TouristAppPrototype() {
             user={user}
             setPage={setPage}
           />
+        )}
+        
+        {/* ✅ صفحة الطوارئ */}
+        {page === "emergency" && (
+          <EmergencyPage setPage={setPage} user={user} />
         )}
         
         {/* ✅ صفحة لوحة تحكم المرشد - مع التحقق الشامل */}
