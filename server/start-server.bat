@@ -1,80 +1,96 @@
-#!/bin/bash
+@echo off
+title Tourist App Server
+color 0A
 
-# Tourist App Server Launcher for Linux/Mac
+echo ========================================
+echo    🚀 TOURIST APP SERVER LAUNCHER
+echo ========================================
+echo.
 
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+echo 📂 Current Directory: %cd%
+echo.
 
-echo -e "${BLUE}========================================${NC}"
-echo -e "${GREEN}    🚀 TOURIST APP SERVER LAUNCHER${NC}"
-echo -e "${BLUE}========================================${NC}"
-echo ""
+:: Check if Node.js is installed
+where node >nul 2>nul
+if %errorlevel% neq 0 (
+    echo ❌ Node.js is not installed!
+    echo Please install Node.js from https://nodejs.org/
+    echo.
+    pause
+    exit /b 1
+)
 
-# Check if Node.js is installed
-if ! command -v node &> /dev/null; then
-    echo -e "${RED}❌ Node.js is not installed!${NC}"
-    echo "Please install Node.js from https://nodejs.org/"
-    exit 1
-fi
+:: Check Node.js version
+for /f "tokens=*" %%i in ('node -v') do set NODE_VERSION=%%i
+echo ✅ Node.js version: %NODE_VERSION%
+echo.
 
-NODE_VERSION=$(node -v)
-echo -e "${GREEN}✅ Node.js version: ${NODE_VERSION}${NC}"
+:: Check if MongoDB is running
+echo 🔍 Checking MongoDB connection...
+timeout /t 2 /nobreak >nul
 
-# Check if .env file exists
-if [ ! -f .env ]; then
-    echo -e "${YELLOW}⚠️  .env file not found! Creating from template...${NC}"
+:: Check if .env file exists
+if not exist .env (
+    echo ⚠️  .env file not found!
+    echo Creating .env file from template...
     
-    cat > .env << EOF
-PORT=5002
-NODE_ENV=development
-MONGODB_URI=mongodb://localhost:27017/tourist_app
-JWT_SECRET=TouristApp2026_SuperSecretKey_!@#$%^7890
-JWT_EXPIRES_IN=7d
-EMAIL_USER=tourism.dashboard4@gmail.com
-EMAIL_PASSWORD=your-app-password
-FRONTEND_URL=http://localhost:5173
-EOF
+    (
+        echo PORT=5002
+        echo NODE_ENV=development
+        echo MONGODB_URI=mongodb://localhost:27017/tourist_app
+        echo JWT_SECRET=TouristApp2026_SuperSecretKey_!@#$%%^7890
+        echo JWT_EXPIRES_IN=7d
+        echo EMAIL_USER=tourism.dashboard4@gmail.com
+        echo EMAIL_PASSWORD=your-app-password
+        echo FRONTEND_URL=http://localhost:5173
+    ) > .env
     
-    echo -e "${GREEN}✅ .env file created successfully!${NC}"
-    echo -e "${YELLOW}⚠️  Please update EMAIL_PASSWORD in .env file${NC}"
-    echo ""
-fi
+    echo ✅ .env file created successfully!
+    echo ⚠️  Please update EMAIL_PASSWORD in .env file
+    echo.
+)
 
-# Check if node_modules exists
-if [ ! -d "node_modules" ]; then
-    echo -e "${YELLOW}📦 Installing dependencies...${NC}"
-    npm install
-    
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}❌ Failed to install dependencies!${NC}"
-        exit 1
-    fi
-    
-    echo -e "${GREEN}✅ Dependencies installed successfully!${NC}"
-    echo ""
-else
-    echo -e "${GREEN}✅ Dependencies are already installed${NC}"
-    echo ""
-fi
+:: Check if node_modules exists
+if not exist node_modules (
+    echo 📦 Installing dependencies...
+    echo This may take a few minutes...
+    echo.
+    call npm install
+    if %errorlevel% neq 0 (
+        echo ❌ Failed to install dependencies!
+        pause
+        exit /b 1
+    )
+    echo ✅ Dependencies installed successfully!
+    echo.
+) else (
+    echo ✅ Dependencies are already installed
+    echo.
+)
 
-# Clear screen
-clear
+:: Clear screen
+cls
 
-echo -e "${BLUE}========================================${NC}"
-echo -e "${GREEN}    🚀 STARTING TOURIST APP SERVER${NC}"
-echo -e "${BLUE}========================================${NC}"
-echo ""
-echo -e "${GREEN}📁 Working Directory:${NC} $(pwd)"
-echo -e "${GREEN}🔧 Port:${NC} 5002"
-echo -e "${GREEN}📊 Environment:${NC} development"
-echo -e "${GREEN}🔌 WebSocket:${NC} Enabled"
-echo -e "${GREEN}📧 Email:${NC} tourism.dashboard4@gmail.com"
-echo ""
-echo -e "${BLUE}========================================${NC}"
-echo ""
+echo ========================================
+echo    🚀 STARTING TOURIST APP SERVER
+echo ========================================
+echo.
+echo 📁 Working Directory: %cd%
+echo 🔧 Port: 5002
+echo 📊 Environment: development
+echo 🔌 WebSocket: Enabled
+echo 📧 Email: tourism.dashboard4@gmail.com
+echo.
+echo ========================================
+echo.
 
-# Start the server
+:: Start the server
 npm run dev
+
+:: If server stops, pause to see error
+if %errorlevel% neq 0 (
+    echo.
+    echo ❌ Server stopped with error code %errorlevel%
+    echo.
+    pause
+)
