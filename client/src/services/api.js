@@ -620,6 +620,160 @@ export const api = {
   },
 
   // ============================================
+  // 👤 USER PROFILE SERVICES - خدمات الملف الشخصي (بعد الإصلاح)
+  // ============================================
+
+  // ✅ رفع الصورة الشخصية - المسار الصحيح
+  async uploadAvatar(userId, formData) {
+    try {
+      const token = localStorage.getItem('token');
+      
+      console.log('📤 Uploading avatar for user:', userId);
+      
+      const response = await fetch(`${API_BASE_URL}/api/users/${userId}/avatar`, {
+        method: 'POST',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : ''
+        },
+        body: formData
+      });
+
+      const data = await response.json();
+      console.log('📥 Upload avatar response:', data);
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'فشل رفع الصورة');
+      }
+
+      return data;
+    } catch (error) {
+      console.error('❌ Upload avatar error:', error);
+      throw error;
+    }
+  },
+
+  // ✅ حذف الصورة الشخصية
+  async deleteAvatar(userId) {
+    try {
+      const token = localStorage.getItem('token');
+      
+      console.log('📤 Deleting avatar for user:', userId);
+      
+      const response = await fetch(`${API_BASE_URL}/api/users/${userId}/avatar`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const data = await response.json();
+      console.log('📥 Delete avatar response:', data);
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'فشل حذف الصورة');
+      }
+
+      return data;
+    } catch (error) {
+      console.error('❌ Delete avatar error:', error);
+      throw error;
+    }
+  },
+
+  // ✅ تحديث الملف الشخصي
+  async updateUserProfile(userId, updates) {
+    try {
+      const token = localStorage.getItem('token');
+      
+      console.log('📤 Updating profile for user:', userId, updates);
+      
+      const response = await fetch(`${API_BASE_URL}/api/users/${userId}/profile`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(updates)
+      });
+
+      const data = await response.json();
+      console.log('📥 Update profile response:', data);
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'فشل تحديث الملف الشخصي');
+      }
+
+      return data;
+    } catch (error) {
+      console.error('❌ Update profile error:', error);
+      throw error;
+    }
+  },
+
+  // ✅ جلب معلومات المستخدم
+  async getUserProfile(userId) {
+    try {
+      const token = localStorage.getItem('token');
+      
+      console.log('📤 Fetching user profile for:', userId);
+      
+      const response = await fetch(`${API_BASE_URL}/api/users/${userId}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const data = await response.json();
+      console.log('📥 Get user profile response:', data);
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'فشل تحميل الملف الشخصي');
+      }
+
+      return data;
+    } catch (error) {
+      console.error('❌ Get user profile error:', error);
+      throw error;
+    }
+  },
+
+  // ============================================
+  // 🔧 GENERIC HTTP METHODS - دوال عامة
+  // ============================================
+
+  async get(url, params = {}) {
+    try {
+      const token = localStorage.getItem('token');
+      const queryParams = new URLSearchParams(params).toString();
+      const fullUrl = `${API_BASE_URL}${url}${queryParams ? `?${queryParams}` : ''}`;
+      
+      console.log('📤 GET request to:', fullUrl);
+      
+      const response = await fetch(fullUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.message || `فشل الطلب (${response.status})`);
+      }
+
+      return { data };
+    } catch (error) {
+      console.error('❌ GET request error:', error);
+      throw error;
+    }
+  },
+  
+  // ============================================
   // 🔧 GENERIC HTTP METHODS - دوال عامة
   // ============================================
 
@@ -1880,6 +2034,39 @@ export const api = {
       return responseData;
     } catch (error) {
       console.error('❌ Get upgrade request status error:', error);
+      throw error;
+    }
+  },
+
+  // ============================================
+  // ✅ UPGRADE TO GUIDE - طلب ترقية إلى مرشد (مع رفع الملفات)
+  // ============================================
+
+  async upgradeToGuide(formData) {
+    try {
+      const token = localStorage.getItem('token');
+      
+      console.log('📤 Sending upgrade request to /api/upgrade/upgrade-requests');
+      
+      const response = await fetch(`${API_BASE_URL}/api/upgrade/upgrade-requests`, {
+        method: 'POST',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : ''
+          // لا نضيف Content-Type لأن fetch سيتعامل مع FormData تلقائياً
+        },
+        body: formData
+      });
+
+      const responseData = await response.json();
+      console.log('📥 Upgrade response:', responseData);
+      
+      if (!response.ok) {
+        throw new Error(responseData.message || 'فشل إرسال طلب الترقية');
+      }
+
+      return responseData;
+    } catch (error) {
+      console.error('❌ Upgrade request error:', error);
       throw error;
     }
   }
