@@ -9,25 +9,36 @@ function AuthLayout({
   subtitle, 
   type = 'user',
   loading = false,
-  error = null 
+  error = null,
+  onBack = null // ✅ إضافة دالة الرجوع اختيارية
 }) {
   const getTypeInfo = () => {
     switch (type) {
       case 'guide':
         return {
           label: 'مرشد سياحي',
+          icon: '🧑‍🏫',
           color: '#059669',
           bgColor: '#d1fae5'
         };
       case 'admin':
         return {
           label: 'مدير النظام',
+          icon: '👑',
           color: '#dc2626',
           bgColor: '#fee2e2'
+        };
+      case 'support':
+        return {
+          label: 'دعم فني',
+          icon: '🛠️',
+          color: '#2563eb',
+          bgColor: '#dbeafe'
         };
       default:
         return {
           label: 'مستخدم',
+          icon: '👤',
           color: '#4f46e5',
           bgColor: '#e0e7ff'
         };
@@ -44,10 +55,19 @@ function AuthLayout({
         
         {/* المحتوى */}
         <div className="auth-content">
+          {/* زر الرجوع */}
+          {onBack && (
+            <button className="auth-back-button" onClick={onBack}>
+              <span className="back-icon">←</span>
+              <span>رجوع</span>
+            </button>
+          )}
+          
           {/* الشعار */}
           <div className="auth-logo">
             <div className="logo-icon">🌍</div>
-            <h2 className="logo-text">TouristApp</h2>
+            <h2 className="logo-text">السائح</h2>
+            <span className="logo-version">v1.0</span>
           </div>
           
           {/* العنوان */}
@@ -63,8 +83,8 @@ function AuthLayout({
                 color: typeInfo.color
               }}
             >
-              <span className="badge-icon">👤</span>
-              {typeInfo.label}
+              <span className="badge-icon">{typeInfo.icon}</span>
+              <span className="badge-text">{typeInfo.label}</span>
             </div>
           </div>
           
@@ -103,7 +123,7 @@ function AuthLayout({
               <a href="/privacy" className="footer-link">الخصوصية</a>
             </div>
             <p className="footer-copyright">
-              © 2024 TouristApp. جميع الحقوق محفوظة.
+              © {new Date().getFullYear()} السائح. جميع الحقوق محفوظة.
             </p>
           </div>
         </div>
