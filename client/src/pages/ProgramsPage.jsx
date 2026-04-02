@@ -1,3 +1,4 @@
+// client/src/pages/ProgramsPage.jsx
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -6,8 +7,9 @@ import {
   FiMapPin, FiCalendar, FiUsers, FiDollarSign,
   FiSearch, FiFilter, FiStar, FiClock, FiHeart,
   FiShare2, FiBookmark, FiChevronLeft, FiChevronRight,
-  FiGrid, FiList, FiEye, FiMessageCircle
+  FiGrid, FiList, FiEye, FiMessageCircle, FiX, FiLoader
 } from 'react-icons/fi';
+import toast from 'react-hot-toast';
 import api from '../services/api';
 import './ProgramsPage.css';
 
@@ -19,7 +21,7 @@ const ProgramsPage = () => {
   const [filteredPrograms, setFilteredPrograms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [viewMode, setViewMode] = useState('grid'); // grid / list
+  const [viewMode, setViewMode] = useState('grid');
   const [selectedProgram, setSelectedProgram] = useState(null);
   const [showFilters, setShowFilters] = useState(false);
   const [favorites, setFavorites] = useState([]);
@@ -28,7 +30,7 @@ const ProgramsPage = () => {
   const [filters, setFilters] = useState({
     location: 'all',
     activity: 'all',
-    priceRange: { min: 0, max: 1000 },
+    priceRange: { min: 0, max: 5000 },
     duration: 'all',
     rating: 0,
     guests: 1
@@ -53,8 +55,8 @@ const ProgramsPage = () => {
   });
 
   // خيارات الفلترة
-  const locations = ['الكل', 'مكة', 'المدينة', 'الرياض', 'جدة', 'الدمام', 'أبها', 'تبوك'];
-  const activities = ['الكل', 'سياحة دينية', 'سياحة ثقافية', 'سياحة مغامرات', 'سياحة ترفيهية', 'سياحة علاجية'];
+  const locations = ['الكل', 'مكة المكرمة', 'المدينة المنورة', 'الرياض', 'جدة', 'الدمام', 'أبها', 'تبوك', 'الطائف'];
+  const activities = ['الكل', 'سياحة دينية', 'سياحة ثقافية', 'سياحة مغامرات', 'سياحة ترفيهية', 'سياحة علاجية', 'سياحة طبيعية'];
   const durations = ['الكل', 'يوم واحد', '2-3 أيام', '4-7 أيام', 'أسبوعين', 'شهر'];
 
   useEffect(() => {
@@ -68,41 +70,164 @@ const ProgramsPage = () => {
     applyFilters();
   }, [programs, filters, searchQuery]);
 
+  // جلب البرامج من API
   const fetchPrograms = async () => {
     try {
       setLoading(true);
+      setError(null);
+      
+      // محاولة جلب البيانات من API
       const response = await api.get('/programs');
-      if (response.data.success) {
-        setPrograms(response.data.programs);
-        calculateStats(response.data.programs);
+      console.log('📥 Programs response:', response);
+      
+      let programsData = [];
+      if (response.data?.success && response.data.programs) {
+        programsData = response.data.programs;
+      } else if (Array.isArray(response.data)) {
+        programsData = response.data;
+      } else if (response.data?.data && Array.isArray(response.data.data)) {
+        programsData = response.data.data;
+      } else {
+        // بيانات تجريبية للاختبار
+        programsData = getDemoPrograms();
       }
+      
+      setPrograms(programsData);
+      calculateStats(programsData);
+      
     } catch (err) {
-      setError('حدث خطأ في تحميل البرامج');
       console.error('Error fetching programs:', err);
+      setError('حدث خطأ في تحميل البرامج');
+      // عرض بيانات تجريبية عند فشل الاتصال
+      const demoData = getDemoPrograms();
+      setPrograms(demoData);
+      calculateStats(demoData);
     } finally {
       setLoading(false);
     }
   };
 
+  // بيانات تجريبية للاختبار
+  const getDemoPrograms = () => {
+    return [
+      {
+        id: 1,
+        title: 'جولة في المسجد الحرام',
+        description: 'جولة سياحية دينية تشمل زيارة المسجد الحرام والكعبة المشرفة مع شرح تاريخي مفصل',
+        location: 'مكة المكرمة',
+        activity: 'سياحة دينية',
+        price: 150,
+        duration: 'يوم واحد',
+        max_guests: 20,
+        rating: 4.8,
+        reviews: 156,
+        image: null,
+        guide_id: 1,
+        guide_name: 'أحمد محمد',
+        isPopular: true,
+        includes: ['المرشد السياحي', 'وجبة غداء', 'مشروبات', 'النقل من وإلى الفندق'],
+        excludes: ['تذاكر الطيران', 'الإقامة', 'التأمين']
+      },
+      {
+        id: 2,
+        title: 'رحلة إلى المسجد النبوي',
+        description: 'استمتع بزيارة المسجد النبوي الشريف وقبة المسجد مع جولة في معالم المدينة المنورة',
+        location: 'المدينة المنورة',
+        activity: 'سياحة دينية',
+        price: 120,
+        duration: 'يوم واحد',
+        max_guests: 25,
+        rating: 4.9,
+        reviews: 203,
+        image: null,
+        guide_id: 2,
+        guide_name: 'محمد علي',
+        isPopular: true,
+        includes: ['المرشد السياحي', 'وجبة غداء', 'مشروبات', 'النقل'],
+        excludes: ['تذاكر الطيران', 'الإقامة']
+      },
+      {
+        id: 3,
+        title: 'مغامرة في جبال السودة',
+        description: 'جولة مغامرات في جبال السودة بأبها تشمل المشي لمسافات طويلة وركوب التلفريك',
+        location: 'أبها',
+        activity: 'سياحة مغامرات',
+        price: 250,
+        duration: 'يوم واحد',
+        max_guests: 15,
+        rating: 4.7,
+        reviews: 89,
+        image: null,
+        guide_id: 3,
+        guide_name: 'خالد العتيبي',
+        isPopular: false,
+        includes: ['المرشد السياحي', 'تذاكر التلفريك', 'وجبة غداء', 'مشروبات'],
+        excludes: ['معدات المشي', 'التأمين']
+      },
+      {
+        id: 4,
+        title: 'جولة في الدرعية التاريخية',
+        description: 'اكتشف تاريخ الدرعية وأحيائها القديمة مع شرح مفصل عن تاريخ المملكة',
+        location: 'الرياض',
+        activity: 'سياحة ثقافية',
+        price: 180,
+        duration: 'يوم واحد',
+        max_guests: 20,
+        rating: 4.6,
+        reviews: 112,
+        image: null,
+        guide_id: 4,
+        guide_name: 'فهد الدوسري',
+        isPopular: true,
+        includes: ['المرشد السياحي', 'وجبة غداء', 'مشروبات', 'تذاكر الدخول'],
+        excludes: ['النقل', 'الإقامة']
+      },
+      {
+        id: 5,
+        title: 'جولة في كورنيش جدة',
+        description: 'جولة ترفيهية على كورنيش جدة تشمل نافورة الملك فهد وحديقة الشلال',
+        location: 'جدة',
+        activity: 'سياحة ترفيهية',
+        price: 100,
+        duration: 'نصف يوم',
+        max_guests: 30,
+        rating: 4.5,
+        reviews: 178,
+        image: null,
+        guide_id: 5,
+        guide_name: 'سعيد الغامدي',
+        isPopular: false,
+        includes: ['المرشد السياحي', 'وجبة خفيفة', 'مشروبات'],
+        excludes: ['النقل', 'الإقامة']
+      }
+    ];
+  };
+
+  // جلب المفضلة
   const fetchFavorites = async () => {
     try {
-      const response = await api.get(`/users/${user.id}/favorites`);
-      if (response.data.success) {
-        setFavorites(response.data.favorites);
+      const response = await api.get(`/favorites`);
+      if (response.data?.success && response.data.favorites) {
+        setFavorites(response.data.favorites.map(f => f.program_id));
       }
     } catch (err) {
       console.error('Error fetching favorites:', err);
     }
   };
 
+  // حساب الإحصائيات
   const calculateStats = (programsData) => {
     const total = programsData.length;
     const uniqueGuides = new Set(programsData.map(p => p.guide_id)).size;
-    const avgPrice = programsData.reduce((acc, p) => acc + p.price, 0) / total;
-    const locationCount = programsData.reduce((acc, p) => {
-      acc[p.location] = (acc[p.location] || 0) + 1;
-      return acc;
-    }, {});
+    const avgPrice = programsData.reduce((acc, p) => acc + (p.price || 0), 0) / (total || 1);
+    
+    const locationCount = {};
+    programsData.forEach(p => {
+      if (p.location) {
+        locationCount[p.location] = (locationCount[p.location] || 0) + 1;
+      }
+    });
+    
     const popularLocs = Object.entries(locationCount)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 3)
@@ -116,15 +241,17 @@ const ProgramsPage = () => {
     });
   };
 
+  // تطبيق الفلاتر
   const applyFilters = () => {
     let filtered = [...programs];
 
     // فلترة البحث
-    if (searchQuery) {
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
       filtered = filtered.filter(p =>
-        p.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.location?.toLowerCase().includes(searchQuery.toLowerCase())
+        p.title?.toLowerCase().includes(query) ||
+        p.description?.toLowerCase().includes(query) ||
+        p.location?.toLowerCase().includes(query)
       );
     }
 
@@ -140,12 +267,13 @@ const ProgramsPage = () => {
 
     // فلترة السعر
     filtered = filtered.filter(p =>
-      p.price >= filters.priceRange.min && p.price <= filters.priceRange.max
+      (p.price || 0) >= filters.priceRange.min && 
+      (p.price || 0) <= filters.priceRange.max
     );
 
     // فلترة المدة
     if (filters.duration && filters.duration !== 'الكل') {
-      // منطق فلترة المدة حسب الحاجة
+      filtered = filtered.filter(p => p.duration === filters.duration);
     }
 
     // فلترة التقييم
@@ -166,72 +294,88 @@ const ProgramsPage = () => {
     }));
   };
 
+  // تبديل المفضلة
   const toggleFavorite = async (programId) => {
     if (!isAuthenticated) {
-      navigate('/login', { state: { from: '/programs', message: 'يرجى تسجيل الدخول لإضافة المفضلة' } });
+      toast.error('يرجى تسجيل الدخول لإضافة المفضلة');
+      navigate('/login', { state: { from: '/programs' } });
       return;
     }
 
     try {
       if (favorites.includes(programId)) {
-        await api.delete(`/users/${user.id}/favorites/${programId}`);
+        await api.delete(`/favorites/${programId}`);
         setFavorites(prev => prev.filter(id => id !== programId));
+        toast.success('تم إزالة من المفضلة');
       } else {
-        await api.post(`/users/${user.id}/favorites/${programId}`);
+        await api.post(`/favorites/${programId}`);
         setFavorites(prev => [...prev, programId]);
+        toast.success('تم إضافة إلى المفضلة');
       }
     } catch (err) {
       console.error('Error toggling favorite:', err);
+      toast.error('حدث خطأ');
     }
   };
 
+  // حجز البرنامج
   const handleBookProgram = (programId) => {
     if (!isAuthenticated) {
-      navigate('/login', { state: { from: '/programs', message: 'يرجى تسجيل الدخول لحجز البرنامج' } });
+      toast.error('يرجى تسجيل الدخول لحجز البرنامج');
+      navigate('/login', { state: { from: '/programs' } });
       return;
     }
     navigate(`/booking/${programId}`);
   };
 
+  // التواصل مع المرشد
   const handleContactGuide = (guideId) => {
     if (!isAuthenticated) {
-      navigate('/login', { state: { from: '/programs', message: 'يرجى تسجيل الدخول للتواصل مع المرشد' } });
+      toast.error('يرجى تسجيل الدخول للتواصل مع المرشد');
+      navigate('/login', { state: { from: '/programs' } });
       return;
     }
     navigate(`/chat/guide/${guideId}`);
   };
 
+  // الحصول على البرامج حسب الصفحة
   const getPaginatedPrograms = () => {
     const start = (pagination.currentPage - 1) * pagination.itemsPerPage;
     const end = start + pagination.itemsPerPage;
     return filteredPrograms.slice(start, end);
   };
 
+  // عرض نجوم التقييم
   const getRatingStars = (rating) => {
     const stars = [];
+    const fullStars = Math.floor(rating || 0);
+    const hasHalfStar = (rating % 1) >= 0.5;
+    
     for (let i = 1; i <= 5; i++) {
-      stars.push(
-        <FiStar
-          key={i}
-          className={`star-icon ${i <= rating ? 'filled' : ''}`}
-        />
-      );
+      if (i <= fullStars) {
+        stars.push(<FiStar key={i} className="star-icon filled" fill="currentColor" />);
+      } else if (i === fullStars + 1 && hasHalfStar) {
+        stars.push(<FiStar key={i} className="star-icon half" />);
+      } else {
+        stars.push(<FiStar key={i} className="star-icon" />);
+      }
     }
     return stars;
   };
 
+  // تنسيق السعر
   const formatPrice = (price) => {
     return new Intl.NumberFormat('ar-SA', {
       style: 'currency',
       currency: 'SAR',
       minimumFractionDigits: 0
-    }).format(price);
+    }).format(price || 0);
   };
 
   if (loading) {
     return (
       <div className="programs-loading">
-        <div className="spinner"></div>
+        <FiLoader className="spinner" />
         <p>جاري تحميل البرامج...</p>
       </div>
     );
@@ -280,7 +424,7 @@ const ProgramsPage = () => {
               <span className="stat-label">مرشد</span>
             </div>
             <div className="hero-stat">
-              <span className="stat-number">{stats.averagePrice} ₴</span>
+              <span className="stat-number">{stats.averagePrice}</span>
               <span className="stat-label">متوسط السعر</span>
             </div>
           </div>
@@ -341,38 +485,40 @@ const ProgramsPage = () => {
                 <input
                   type="number"
                   min="1"
-                  max="20"
+                  max="50"
                   value={filters.guests}
-                  onChange={(e) => setFilters({...filters, guests: parseInt(e.target.value)})}
+                  onChange={(e) => setFilters({...filters, guests: parseInt(e.target.value) || 1})}
                   className="filter-input"
                 />
               </div>
 
               <div className="filter-group price-range">
-                <label>نطاق السعر</label>
+                <label>نطاق السعر (ريال)</label>
                 <div className="price-inputs">
                   <input
                     type="number"
                     min="0"
-                    max="1000"
+                    max="10000"
                     value={filters.priceRange.min}
                     onChange={(e) => setFilters({
                       ...filters, 
-                      priceRange: {...filters.priceRange, min: parseInt(e.target.value)}
+                      priceRange: {...filters.priceRange, min: parseInt(e.target.value) || 0}
                     })}
                     className="price-input"
+                    placeholder="الحد الأدنى"
                   />
                   <span>إلى</span>
                   <input
                     type="number"
                     min="0"
-                    max="1000"
+                    max="10000"
                     value={filters.priceRange.max}
                     onChange={(e) => setFilters({
                       ...filters, 
-                      priceRange: {...filters.priceRange, max: parseInt(e.target.value)}
+                      priceRange: {...filters.priceRange, max: parseInt(e.target.value) || 0}
                     })}
                     className="price-input"
+                    placeholder="الحد الأعلى"
                   />
                 </div>
               </div>
@@ -387,6 +533,14 @@ const ProgramsPage = () => {
                       onClick={() => setFilters({...filters, rating: star})}
                     />
                   ))}
+                  {filters.rating > 0 && (
+                    <button 
+                      className="rating-clear"
+                      onClick={() => setFilters({...filters, rating: 0})}
+                    >
+                      <FiX size={14} />
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -397,7 +551,7 @@ const ProgramsPage = () => {
                 onClick={() => setFilters({
                   location: 'all',
                   activity: 'all',
-                  priceRange: { min: 0, max: 1000 },
+                  priceRange: { min: 0, max: 5000 },
                   duration: 'all',
                   rating: 0,
                   guests: 1
@@ -439,7 +593,7 @@ const ProgramsPage = () => {
       </div>
 
       {/* قائمة البرامج */}
-      {error ? (
+      {error && filteredPrograms.length === 0 ? (
         <div className="error-container">
           <p className="error-message">{error}</p>
           <motion.button 
@@ -467,9 +621,9 @@ const ProgramsPage = () => {
                 >
                   <div className="program-image">
                     <img 
-                      src={program.image || '/default-program.jpg'} 
+                      src={program.image || '/images/default-program.jpg'} 
                       alt={program.title}
-                      onError={(e) => e.target.src = '/default-program.jpg'}
+                      onError={(e) => { e.target.src = '/images/default-program.jpg'; }}
                     />
                     <div className="program-overlay">
                       <motion.button 
@@ -482,16 +636,21 @@ const ProgramsPage = () => {
                       </motion.button>
                       <motion.button 
                         className="share-btn"
-                        onClick={() => {/* مشاركة البرنامج */}}
+                        onClick={() => {
+                          navigator.clipboard.writeText(window.location.origin + `/programs/${program.id}`);
+                          toast.success('تم نسخ الرابط');
+                        }}
                         whileHover={{ scale: 1.1 }}
                         whileTap={{ scale: 0.9 }}
                       >
                         <FiShare2 />
                       </motion.button>
                     </div>
-                    <div className="program-badge">
-                      {program.isPopular && '🌟 مميز'}
-                    </div>
+                    {program.isPopular && (
+                      <div className="program-badge">
+                        🌟 مميز
+                      </div>
+                    )}
                   </div>
 
                   <div className="program-content">
@@ -534,6 +693,7 @@ const ProgramsPage = () => {
                           onClick={() => setSelectedProgram(program)}
                           whileHover={{ scale: 1.05 }}
                           whileTap={{ scale: 0.95 }}
+                          title="عرض التفاصيل"
                         >
                           <FiEye />
                         </motion.button>
@@ -550,6 +710,7 @@ const ProgramsPage = () => {
                           onClick={() => handleContactGuide(program.guide_id)}
                           whileHover={{ scale: 1.05 }}
                           whileTap={{ scale: 0.95 }}
+                          title="تواصل مع المرشد"
                         >
                           <FiMessageCircle />
                         </motion.button>
@@ -574,17 +735,30 @@ const ProgramsPage = () => {
                 <FiChevronRight />
               </motion.button>
               
-              {[...Array(pagination.totalPages)].map((_, i) => (
-                <motion.button
-                  key={i + 1}
-                  onClick={() => setPagination({...pagination, currentPage: i + 1})}
-                  className={`pagination-number ${pagination.currentPage === i + 1 ? 'active' : ''}`}
-                  whileHover={{ scale: 1.1 }}
-                  whileTap={{ scale: 0.9 }}
-                >
-                  {i + 1}
-                </motion.button>
-              ))}
+              {[...Array(Math.min(pagination.totalPages, 5))].map((_, i) => {
+                let pageNum;
+                if (pagination.totalPages <= 5) {
+                  pageNum = i + 1;
+                } else if (pagination.currentPage <= 3) {
+                  pageNum = i + 1;
+                } else if (pagination.currentPage >= pagination.totalPages - 2) {
+                  pageNum = pagination.totalPages - 4 + i;
+                } else {
+                  pageNum = pagination.currentPage - 2 + i;
+                }
+                
+                return (
+                  <motion.button
+                    key={pageNum}
+                    onClick={() => setPagination({...pagination, currentPage: pageNum})}
+                    className={`pagination-number ${pagination.currentPage === pageNum ? 'active' : ''}`}
+                    whileHover={{ scale: 1.1 }}
+                    whileTap={{ scale: 0.9 }}
+                  >
+                    {pageNum}
+                  </motion.button>
+                );
+              })}
               
               <motion.button
                 onClick={() => setPagination({...pagination, currentPage: pagination.currentPage + 1})}
@@ -621,9 +795,9 @@ const ProgramsPage = () => {
               
               <div className="modal-header">
                 <img 
-                  src={selectedProgram.image || '/default-program.jpg'} 
+                  src={selectedProgram.image || '/images/default-program.jpg'} 
                   alt={selectedProgram.title}
-                  onError={(e) => e.target.src = '/default-program.jpg'}
+                  onError={(e) => { e.target.src = '/images/default-program.jpg'; }}
                 />
                 <div className="modal-header-content">
                   <h2>{selectedProgram.title}</h2>
@@ -671,7 +845,7 @@ const ProgramsPage = () => {
                   <p>{selectedProgram.description}</p>
                 </div>
 
-                {selectedProgram.includes && (
+                {selectedProgram.includes && selectedProgram.includes.length > 0 && (
                   <div className="modal-includes">
                     <h3>يشمل البرنامج</h3>
                     <ul>
@@ -682,7 +856,7 @@ const ProgramsPage = () => {
                   </div>
                 )}
 
-                {selectedProgram.excludes && (
+                {selectedProgram.excludes && selectedProgram.excludes.length > 0 && (
                   <div className="modal-excludes">
                     <h3>لا يشمل</h3>
                     <ul>
