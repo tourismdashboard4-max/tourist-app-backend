@@ -23,8 +23,7 @@ import {
   FaFile,
   FaDownload,
   FaTrash,
-  FaReply,
-  FaArrowDown
+  FaReply
 } from 'react-icons/fa';
 import { useTheme } from '../contexts/ThemeContext';
 import { useLanguage } from '../contexts/LanguageContext';
@@ -41,7 +40,6 @@ const ChatPage = ({ setPage, initialConversationId }) => {
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const typingTimeoutRef = useRef(null);
-  const messagesContainerRef = useRef(null);
   
   // حالات البيانات
   const [conversations, setConversations] = useState([]);
@@ -59,7 +57,6 @@ const ChatPage = ({ setPage, initialConversationId }) => {
   const [loadingMore, setLoadingMore] = useState(false);
   const [typing, setTyping] = useState(false);
   const [replyingTo, setReplyingTo] = useState(null);
-  const [isNearBottom, setIsNearBottom] = useState(true);
 
   // تحميل المحادثات عند فتح الصفحة
   useEffect(() => {
@@ -85,10 +82,8 @@ const ChatPage = ({ setPage, initialConversationId }) => {
 
   // التمرير لآخر رسالة
   useEffect(() => {
-    if (isNearBottom) {
-      scrollToBottom();
-    }
-  }, [messages, isNearBottom]);
+    scrollToBottom();
+  }, [messages]);
 
   // تحديث حالة الكتابة
   useEffect(() => {
@@ -98,15 +93,6 @@ const ChatPage = ({ setPage, initialConversationId }) => {
       handleTypingStop();
     }
   }, [messageInput]);
-
-  // إضافة مستمع التمرير
-  useEffect(() => {
-    const container = messagesContainerRef.current;
-    if (container) {
-      container.addEventListener('scroll', handleScroll);
-      return () => container.removeEventListener('scroll', handleScroll);
-    }
-  }, [hasMore, loadingMore, selectedChat]);
 
   const connectSocket = () => {
     socketService.connect();
@@ -129,35 +115,10 @@ const ChatPage = ({ setPage, initialConversationId }) => {
     socketService.off('stop-typing');
   };
 
-  const scrollToBottom = (behavior = 'smooth') => {
+  const scrollToBottom = () => {
     setTimeout(() => {
-      messagesEndRef.current?.scrollIntoView({ 
-        behavior, 
-        block: 'end' 
-      });
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, 100);
-  };
-
-  const scrollToTop = (behavior = 'smooth') => {
-    if (messagesContainerRef.current) {
-      messagesContainerRef.current.scrollTo({
-        top: 0,
-        behavior
-      });
-    }
-  };
-
-  const handleScroll = (e) => {
-    const { scrollTop, scrollHeight, clientHeight } = e.target;
-    
-    // تحميل المزيد من الرسائل عند الوصول للأعلى
-    if (scrollTop < 50 && hasMore && !loadingMore && selectedChat) {
-      loadMoreMessages();
-    }
-    
-    // تحديث حالة القرب من الأسفل
-    const nearBottom = scrollHeight - scrollTop - clientHeight < 100;
-    setIsNearBottom(nearBottom);
   };
 
   const loadConversations = async () => {
@@ -198,23 +159,9 @@ const ChatPage = ({ setPage, initialConversationId }) => {
         if (reset) {
           setMessages(newMessages);
           setPageState(2);
-          // التمرير للأسفل بعد تحميل الرسائل
-          setTimeout(() => scrollToBottom('auto'), 200);
         } else {
-          // حفظ موقع التمرير الحالي قبل إضافة الرسائل القديمة
-          const container = messagesContainerRef.current;
-          const oldScrollHeight = container?.scrollHeight || 0;
-          
           setMessages(prev => [...newMessages, ...prev]);
           setPageState(prev => prev + 1);
-          
-          // استعادة موقع التمرير بعد إضافة الرسائل القديمة
-          setTimeout(() => {
-            if (container) {
-              const newScrollHeight = container.scrollHeight;
-              container.scrollTop = newScrollHeight - oldScrollHeight + 50;
-            }
-          }, 50);
         }
         
         setHasMore(response.hasMore || false);
@@ -244,10 +191,6 @@ const ChatPage = ({ setPage, initialConversationId }) => {
     // إضافة الرسالة إلى المحادثة الحالية
     if (message.conversationId === selectedChat?._id || message.conversationId === selectedChat?.id) {
       setMessages(prev => [...prev, message]);
-      // التمرير للأسفل إذا كنا قريبين من الأسفل
-      if (isNearBottom) {
-        setTimeout(() => scrollToBottom('smooth'), 50);
-      }
     }
     
     // تحديث آخر رسالة في قائمة المحادثات
@@ -593,8 +536,7 @@ const ChatPage = ({ setPage, initialConversationId }) => {
       typing: 'يكتب...',
       delete: 'حذف',
       reply: 'رد',
-      loadMore: 'تحميل المزيد',
-      scrollToBottom: 'الذهاب إلى آخر رسالة'
+      loadMore: 'تحميل المزيد'
     },
     en: {
       title: 'Chats',
@@ -622,8 +564,7 @@ const ChatPage = ({ setPage, initialConversationId }) => {
       typing: 'typing...',
       delete: 'Delete',
       reply: 'Reply',
-      loadMore: 'Load more',
-      scrollToBottom: 'Go to latest message'
+      loadMore: 'Load more'
     }
   };
 
@@ -745,6 +686,12 @@ const ChatPage = ({ setPage, initialConversationId }) => {
           {/* قائمة المحادثات */}
           <div 
             style={{ flex: 1, overflowY: 'auto', padding: '0 15px' }}
+            onScroll={(e) => {
+              const bottom = e.target.scrollHeight - e.target.scrollTop === e.target.clientHeight;
+              if (bottom && hasMore && !loadingMore) {
+                loadMoreMessages();
+              }
+            }}
           >
             {filteredConversations.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '40px 20px', color: theme.textSecondary }}>
@@ -947,8 +894,6 @@ const ChatPage = ({ setPage, initialConversationId }) => {
               {/* الرسائل */}
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                 <div 
-                  ref={messagesContainerRef}
-                  className="messages-container"
                   style={{
                     flex: 1,
                     overflowY: 'auto',
@@ -956,6 +901,11 @@ const ChatPage = ({ setPage, initialConversationId }) => {
                     display: 'flex',
                     flexDirection: 'column',
                     gap: '10px'
+                  }}
+                  onScroll={(e) => {
+                    if (e.target.scrollTop === 0 && hasMore && !loadingMore) {
+                      loadMoreMessages();
+                    }
                   }}
                 >
                   {loadingMore && (
@@ -1079,36 +1029,6 @@ const ChatPage = ({ setPage, initialConversationId }) => {
                   })}
                   <div ref={messagesEndRef} />
                 </div>
-
-                {/* زر العودة للأسفل */}
-                {!isNearBottom && (
-                  <button
-                    onClick={() => scrollToBottom('smooth')}
-                    style={{
-                      position: 'sticky',
-                      bottom: '80px',
-                      left: '50%',
-                      transform: 'translateX(-50%)',
-                      width: '40px',
-                      height: '40px',
-                      borderRadius: '50%',
-                      backgroundColor: theme.primary,
-                      color: 'white',
-                      border: 'none',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      boxShadow: '0 2px 10px rgba(0,0,0,0.2)',
-                      zIndex: 100,
-                      margin: '0 auto 10px',
-                      transition: 'all 0.3s ease'
-                    }}
-                    title={t.scrollToBottom}
-                  >
-                    <FaArrowDown />
-                  </button>
-                )}
 
                 {/* شريط إدخال الرسالة */}
                 <div style={{
@@ -1321,50 +1241,6 @@ const ChatPage = ({ setPage, initialConversationId }) => {
           </div>
         )}
       </div>
-
-      {/* CSS إضافي */}
-      <style>{`
-        .messages-container {
-          scroll-behavior: smooth;
-          overflow-y: auto !important;
-        }
-        
-        .messages-container::-webkit-scrollbar {
-          width: 6px;
-        }
-        
-        .messages-container::-webkit-scrollbar-track {
-          background: ${theme.border};
-          border-radius: 10px;
-        }
-        
-        .messages-container::-webkit-scrollbar-thumb {
-          background: ${theme.primary}80;
-          border-radius: 10px;
-        }
-        
-        .messages-container::-webkit-scrollbar-thumb:hover {
-          background: ${theme.primary};
-        }
-        
-        .animate-spin {
-          animation: spin 1s linear infinite;
-        }
-        
-        @keyframes spin {
-          0% { transform: rotate(0deg); }
-          100% { transform: rotate(360deg); }
-        }
-        
-        button:hover {
-          opacity: 0.9;
-          transform: scale(1.05);
-        }
-        
-        button:active {
-          transform: scale(0.95);
-        }
-      `}</style>
     </div>
   );
 };
@@ -1379,7 +1255,10 @@ const iconButtonStyle = (theme) => ({
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
-  transition: 'all 0.2s ease'
+  transition: 'all 0.2s ease',
+  ':hover': {
+    backgroundColor: theme.border
+  }
 });
 
 export default ChatPage;
