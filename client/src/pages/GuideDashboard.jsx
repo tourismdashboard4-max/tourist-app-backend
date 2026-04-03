@@ -1,9 +1,10 @@
 // client/src/pages/GuideDashboard.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Plus, Package, CheckCircle, XCircle, Edit2, Trash2,
   Users, DollarSign, Clock, MapPin, Eye, EyeOff,
-  ArrowLeft, Shield, RefreshCw
+  ArrowLeft, Shield, RefreshCw, Search, Navigation,
+  Star, Calendar, AlertCircle, Map, Layers, Image, Upload, Camera
 } from 'lucide-react';
 import api from '../services/api';
 import toast from 'react-hot-toast';
@@ -18,6 +19,12 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
   const [showAddProgram, setShowAddProgram] = useState(false);
   const [editingProgram, setEditingProgram] = useState(null);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const imageInputRef = useRef(null);
+  const editImageInputRef = useRef(null);
+  
   const [stats, setStats] = useState({
     totalParticipants: 0,
     totalRevenue: 0,
@@ -33,7 +40,9 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     duration: "",
     maxParticipants: "",
     location_lat: "",
-    location_lng: ""
+    location_lng: "",
+    image: null,
+    imagePreview: null
   });
 
   // ✅ التحقق من أن المستخدم مرشد
@@ -42,8 +51,8 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
                   user?.isGuide === true || 
                   user?.guide_status === 'approved';
 
-  // ✅ تحديث الخريطة بالبرامج النشطة
-  const updateMapWithPrograms = (programsList) => {
+  // ✅ تحديث الخريطة بالبرامج النشطة وحفظها في localStorage العام
+  const updateMapWithPrograms = useCallback((programsList) => {
     if (setUserPrograms) {
       const activePrograms = programsList.filter(p => p.status === 'active');
       const mapPrograms = activePrograms.map(p => ({
@@ -52,149 +61,142 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         name_en: p.name,
         guide_name: p.guide_name || user?.fullName || guide?.name || "مرشد سياحي",
         guide_id: p.guide_id || user?.id || guide?.id,
-        coords: p.coords || [p.location_lng, p.location_lat],
+        coords: p.coords || (p.location_lng && p.location_lat ? [p.location_lng, p.location_lat] : null),
         price: p.price,
         duration: p.duration,
-        rating: p.rating || null,
-        distance: null,
+        rating: p.rating || 4.5,
+        distance: p.distance || null,
         active: true,
         location_name: p.location_name || p.location,
         description: p.description,
         maxParticipants: p.maxParticipants,
         currentParticipants: p.participants || 0,
         participants: p.participants || 0,
-        created_at: p.created_at
-      }));
+        created_at: p.created_at,
+        image: p.image || null
+      })).filter(p => p.coords !== null);
+      
       setUserPrograms(mapPrograms);
       console.log('🗺️ Updated map with programs:', mapPrograms.length);
+      
+      // ✅ حفظ في localStorage العام ليتمكن جميع المستخدمين من رؤيتها
+      localStorage.setItem('public_programs', JSON.stringify(mapPrograms));
+      console.log('💾 Saved to public storage:', mapPrograms.length);
     }
-  };
+  }, [setUserPrograms, user?.fullName, guide?.name, user?.id, guide?.id]);
 
   // ✅ حفظ البرامج في localStorage الخاص بالمرشد
-  const saveProgramsToLocal = (programsList) => {
+  const saveProgramsToLocal = useCallback((programsList) => {
     const guideId = user?.id || guide?.id;
     if (guideId) {
       localStorage.setItem(`guide_programs_${guideId}`, JSON.stringify(programsList));
-      console.log('💾 Saved', programsList.length, 'programs to localStorage (guide)');
+      console.log('💾 Saved', programsList.length, 'programs to guide storage');
     }
+    // ✅ تحديث التخزين العام أيضاً
+    updateMapWithPrograms(programsList);
+  }, [user?.id, guide?.id, updateMapWithPrograms]);
+
+  // ✅ رفع الصورة وتحويلها إلى Base64
+  const uploadProgramImage = async (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        resolve(reader.result);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
   };
 
-  // ✅ حفظ البرامج في localStorage العام (ليراها جميع المستخدمين)
-  const saveProgramsToPublic = (programsList) => {
-    const activePrograms = programsList.filter(p => p.status === 'active');
-    const publicPrograms = activePrograms.map(p => ({
-      id: p.id,
-      name: p.name,
-      name_ar: p.name,
-      name_en: p.name,
-      guide_name: p.guide_name,
-      guide_id: p.guide_id,
-      coords: p.coords,
-      location_lng: p.location_lng,
-      location_lat: p.location_lat,
-      price: p.price,
-      duration: p.duration,
-      description: p.description,
-      location_name: p.location_name || p.location,
-      maxParticipants: p.maxParticipants,
-      participants: p.participants || 0,
-      status: p.status,
-      created_at: p.created_at
-    }));
+  // ✅ معالجة اختيار صورة للإضافة
+  const handleImageSelect = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
     
-    localStorage.setItem('public_programs', JSON.stringify(publicPrograms));
-    console.log('💾 Saved', publicPrograms.length, 'programs to public storage');
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error('حجم الصورة يجب أن يكون أقل من 2 ميجابايت');
+      return;
+    }
     
-    // تحديث الخريطة مباشرة
-    if (setUserPrograms) {
-      setUserPrograms(publicPrograms);
+    if (!file.type.startsWith('image/')) {
+      toast.error('الرجاء اختيار ملف صورة صالح');
+      return;
     }
-  };
-
-  // ✅ الحصول على جميع البرامج العامة
-  const getAllPublicPrograms = () => {
-    const saved = localStorage.getItem('public_programs');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch(e) {
-        return [];
-      }
-    }
-    return [];
-  };
-
-  // ✅ تحميل البرامج العامة عند بدء التشغيل
-  useEffect(() => {
-    const publicPrograms = getAllPublicPrograms();
-    if (publicPrograms.length > 0 && setUserPrograms) {
-      setUserPrograms(publicPrograms);
-      console.log('📦 Loaded', publicPrograms.length, 'public programs on startup');
-    }
-  }, []);
-
-  // ✅ تحميل البرامج من localStorage الخاص بالمرشد
-  const loadProgramsFromLocal = () => {
-    const guideId = user?.id || guide?.id;
-    if (guideId) {
-      const saved = localStorage.getItem(`guide_programs_${guideId}`);
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          setPrograms(parsed);
-          updateMapWithPrograms(parsed);
-          saveProgramsToPublic(parsed);
-          
-          const activeProgs = parsed.filter(p => p.status === 'active');
-          setStats({
-            totalParticipants: activeProgs.reduce((sum, p) => sum + (p.participants || 0), 0),
-            totalRevenue: activeProgs.reduce((sum, p) => sum + (p.participants || 0) * (p.price || 0), 0),
-            pendingRequests: requests.filter(r => r.status === 'pending').length,
-            activePrograms: activeProgs.length
-          });
-          console.log('📦 Loaded', parsed.length, 'programs from localStorage (guide)');
-          return true;
-        } catch (e) {
-          console.error('Error parsing saved programs:', e);
-        }
-      }
-    }
-    return false;
-  };
-
-  // ✅ تحديث الخريطة تلقائياً عند تغيير البرامج
-  useEffect(() => {
-    if (setUserPrograms && programs.length > 0) {
-      const activePrograms = programs.filter(p => p.status === 'active');
-      const mapPrograms = activePrograms.map(p => ({
-        id: p.id,
-        name_ar: p.name,
-        name_en: p.name,
-        guide_name: p.guide_name || user?.fullName || guide?.name || "مرشد سياحي",
-        guide_id: p.guide_id || user?.id || guide?.id,
-        coords: p.coords || [p.location_lng, p.location_lat],
-        price: p.price,
-        duration: p.duration,
-        rating: null,
-        distance: null,
-        active: true,
-        location_name: p.location_name || p.location,
-        description: p.description,
-        maxParticipants: p.maxParticipants,
-        currentParticipants: p.participants || 0,
-        participants: p.participants || 0
+    
+    setUploadingImage(true);
+    
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setNewProgram(prev => ({
+        ...prev,
+        image: file,
+        imagePreview: reader.result
       }));
-      setUserPrograms(mapPrograms);
-      console.log('🗺️ [Auto] Updated map with', mapPrograms.length, 'programs');
-      if (onProgramAdded) onProgramAdded();
-    } else if (setUserPrograms && programs.length === 0) {
-      setUserPrograms([]);
-      console.log('🗺️ [Auto] No programs to display');
-    }
-  }, [programs, setUserPrograms, onProgramAdded, user, guide]);
+      setUploadingImage(false);
+      toast.success('تم تحميل الصورة بنجاح');
+    };
+    reader.onerror = () => {
+      setUploadingImage(false);
+      toast.error('فشل تحميل الصورة');
+    };
+    reader.readAsDataURL(file);
+  };
 
-  // ✅ تحميل البرامج المحفوظة عند بدء التشغيل للمرشد
-  useEffect(() => {
+  // ✅ معالجة اختيار صورة للتعديل
+  const handleEditImageSelect = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error('حجم الصورة يجب أن يكون أقل من 2 ميجابايت');
+      return;
+    }
+    
+    if (!file.type.startsWith('image/')) {
+      toast.error('الرجاء اختيار ملف صورة صالح');
+      return;
+    }
+    
+    setUploadingImage(true);
+    
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setNewProgram(prev => ({
+        ...prev,
+        image: file,
+        imagePreview: reader.result
+      }));
+      setUploadingImage(false);
+      toast.success('تم تحديث الصورة');
+    };
+    reader.onerror = () => {
+      setUploadingImage(false);
+      toast.error('فشل تحميل الصورة');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // ✅ الحصول على إحداثيات الموقع باستخدام Mapbox
+  const getCoordinatesFromLocation = async (locationName) => {
+    if (!locationName) return null;
+    
+    try {
+      const response = await fetch(
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(locationName)}.json?access_token=pk.eyJ1IjoibW9vaG1kMTUiLCJhIjoiY21obWJwN3EwMHF1czJvc2lyaWRyem0xciJ9.sl39WFOhm4m-kOOYtGqONw&limit=1`
+      );
+      const data = await response.json();
+      if (data.features && data.features.length > 0) {
+        const [lng, lat] = data.features[0].center;
+        return { lat, lng, coords: [lng, lat], place_name: data.features[0].place_name };
+      }
+    } catch (error) {
+      console.error('Geocoding error:', error);
+    }
+    return null;
+  };
+
+  // ✅ تحميل البرامج من localStorage عند بدء التشغيل
+  const loadInitialPrograms = useCallback(() => {
     const guideId = user?.id || guide?.id;
     if (guideId) {
       const saved = localStorage.getItem(`guide_programs_${guideId}`);
@@ -203,251 +205,33 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
           const parsed = JSON.parse(saved);
           if (parsed.length > 0) {
             setPrograms(parsed);
-            console.log('📦 Startup: Loaded', parsed.length, 'programs from localStorage');
+            updateMapWithPrograms(parsed);
             
-            if (setUserPrograms) {
-              const activePrograms = parsed.filter(p => p.status === 'active');
-              const mapPrograms = activePrograms.map(p => ({
-                id: p.id,
-                name_ar: p.name,
-                name_en: p.name,
-                guide_name: p.guide_name || user?.fullName || guide?.name,
-                guide_id: p.guide_id || guideId,
-                coords: p.coords,
-                price: p.price,
-                duration: p.duration,
-                rating: null,
-                distance: null,
-                active: true,
-                location_name: p.location_name,
-                description: p.description,
-                maxParticipants: p.maxParticipants,
-                currentParticipants: p.participants || 0
-              }));
-              setUserPrograms(mapPrograms);
-              if (onProgramAdded) onProgramAdded();
-            }
+            const activeProgs = parsed.filter(p => p.status === 'active');
+            setStats({
+              totalParticipants: activeProgs.reduce((sum, p) => sum + (p.participants || 0), 0),
+              totalRevenue: activeProgs.reduce((sum, p) => sum + (p.participants || 0) * (p.price || 0), 0),
+              pendingRequests: requests.filter(r => r.status === 'pending').length,
+              activePrograms: activeProgs.length
+            });
+            console.log('📦 Loaded', parsed.length, 'programs from localStorage');
+            return true;
           }
-        } catch(e) {
+        } catch (e) {
           console.error('Error parsing saved programs:', e);
         }
       }
     }
-  }, [user?.id, guide?.id]);
+    return false;
+  }, [user?.id, guide?.id, updateMapWithPrograms, requests]);
 
-  // ✅ جلب برامج المرشد من API
-  const fetchGuidePrograms = async () => {
-    if (!isGuide) {
-      console.log('User is not a guide');
-      setLoading(false);
-      return;
-    }
-    
-    setLoading(true);
-    try {
-      const token = localStorage.getItem('token');
-      const guideId = user?.id || guide?.id;
-      
-      if (!guideId) {
-        console.error('No guide ID found');
-        if (!loadProgramsFromLocal()) {
-          setPrograms([]);
-        }
-        setLoading(false);
-        return;
-      }
-      
-      console.log('📥 Fetching programs for guide:', guideId);
-      
-      try {
-        const response = await api.get(`/api/guides/${guideId}/programs`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        
-        if (response.data?.success && response.data.programs) {
-          const programsData = response.data.programs;
-          setPrograms(programsData);
-          saveProgramsToLocal(programsData);
-          saveProgramsToPublic(programsData);
-          updateMapWithPrograms(programsData);
-          
-          const activeProgs = programsData.filter(p => p.status === 'active');
-          setStats({
-            totalParticipants: activeProgs.reduce((sum, p) => sum + (p.participants || 0), 0),
-            totalRevenue: activeProgs.reduce((sum, p) => sum + (p.participants || 0) * (p.price || 0), 0),
-            pendingRequests: requests.filter(r => r.status === 'pending').length,
-            activePrograms: activeProgs.length
-          });
-          setLoading(false);
-          return;
-        }
-      } catch (apiError) {
-        console.log('API not available, using localStorage');
-      }
-      
-      if (!loadProgramsFromLocal()) {
-        setPrograms([]);
-      }
-      
-    } catch (error) {
-      console.error('Error fetching guide programs:', error);
-      loadProgramsFromLocal();
-    } finally {
-      setLoading(false);
-    }
-  };
+  // ✅ تحميل البرامج عند بدء التشغيل (مرة واحدة فقط)
+  useEffect(() => {
+    loadInitialPrograms();
+    setLoading(false);
+  }, [loadInitialPrograms]);
 
-  // ✅ جلب طلبات المشاركة
-  const fetchRequests = async () => {
-    if (!isGuide) return;
-    
-    try {
-      const token = localStorage.getItem('token');
-      const response = await api.get('/api/programs/requests', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (response.data?.success) {
-        setRequests(response.data.requests || []);
-        setStats(prev => ({ ...prev, pendingRequests: (response.data.requests || []).filter(r => r.status === 'pending').length }));
-      }
-    } catch (error) {
-      console.error('Error fetching requests:', error);
-      const saved = localStorage.getItem('guide_requests');
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          setRequests(parsed);
-          setStats(prev => ({ ...prev, pendingRequests: parsed.filter(r => r.status === 'pending').length }));
-        } catch (e) {}
-      }
-    }
-  };
-
-  // ✅ دالة فتح نافذة التعديل
-  const openEditModal = (program) => {
-    setEditingProgram(program);
-    setNewProgram({
-      name: program.name || "",
-      description: program.description || "",
-      location: program.location_name || program.location || "",
-      price: program.price || "",
-      duration: program.duration || "",
-      maxParticipants: program.maxParticipants || "",
-      location_lat: program.location_lat || "",
-      location_lng: program.location_lng || ""
-    });
-    setShowEditModal(true);
-  };
-
-  // ✅ دالة تحديث البرنامج
-  const handleUpdateProgram = async () => {
-    if (!editingProgram) {
-      toast.error(lang === 'ar' ? 'لا يوجد برنامج للتعديل' : 'No program to edit');
-      return;
-    }
-    
-    setLoading(true);
-    try {
-      const token = localStorage.getItem('token');
-      const guideId = user?.id || guide?.id;
-      
-      if (!guideId) {
-        toast.error(lang === 'ar' ? 'لم يتم العثور على معرف المرشد' : 'Guide ID not found');
-        setLoading(false);
-        return;
-      }
-      
-      const updateData = {
-        name: newProgram.name,
-        description: newProgram.description,
-        price: parseFloat(newProgram.price),
-        duration: newProgram.duration,
-        maxParticipants: parseInt(newProgram.maxParticipants),
-        location: newProgram.location,
-        location_lat: parseFloat(newProgram.location_lat) || editingProgram.location_lat,
-        location_lng: parseFloat(newProgram.location_lng) || editingProgram.location_lng,
-        status: editingProgram.status
-      };
-      
-      try {
-        const response = await api.put(`/api/guides/${guideId}/programs/${editingProgram.id}`, updateData, {
-          headers: { 
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        });
-        
-        if (response.data?.success) {
-          toast.success(lang === 'ar' ? '✅ تم تحديث البرنامج بنجاح' : '✅ Program updated successfully');
-        }
-      } catch (apiError) {
-        console.log('API update failed, updating locally');
-      }
-      
-      const updatedPrograms = programs.map(p => 
-        p.id === editingProgram.id 
-          ? { ...p, ...updateData, location_name: newProgram.location }
-          : p
-      );
-      setPrograms(updatedPrograms);
-      saveProgramsToLocal(updatedPrograms);
-      saveProgramsToPublic(updatedPrograms);
-      updateMapWithPrograms(updatedPrograms);
-      
-      setShowEditModal(false);
-      setEditingProgram(null);
-      setNewProgram({
-        name: "", description: "", location: "", price: "", duration: "", maxParticipants: "", location_lat: "", location_lng: ""
-      });
-      
-      if (onProgramAdded) onProgramAdded();
-      toast.success(lang === 'ar' ? '✅ تم تحديث البرنامج بنجاح' : '✅ Program updated successfully');
-      
-    } catch (error) {
-      console.error('Error updating program:', error);
-      toast.error(lang === 'ar' ? '❌ حدث خطأ في تحديث البرنامج' : '❌ Error updating program');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ✅ دالة حذف البرنامج
-  const handleDeleteProgram = async (programId) => {
-    if (!confirm(lang === 'ar' ? '⚠️ هل أنت متأكد من حذف هذا البرنامج؟ لا يمكن التراجع عن هذا الإجراء.' : '⚠️ Are you sure you want to delete this program? This action cannot be undone.')) {
-      return;
-    }
-    
-    setLoading(true);
-    try {
-      const token = localStorage.getItem('token');
-      const guideId = user?.id || guide?.id;
-      
-      try {
-        await api.delete(`/api/guides/${guideId}/programs/${programId}`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-      } catch (apiError) {
-        console.log('API delete failed, deleting locally');
-      }
-      
-      const updatedPrograms = programs.filter(p => p.id !== programId);
-      setPrograms(updatedPrograms);
-      saveProgramsToLocal(updatedPrograms);
-      saveProgramsToPublic(updatedPrograms);
-      updateMapWithPrograms(updatedPrograms);
-      
-      if (onProgramAdded) onProgramAdded();
-      toast.success(lang === 'ar' ? '✅ تم حذف البرنامج بنجاح' : '✅ Program deleted successfully');
-      
-    } catch (error) {
-      console.error('Error deleting program:', error);
-      toast.error(lang === 'ar' ? '❌ حدث خطأ في حذف البرنامج' : '❌ Error deleting program');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ✅ إضافة برنامج جديد
+  // ✅ إضافة برنامج جديد مع صورة وحفظ في قاعدة البيانات
   const handleAddProgram = async () => {
     if (!newProgram.name.trim()) {
       toast.error(lang === 'ar' ? 'الرجاء إدخال اسم البرنامج' : 'Please enter program name');
@@ -463,15 +247,20 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     try {
       const guideId = user?.id || guide?.id;
       
-      let coords = null;
-      try {
-        const geoResponse = await fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(newProgram.location)}.json?access_token=pk.eyJ1IjoibW9vaG1kMTUiLCJhIjoiY21obWJwN3EwMHF1czJvc2lyaWRyem0xciJ9.sl39WFOhm4m-kOOYtGqONw&limit=1`);
-        const geoData = await geoResponse.json();
-        if (geoData.features && geoData.features.length > 0) {
-          coords = geoData.features[0].center;
-        }
-      } catch (e) {
-        console.log('Geocoding error, using default coordinates');
+      toast.loading('جاري تحديد موقع البرنامج على الخريطة...', { id: 'geocoding' });
+      
+      let locationData = await getCoordinatesFromLocation(newProgram.location);
+      
+      if (!locationData) {
+        locationData = { lat: 24.7136, lng: 46.6753, coords: [46.6753, 24.7136], place_name: 'الرياض، المملكة العربية السعودية' };
+        toast.warning('لم نتمكن من تحديد الموقع بدقة، سيتم استخدام موقع افتراضي', { id: 'geocoding' });
+      } else {
+        toast.success('تم تحديد موقع البرنامج بنجاح', { id: 'geocoding' });
+      }
+      
+      let imageUrl = null;
+      if (newProgram.image) {
+        imageUrl = await uploadProgramImage(newProgram.image);
       }
       
       const newProgramObj = {
@@ -482,37 +271,64 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         duration: newProgram.duration || "غير محدد",
         maxParticipants: parseInt(newProgram.maxParticipants) || 20,
         location: newProgram.location,
-        location_name: newProgram.location,
-        coords: coords,
-        location_lat: coords ? coords[1] : null,
-        location_lng: coords ? coords[0] : null,
+        location_name: locationData.place_name || newProgram.location,
+        coords: locationData.coords,
+        location_lat: locationData.lat,
+        location_lng: locationData.lng,
         status: 'active',
         participants: 0,
         guide_id: guideId,
         guide_name: user?.fullName || guide?.name,
-        created_at: new Date().toISOString()
+        created_at: new Date().toISOString(),
+        rating: 4.5,
+        image: imageUrl
       };
       
+      // ✅ حفظ في قاعدة البيانات عبر API
       try {
         const token = localStorage.getItem('token');
-        const response = await api.post(`/api/guides/${guideId}/programs`, newProgramObj, {
-          headers: { 
+        console.log('📤 Sending program to API:', newProgramObj);
+        
+        const response = await fetch('https://tourist-app-api.onrender.com/api/programs', {
+          method: 'POST',
+          headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
-          }
+          },
+          body: JSON.stringify({
+            guide_id: guideId,
+            name: newProgram.name,
+            description: newProgram.description,
+            price: parseFloat(newProgram.price) || 0,
+            duration: newProgram.duration,
+            max_participants: parseInt(newProgram.maxParticipants) || 20,
+            location: newProgram.location,
+            location_name: locationData.place_name,
+            location_lat: locationData.lat,
+            location_lng: locationData.lng,
+            image: imageUrl,
+            status: 'active'
+          })
         });
-        if (response.data?.success && response.data.program) {
-          newProgramObj.id = response.data.program.id;
+        
+        const data = await response.json();
+        if (data.success && data.program) {
+          newProgramObj.id = data.program.id;
+          console.log('✅ Program saved to database:', data.program);
+          toast.success('تم حفظ البرنامج في قاعدة البيانات');
+        } else {
+          console.log('⚠️ API response:', data);
+          toast.warning('تم الحفظ محلياً فقط');
         }
       } catch (apiError) {
-        console.log('API save failed, saving locally only');
+        console.error('❌ API error, saving to localStorage only:', apiError);
+        toast.error('فشل الحفظ في قاعدة البيانات، تم الحفظ محلياً فقط');
       }
       
+      // حفظ في localStorage
       const updatedPrograms = [...programs, newProgramObj];
       setPrograms(updatedPrograms);
       saveProgramsToLocal(updatedPrograms);
-      saveProgramsToPublic(updatedPrograms);
-      updateMapWithPrograms(updatedPrograms);
       
       const activeProgs = updatedPrograms.filter(p => p.status === 'active');
       setStats({
@@ -523,7 +339,7 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
       });
       
       setNewProgram({
-        name: "", description: "", location: "", price: "", duration: "", maxParticipants: "", location_lat: "", location_lng: ""
+        name: "", description: "", location: "", price: "", duration: "", maxParticipants: "", location_lat: "", location_lng: "", image: null, imagePreview: null
       });
       setShowAddProgram(false);
       
@@ -542,16 +358,21 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
   const toggleProgramStatus = async (programId, currentStatus) => {
     setLoading(true);
     try {
-      const guideId = user?.id || guide?.id;
       const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
       
+      // محاولة تحديث في API
       try {
         const token = localStorage.getItem('token');
-        await api.put(`/api/guides/${guideId}/programs/${programId}/status`, { status: newStatus }, {
-          headers: { 'Authorization': `Bearer ${token}` }
+        await fetch(`https://tourist-app-api.onrender.com/api/programs/${programId}/status`, {
+          method: 'PATCH',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ status: newStatus })
         });
       } catch (apiError) {
-        console.log('API status update failed, updating locally');
+        console.log('API status update failed:', apiError);
       }
       
       const updatedPrograms = programs.map(program => 
@@ -559,8 +380,6 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
       );
       setPrograms(updatedPrograms);
       saveProgramsToLocal(updatedPrograms);
-      saveProgramsToPublic(updatedPrograms);
-      updateMapWithPrograms(updatedPrograms);
       
       const activeProgs = updatedPrograms.filter(p => p.status === 'active');
       setStats(prev => ({
@@ -583,38 +402,133 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     }
   };
 
-  // ✅ تحديث حالة الطلب
-  const updateRequestStatus = async (requestId, newStatus) => {
+  // ✅ دالة حذف البرنامج
+  const handleDeleteProgram = async (programId) => {
+    if (!confirm(lang === 'ar' ? '⚠️ هل أنت متأكد من حذف هذا البرنامج؟ لا يمكن التراجع عن هذا الإجراء.' : '⚠️ Are you sure you want to delete this program? This action cannot be undone.')) {
+      return;
+    }
+    
+    setLoading(true);
     try {
-      const token = localStorage.getItem('token');
-      const response = await api.put(`/api/programs/requests/${requestId}`, { status: newStatus }, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      
-      if (response.data?.success) {
-        toast.success(lang === 'ar' 
-          ? (newStatus === 'approved' ? '✅ تمت الموافقة على الطلب' : '❌ تم رفض الطلب')
-          : (newStatus === 'approved' ? '✅ Request approved' : '❌ Request rejected'));
-        await fetchRequests();
-        await fetchGuidePrograms();
-        
-        if (onProgramAdded) onProgramAdded();
+      // محاولة حذف من API
+      try {
+        const token = localStorage.getItem('token');
+        await fetch(`https://tourist-app-api.onrender.com/api/programs/${programId}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+      } catch (apiError) {
+        console.log('API delete failed:', apiError);
       }
+      
+      const updatedPrograms = programs.filter(p => p.id !== programId);
+      setPrograms(updatedPrograms);
+      saveProgramsToLocal(updatedPrograms);
+      
+      if (onProgramAdded) onProgramAdded();
+      toast.success(lang === 'ar' ? '✅ تم حذف البرنامج بنجاح' : '✅ Program deleted successfully');
+      
     } catch (error) {
-      console.error('Error updating request:', error);
-      toast.error(lang === 'ar' ? '❌ فشل تحديث حالة الطلب' : '❌ Failed to update request');
+      console.error('Error deleting program:', error);
+      toast.error(lang === 'ar' ? '❌ حدث خطأ في حذف البرنامج' : '❌ Error deleting program');
+    } finally {
+      setLoading(false);
     }
   };
 
-  // تحميل البيانات عند تحميل الصفحة
-  useEffect(() => {
-    if (isGuide) {
-      fetchGuidePrograms();
-      fetchRequests();
-    } else {
+  // ✅ دالة فتح نافذة التعديل
+  const openEditModal = (program) => {
+    setEditingProgram(program);
+    setNewProgram({
+      name: program.name || "",
+      description: program.description || "",
+      location: program.location_name || program.location || "",
+      price: program.price || "",
+      duration: program.duration || "",
+      maxParticipants: program.maxParticipants || "",
+      location_lat: program.location_lat || "",
+      location_lng: program.location_lng || "",
+      image: null,
+      imagePreview: program.image || null
+    });
+    setShowEditModal(true);
+  };
+
+  // ✅ دالة تحديث البرنامج
+  const handleUpdateProgram = async () => {
+    if (!editingProgram) {
+      toast.error(lang === 'ar' ? 'لا يوجد برنامج للتعديل' : 'No program to edit');
+      return;
+    }
+    
+    setLoading(true);
+    try {
+      let imageUrl = editingProgram.image;
+      
+      if (newProgram.image && newProgram.image !== editingProgram.image) {
+        imageUrl = await uploadProgramImage(newProgram.image);
+      }
+      
+      const updateData = {
+        name: newProgram.name,
+        description: newProgram.description,
+        price: parseFloat(newProgram.price),
+        duration: newProgram.duration,
+        maxParticipants: parseInt(newProgram.maxParticipants),
+        location: newProgram.location,
+        location_name: newProgram.location,
+        location_lat: parseFloat(newProgram.location_lat) || editingProgram.location_lat,
+        location_lng: parseFloat(newProgram.location_lng) || editingProgram.location_lng,
+        image: imageUrl,
+        status: editingProgram.status
+      };
+      
+      // محاولة تحديث في API
+      try {
+        const token = localStorage.getItem('token');
+        await fetch(`https://tourist-app-api.onrender.com/api/programs/${editingProgram.id}`, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(updateData)
+        });
+      } catch (apiError) {
+        console.log('API update failed:', apiError);
+      }
+      
+      const updatedPrograms = programs.map(p => 
+        p.id === editingProgram.id 
+          ? { ...p, ...updateData }
+          : p
+      );
+      setPrograms(updatedPrograms);
+      saveProgramsToLocal(updatedPrograms);
+      
+      setShowEditModal(false);
+      setEditingProgram(null);
+      setNewProgram({
+        name: "", description: "", location: "", price: "", duration: "", maxParticipants: "", location_lat: "", location_lng: "", image: null, imagePreview: null
+      });
+      
+      if (onProgramAdded) onProgramAdded();
+      toast.success(lang === 'ar' ? '✅ تم تحديث البرنامج بنجاح' : '✅ Program updated successfully');
+      
+    } catch (error) {
+      console.error('Error updating program:', error);
+      toast.error(lang === 'ar' ? '❌ حدث خطأ في تحديث البرنامج' : '❌ Error updating program');
+    } finally {
       setLoading(false);
     }
-  }, [isGuide]);
+  };
+
+  // ✅ تصفية البرامج
+  const filteredPrograms = programs.filter(program => {
+    if (statusFilter !== 'all' && program.status !== statusFilter) return false;
+    if (searchTerm && !program.name.toLowerCase().includes(searchTerm.toLowerCase())) return false;
+    return true;
+  });
 
   // ✅ إذا لم يكن المستخدم مرشداً
   if (!isGuide) {
@@ -755,13 +669,25 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
                     {request.status === "pending" && (
                       <div className="flex gap-1">
                         <button
-                          onClick={() => updateRequestStatus(request.id, "approved")}
+                          onClick={() => {
+                            setRequests(prev => prev.map(r => 
+                              r.id === request.id ? { ...r, status: "approved" } : r
+                            ));
+                            setStats(prev => ({ ...prev, pendingRequests: prev.pendingRequests - 1 }));
+                            toast.success(lang === 'ar' ? '✅ تمت الموافقة على الطلب' : '✅ Request approved');
+                          }}
                           className="px-2 py-1 bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 rounded text-xs hover:bg-green-200 transition"
                         >
                           {lang === "ar" ? "موافقة" : "Approve"}
                         </button>
                         <button
-                          onClick={() => updateRequestStatus(request.id, "rejected")}
+                          onClick={() => {
+                            setRequests(prev => prev.map(r => 
+                              r.id === request.id ? { ...r, status: "rejected" } : r
+                            ));
+                            setStats(prev => ({ ...prev, pendingRequests: prev.pendingRequests - 1 }));
+                            toast.success(lang === 'ar' ? '❌ تم رفض الطلب' : '❌ Request rejected');
+                          }}
                           className="px-2 py-1 bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 rounded text-xs hover:bg-red-200 transition"
                         >
                           {lang === "ar" ? "رفض" : "Reject"}
@@ -791,36 +717,65 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
           </div>
           <button
             onClick={() => setShowAddProgram(true)}
-            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition flex items-center gap-2 text-sm"
+            className="px-4 py-2 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-lg hover:from-green-700 hover:to-emerald-700 transition flex items-center gap-2 text-sm shadow-md"
           >
             <Plus className="w-4 h-4" />
-            {lang === "ar" ? "إضافة برنامج" : "Add Program"}
+            {lang === "ar" ? "إضافة برنامج جديد" : "Add New Program"}
           </button>
         </div>
 
-        {programs.length === 0 ? (
-          <div className="bg-white dark:bg-gray-800 rounded-xl p-8 text-center shadow-sm">
-            <Package className="w-12 h-12 mx-auto text-gray-400 mb-3" />
-            <p className="text-gray-500 dark:text-gray-400 mb-2">
-              {lang === "ar" ? "لا توجد برامج بعد" : "No programs yet"}
+        {/* شريط البحث والتصفية */}
+        <div className="flex gap-3 mb-4">
+          <div className="flex-1 relative">
+            <Search className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+            <input
+              type="text"
+              placeholder={lang === "ar" ? "بحث في البرامج..." : "Search programs..."}
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pr-10 p-2 border dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white text-sm focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
+            />
+          </div>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="p-2 border dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white text-sm focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
+          >
+            <option value="all">{lang === "ar" ? "الكل" : "All"}</option>
+            <option value="active">{lang === "ar" ? "نشط" : "Active"}</option>
+            <option value="inactive">{lang === "ar" ? "غير نشط" : "Inactive"}</option>
+          </select>
+        </div>
+
+        {filteredPrograms.length === 0 ? (
+          <div className="bg-white dark:bg-gray-800 rounded-xl p-12 text-center shadow-sm border-2 border-dashed border-gray-200 dark:border-gray-700">
+            <Package className="w-16 h-16 mx-auto text-gray-400 mb-4" />
+            <p className="text-gray-500 dark:text-gray-400 mb-3 text-lg">
+              {searchTerm ? (lang === "ar" ? "لا توجد نتائج مطابقة" : "No matching results") : (lang === "ar" ? "لا توجد برامج بعد" : "No programs yet")}
+            </p>
+            <p className="text-sm text-gray-400 dark:text-gray-500 mb-6">
+              {lang === "ar" 
+                ? "أضف برنامجك الأول وسيظهر على الخريطة لجميع المستخدمين" 
+                : "Add your first program and it will appear on the map for all users"}
             </p>
             <button
               onClick={() => setShowAddProgram(true)}
-              className="text-green-600 hover:text-green-700 text-sm font-medium"
+              className="px-6 py-3 bg-green-600 text-white rounded-xl hover:bg-green-700 transition flex items-center gap-2 mx-auto shadow-md"
             >
-              {lang === "ar" ? "+ أضف برنامجك الأول" : "+ Add your first program"}
+              <Plus className="w-5 h-5" />
+              <span className="font-medium">{lang === "ar" ? "➕ أضف برنامجك الأول" : "➕ Add Your First Program"}</span>
             </button>
           </div>
         ) : (
           <>
             <div className="mb-4 flex justify-between items-center">
               <span className="text-sm text-gray-500 dark:text-gray-400">
-                {lang === "ar" ? `📊 لديك ${programs.length} برنامج` : `📊 You have ${programs.length} program(s)`}
+                {lang === "ar" ? `📊 لديك ${filteredPrograms.length} برنامج` : `📊 You have ${filteredPrograms.length} program(s)`}
               </span>
               <button 
                 onClick={() => {
                   updateMapWithPrograms(programs);
-                  toast.success(lang === 'ar' ? 'تم تحديث الخريطة' : 'Map updated');
+                  toast.success(lang === 'ar' ? '🗺️ تم تحديث الخريطة' : '🗺️ Map updated');
                 }}
                 className="text-green-600 hover:text-green-700 text-sm flex items-center gap-1"
               >
@@ -830,27 +785,53 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
             </div>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {programs.map((program) => (
-                <div key={program.id} className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-100 dark:border-gray-700">
-                  <div className="flex items-start justify-between">
+              {filteredPrograms.map((program) => (
+                <div key={program.id} className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-100 dark:border-gray-700 hover:shadow-md transition">
+                  <div className="flex items-start gap-3">
+                    {/* صورة البرنامج */}
+                    <div className="flex-shrink-0">
+                      {program.image ? (
+                        <img 
+                          src={program.image} 
+                          alt={program.name}
+                          className="w-20 h-20 rounded-lg object-cover"
+                          onError={(e) => {
+                            e.target.onerror = null;
+                            e.target.style.display = 'none';
+                            e.target.parentElement.innerHTML = '<div class="w-20 h-20 rounded-lg bg-gradient-to-br from-green-100 to-emerald-100 dark:from-green-900/30 dark:to-emerald-900/30 flex items-center justify-center"><svg class="w-8 h-8 text-green-500" ...></svg></div>';
+                          }}
+                        />
+                      ) : (
+                        <div className="w-20 h-20 rounded-lg bg-gradient-to-br from-green-100 to-emerald-100 dark:from-green-900/30 dark:to-emerald-900/30 flex items-center justify-center">
+                          <Package className="w-8 h-8 text-green-500" />
+                        </div>
+                      )}
+                    </div>
+                    
                     <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-2">
+                      <div className="flex items-center gap-2 mb-2 flex-wrap">
                         <h3 className="font-bold text-lg text-gray-800 dark:text-white">{program.name}</h3>
-                        <span className={`px-2 py-1 rounded text-xs ${
+                        <span className={`px-2 py-1 rounded-lg text-xs font-medium ${
                           program.status === "active" 
                             ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400" 
                             : "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-400"
                         }`}>
-                          {program.status === "active" ? (lang === "ar" ? "نشط" : "Active") : (lang === "ar" ? "متوقف" : "Inactive")}
+                          {program.status === "active" ? (lang === "ar" ? "✓ نشط" : "Active") : (lang === "ar" ? "○ غير نشط" : "Inactive")}
                         </span>
+                        {program.coords && (
+                          <span className="text-xs text-green-600 bg-green-50 dark:bg-green-900/20 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <MapPin className="w-3 h-3" />
+                            {lang === "ar" ? "يظهر على الخريطة" : "On Map"}
+                          </span>
+                        )}
                       </div>
                       
-                      <p className="text-gray-600 dark:text-gray-300 text-sm mb-3 line-clamp-2">{program.description || (lang === "ar" ? "لا يوجد وصف" : "No description")}</p>
+                      <p className="text-gray-600 dark:text-gray-300 text-sm mb-2 line-clamp-2">{program.description || (lang === "ar" ? "لا يوجد وصف" : "No description")}</p>
                       
-                      <div className="grid grid-cols-3 gap-3 mb-3">
+                      <div className="grid grid-cols-3 gap-2 mb-2">
                         <div className="text-sm">
                           <div className="text-gray-500 text-xs">{lang === "ar" ? "السعر" : "Price"}</div>
-                          <div className="font-medium">{program.price} ريال</div>
+                          <div className="font-medium text-green-600">{program.price} ريال</div>
                         </div>
                         <div className="text-sm">
                           <div className="text-gray-500 text-xs">{lang === "ar" ? "المدة" : "Duration"}</div>
@@ -863,20 +844,20 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
                       </div>
                       
                       <div className="flex items-center gap-2 text-sm text-gray-500">
-                        <MapPin className="w-3 h-3" />
-                        <span className="text-xs">{program.location_name || program.location || (lang === "ar" ? "موقع غير محدد" : "Location not specified")}</span>
+                        <MapPin className="w-3 h-3 text-green-600" />
+                        <span className="text-xs truncate">{program.location_name || program.location || (lang === "ar" ? "موقع غير محدد" : "Location not specified")}</span>
                       </div>
                     </div>
                     
-                    <div className="flex flex-col gap-2 ml-4">
+                    <div className="flex flex-col gap-2">
                       <button
                         onClick={() => toggleProgramStatus(program.id, program.status)}
-                        className={`px-3 py-1.5 rounded text-sm transition flex items-center gap-1 ${
+                        className={`px-3 py-1.5 rounded-xl text-sm transition flex items-center gap-1 font-medium ${
                           program.status === "active"
                             ? "bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400"
                             : "bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400"
                         }`}
-                        title={program.status === "active" ? (lang === "ar" ? "إيقاف البرنامج (لن يظهر للجميع)" : "Deactivate program") : (lang === "ar" ? "تفعيل البرنامج (سيظهر للجميع)" : "Activate program")}
+                        title={program.status === "active" ? (lang === "ar" ? "إيقاف البرنامج" : "Deactivate") : (lang === "ar" ? "تفعيل البرنامج" : "Activate")}
                       >
                         {program.status === "active" ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
                         <span>{program.status === "active" ? (lang === "ar" ? "إيقاف" : "Off") : (lang === "ar" ? "تفعيل" : "On")}</span>
@@ -884,7 +865,7 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
                       
                       <button
                         onClick={() => openEditModal(program)}
-                        className="px-3 py-1.5 bg-yellow-100 text-yellow-700 rounded text-sm hover:bg-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-400 transition flex items-center gap-1"
+                        className="px-3 py-1.5 bg-yellow-100 text-yellow-700 rounded-xl text-sm hover:bg-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-400 transition flex items-center gap-1 font-medium"
                       >
                         <Edit2 className="w-3 h-3" />
                         <span>{lang === "ar" ? "تعديل" : "Edit"}</span>
@@ -892,7 +873,7 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
                       
                       <button
                         onClick={() => handleDeleteProgram(program.id)}
-                        className="px-3 py-1.5 bg-red-100 text-red-700 rounded text-sm hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 transition flex items-center gap-1"
+                        className="px-3 py-1.5 bg-red-100 text-red-700 rounded-xl text-sm hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 transition flex items-center gap-1 font-medium"
                       >
                         <Trash2 className="w-3 h-3" />
                         <span>{lang === "ar" ? "حذف" : "Delete"}</span>
@@ -906,28 +887,71 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         )}
       </div>
 
-      {/* نافذة إضافة برنامج جديد */}
+      {/* نافذة إضافة برنامج جديد مع رفع الصورة */}
       {showAddProgram && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="w-full max-w-lg bg-white dark:bg-gray-800 rounded-xl shadow-xl max-h-[90vh] overflow-y-auto">
-            <div className="bg-gradient-to-r from-green-600 to-emerald-600 p-4 rounded-t-xl">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="w-full max-w-lg bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="bg-gradient-to-r from-green-600 to-emerald-600 p-5 rounded-t-2xl sticky top-0">
               <div className="flex items-center justify-between">
-                <h3 className="text-white font-bold text-lg">{lang === "ar" ? "إضافة برنامج جديد" : "Add New Program"}</h3>
-                <button onClick={() => setShowAddProgram(false)} className="text-white/80 hover:text-white">
-                  <XCircle size={24} />
+                <div className="flex items-center gap-2">
+                  <MapPin className="w-6 h-6 text-white" />
+                  <h3 className="text-white font-bold text-xl">{lang === "ar" ? "إضافة برنامج سياحي جديد" : "Add New Tour Program"}</h3>
+                </div>
+                <button onClick={() => setShowAddProgram(false)} className="text-white/80 hover:text-white transition">
+                  <XCircle size={28} />
                 </button>
               </div>
+              <p className="text-white/80 text-sm mt-2">
+                {lang === "ar" 
+                  ? '📍 سيظهر هذا البرنامج على الخريطة الرئيسية ليراها جميع المستخدمين ويمكنهم حجزه' 
+                  : '📍 This program will appear on the main map for all users to see and book'}
+              </p>
             </div>
             
-            <div className="p-6 space-y-4">
-              <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg mb-4">
-                <p className="text-sm text-blue-700 dark:text-blue-400">
-                  📍 {lang === "ar" ? 'سيظهر هذا البرنامج على الخريطة الرئيسية ليراه جميع المستخدمين' : 'This program will appear on the main map for all users to see'}
-                </p>
+            <div className="p-6 space-y-5">
+              {/* رفع الصورة */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                  {lang === "ar" ? "صورة البرنامج" : "Program Image"}
+                </label>
+                <div 
+                  onClick={() => imageInputRef.current?.click()}
+                  className="relative w-full h-40 bg-gray-100 dark:bg-gray-700 rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-600 cursor-pointer hover:border-green-500 transition overflow-hidden"
+                >
+                  {newProgram.imagePreview ? (
+                    <img 
+                      src={newProgram.imagePreview} 
+                      alt="Preview" 
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center justify-center h-full">
+                      <Camera className="w-10 h-10 text-gray-400 mb-2" />
+                      <p className="text-sm text-gray-500 dark:text-gray-400">
+                        {lang === "ar" ? "اضغط لرفع صورة" : "Click to upload image"}
+                      </p>
+                      <p className="text-xs text-gray-400 mt-1">
+                        {lang === "ar" ? "jpg, png, gif - حد أقصى 2MB" : "jpg, png, gif - max 2MB"}
+                      </p>
+                    </div>
+                  )}
+                  {uploadingImage && (
+                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                      <div className="animate-spin rounded-full h-8 w-8 border-2 border-white border-t-transparent"></div>
+                    </div>
+                  )}
+                </div>
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleImageSelect}
+                  className="hidden"
+                />
               </div>
               
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
                   {lang === "ar" ? "اسم البرنامج *" : "Program Name *"}
                 </label>
                 <input
@@ -935,26 +959,27 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
                   placeholder={lang === "ar" ? "مثال: جولة تاريخية في الدرعية" : "e.g., Historical Tour in Diriyah"}
                   value={newProgram.name}
                   onChange={(e) => setNewProgram({...newProgram, name: e.target.value})}
-                  className="w-full p-3 border dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
+                  className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none transition"
+                  autoFocus
                 />
               </div>
               
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
                   {lang === "ar" ? "وصف البرنامج" : "Program Description"}
                 </label>
                 <textarea
                   placeholder={lang === "ar" ? "وصف تفصيلي للبرنامج..." : "Detailed program description..."}
                   value={newProgram.description}
                   onChange={(e) => setNewProgram({...newProgram, description: e.target.value})}
-                  className="w-full p-3 border dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
+                  className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none transition"
                   rows="3"
                 />
               </div>
               
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
                     {lang === "ar" ? "السعر (ريال)" : "Price (SAR)"}
                   </label>
                   <input
@@ -962,11 +987,11 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
                     placeholder="0"
                     value={newProgram.price}
                     onChange={(e) => setNewProgram({...newProgram, price: e.target.value})}
-                    className="w-full p-3 border dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
+                    className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
                     {lang === "ar" ? "المدة" : "Duration"}
                   </label>
                   <input
@@ -974,52 +999,70 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
                     placeholder="3 ساعات"
                     value={newProgram.duration}
                     onChange={(e) => setNewProgram({...newProgram, duration: e.target.value})}
-                    className="w-full p-3 border dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
+                    className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
                   />
                 </div>
               </div>
               
-              <div className="grid grid-cols-2 gap-3">
-                <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    {lang === "ar" ? "الموقع *" : "Location *"}
-                  </label>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                  {lang === "ar" ? "الموقع *" : "Location *"}
+                </label>
+                <div className="relative">
+                  <MapPin className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
                   <input
                     type="text"
                     placeholder={lang === "ar" ? "الرياض، الدرعية" : "Riyadh, Diriyah"}
                     value={newProgram.location}
                     onChange={(e) => setNewProgram({...newProgram, location: e.target.value})}
-                    className="w-full p-3 border dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    {lang === "ar" ? 'سيتم تحديد موقع البرنامج تلقائياً على الخريطة بناءً على العنوان' : 'The program location will be automatically marked on the map based on the address'}
-                  </p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    {lang === "ar" ? "العدد الأقصى" : "Max Participants"}
-                  </label>
-                  <input
-                    type="number"
-                    placeholder="20"
-                    value={newProgram.maxParticipants}
-                    onChange={(e) => setNewProgram({...newProgram, maxParticipants: e.target.value})}
-                    className="w-full p-3 border dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
+                    className="w-full p-3 pr-10 border-2 border-gray-200 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
                   />
                 </div>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                  {lang === "ar" ? "العدد الأقصى للمشاركين" : "Maximum Participants"}
+                </label>
+                <input
+                  type="number"
+                  placeholder="20"
+                  value={newProgram.maxParticipants}
+                  onChange={(e) => setNewProgram({...newProgram, maxParticipants: e.target.value})}
+                  className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
+                />
+              </div>
+              
+              <div className="bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 p-4 rounded-xl">
+                <p className="text-sm text-green-700 dark:text-green-400 text-center flex items-center justify-center gap-2">
+                  <Map className="w-4 h-4" />
+                  {lang === "ar" 
+                    ? '🌍 بعد إضافة البرنامج، سيظهر فوراً على الخريطة الرئيسية' 
+                    : '🌍 After adding the program, it will immediately appear on the main map'}
+                </p>
               </div>
               
               <div className="flex gap-3 pt-4">
                 <button
                   onClick={handleAddProgram}
-                  disabled={loading}
-                  className="flex-1 py-3 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 transition disabled:opacity-50"
+                  disabled={loading || uploadingImage}
+                  className="flex-1 py-3 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl font-bold hover:from-green-700 hover:to-emerald-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-md"
                 >
-                  {loading ? (lang === "ar" ? "جاري الإضافة..." : "Adding...") : (lang === "ar" ? "إضافة البرنامج" : "Add Program")}
+                  {loading || uploadingImage ? (
+                    <>
+                      <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
+                      <span>{lang === "ar" ? "جاري الإضافة..." : "Adding..."}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="w-5 h-5" />
+                      <span>{lang === "ar" ? "إضافة البرنامج ونشره على الخريطة" : "Add Program & Publish to Map"}</span>
+                    </>
+                  )}
                 </button>
                 <button
                   onClick={() => setShowAddProgram(false)}
-                  className="px-6 py-3 border dark:border-gray-600 rounded-lg font-medium dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition"
+                  className="px-6 py-3 border-2 border-gray-300 dark:border-gray-600 rounded-xl font-medium dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition"
                 >
                   {lang === "ar" ? "إلغاء" : "Cancel"}
                 </button>
@@ -1029,117 +1072,169 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         </div>
       )}
 
-      {/* نافذة تعديل البرنامج */}
+      {/* نافذة تعديل البرنامج مع رفع الصورة */}
       {showEditModal && editingProgram && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="w-full max-w-lg bg-white dark:bg-gray-800 rounded-xl shadow-xl max-h-[90vh] overflow-y-auto">
-            <div className="bg-gradient-to-r from-yellow-600 to-orange-600 p-4 rounded-t-xl">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="w-full max-w-lg bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="bg-gradient-to-r from-yellow-600 to-orange-600 p-5 rounded-t-2xl">
               <div className="flex items-center justify-between">
-                <h3 className="text-white font-bold text-lg">{lang === "ar" ? "تعديل البرنامج" : "Edit Program"}</h3>
+                <div className="flex items-center gap-2">
+                  <Edit2 className="w-6 h-6 text-white" />
+                  <h3 className="text-white font-bold text-xl">{lang === "ar" ? "تعديل البرنامج" : "Edit Program"}</h3>
+                </div>
                 <button onClick={() => {
                   setShowEditModal(false);
                   setEditingProgram(null);
-                }} className="text-white/80 hover:text-white">
-                  <XCircle size={24} />
+                }} className="text-white/80 hover:text-white transition">
+                  <XCircle size={28} />
                 </button>
               </div>
+              <p className="text-white/80 text-sm mt-2">
+                📍 {lang === "ar" 
+                  ? 'بعد التعديل، سيتم تحديث البرنامج على الخريطة تلقائياً' 
+                  : 'After editing, the program will be automatically updated on the map'}
+              </p>
             </div>
             
-            <div className="p-6 space-y-4">
-              <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg mb-4">
-                <p className="text-sm text-blue-700 dark:text-blue-400">
-                  📍 {lang === "ar" ? 'بعد التعديل، سيتم تحديث البرنامج على الخريطة تلقائياً' : 'After editing, the program will be automatically updated on the map'}
-                </p>
+            <div className="p-6 space-y-5">
+              {/* تعديل الصورة */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                  {lang === "ar" ? "صورة البرنامج" : "Program Image"}
+                </label>
+                <div 
+                  onClick={() => editImageInputRef.current?.click()}
+                  className="relative w-full h-40 bg-gray-100 dark:bg-gray-700 rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-600 cursor-pointer hover:border-yellow-500 transition overflow-hidden"
+                >
+                  {newProgram.imagePreview ? (
+                    <img 
+                      src={newProgram.imagePreview} 
+                      alt="Preview" 
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center justify-center h-full">
+                      <Image className="w-10 h-10 text-gray-400 mb-2" />
+                      <p className="text-sm text-gray-500 dark:text-gray-400">
+                        {lang === "ar" ? "تغيير الصورة" : "Change image"}
+                      </p>
+                    </div>
+                  )}
+                  {uploadingImage && (
+                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                      <div className="animate-spin rounded-full h-8 w-8 border-2 border-white border-t-transparent"></div>
+                    </div>
+                  )}
+                </div>
+                <input
+                  ref={editImageInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleEditImageSelect}
+                  className="hidden"
+                />
               </div>
               
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
                   {lang === "ar" ? "اسم البرنامج *" : "Program Name *"}
                 </label>
                 <input
                   type="text"
                   value={newProgram.name}
                   onChange={(e) => setNewProgram({...newProgram, name: e.target.value})}
-                  className="w-full p-3 border dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none"
+                  className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none"
                 />
               </div>
               
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
                   {lang === "ar" ? "وصف البرنامج" : "Program Description"}
                 </label>
                 <textarea
                   value={newProgram.description}
                   onChange={(e) => setNewProgram({...newProgram, description: e.target.value})}
-                  className="w-full p-3 border dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none"
+                  className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none"
                   rows="3"
                 />
               </div>
               
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
                     {lang === "ar" ? "السعر (ريال)" : "Price (SAR)"}
                   </label>
                   <input
                     type="number"
                     value={newProgram.price}
                     onChange={(e) => setNewProgram({...newProgram, price: e.target.value})}
-                    className="w-full p-3 border dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none"
+                    className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
                     {lang === "ar" ? "المدة" : "Duration"}
                   </label>
                   <input
                     type="text"
                     value={newProgram.duration}
                     onChange={(e) => setNewProgram({...newProgram, duration: e.target.value})}
-                    className="w-full p-3 border dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none"
+                    className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none"
                   />
                 </div>
               </div>
               
-              <div className="grid grid-cols-2 gap-3">
-                <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    {lang === "ar" ? "الموقع" : "Location"}
-                  </label>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                  {lang === "ar" ? "الموقع" : "Location"}
+                </label>
+                <div className="relative">
+                  <MapPin className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
                   <input
                     type="text"
                     value={newProgram.location}
                     onChange={(e) => setNewProgram({...newProgram, location: e.target.value})}
-                    className="w-full p-3 border dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none"
+                    className="w-full p-3 pr-10 border-2 border-gray-200 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none"
                   />
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    {lang === "ar" ? "العدد الأقصى" : "Max Participants"}
-                  </label>
-                  <input
-                    type="number"
-                    value={newProgram.maxParticipants}
-                    onChange={(e) => setNewProgram({...newProgram, maxParticipants: e.target.value})}
-                    className="w-full p-3 border dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none"
-                  />
-                </div>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                  {lang === "ar" ? "العدد الأقصى" : "Maximum Participants"}
+                </label>
+                <input
+                  type="number"
+                  value={newProgram.maxParticipants}
+                  onChange={(e) => setNewProgram({...newProgram, maxParticipants: e.target.value})}
+                  className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none"
+                />
               </div>
               
               <div className="flex gap-3 pt-4">
                 <button
                   onClick={handleUpdateProgram}
-                  disabled={loading}
-                  className="flex-1 py-3 bg-yellow-600 text-white rounded-lg font-medium hover:bg-yellow-700 transition disabled:opacity-50"
+                  disabled={loading || uploadingImage}
+                  className="flex-1 py-3 bg-gradient-to-r from-yellow-600 to-orange-600 text-white rounded-xl font-bold hover:from-yellow-700 hover:to-orange-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
                 >
-                  {loading ? (lang === "ar" ? "جاري الحفظ..." : "Saving...") : (lang === "ar" ? "حفظ التغييرات" : "Save Changes")}
+                  {loading || uploadingImage ? (
+                    <>
+                      <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
+                      <span>{lang === "ar" ? "جاري الحفظ..." : "Saving..."}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Edit2 className="w-5 h-5" />
+                      <span>{lang === "ar" ? "حفظ التغييرات وتحديث الخريطة" : "Save Changes & Update Map"}</span>
+                    </>
+                  )}
                 </button>
                 <button
                   onClick={() => {
                     setShowEditModal(false);
                     setEditingProgram(null);
                   }}
-                  className="px-6 py-3 border dark:border-gray-600 rounded-lg font-medium dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition"
+                  className="px-6 py-3 border-2 border-gray-300 dark:border-gray-600 rounded-xl font-medium dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition"
                 >
                   {lang === "ar" ? "إلغاء" : "Cancel"}
                 </button>
