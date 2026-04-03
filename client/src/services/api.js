@@ -77,6 +77,14 @@ export const api = {
         throw new Error(data.message || 'فشل إنشاء الحساب');
       }
 
+      // ✅ حفظ المستخدم في localStorage بعد التسجيل الناجح
+      if (data.token && data.user) {
+        localStorage.setItem('token', data.token);
+        localStorage.setItem('user', JSON.stringify(data.user));
+        localStorage.setItem('userType', data.user.role || 'user');
+        console.log('✅ User registered and saved to localStorage');
+      }
+
       return data;
     } catch (error) {
       console.error('❌ Register error:', error);
@@ -133,7 +141,8 @@ export const api = {
       if (data.token) {
         localStorage.setItem('token', data.token);
         localStorage.setItem('user', JSON.stringify(data.user));
-        localStorage.setItem('userType', 'user');
+        localStorage.setItem('userType', data.user.role || 'user');
+        console.log('✅ User logged in and saved to localStorage');
       }
 
       return data;
@@ -204,7 +213,7 @@ export const api = {
     try {
       const token = localStorage.getItem('token');
       
-      const response = await fetch(`${API_BASE_URL}/api/auth/profile/${userId}`, {
+      const response = await fetch(`${API_BASE_URL}/api/users/${userId}`, {
         method: 'GET',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -229,7 +238,7 @@ export const api = {
     try {
       const token = localStorage.getItem('token');
       
-      const response = await fetch(`${API_BASE_URL}/api/auth/profile/${userId}`, {
+      const response = await fetch(`${API_BASE_URL}/api/users/${userId}/profile`, {
         method: 'PUT',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
@@ -247,31 +256,6 @@ export const api = {
       return data;
     } catch (error) {
       console.error('❌ Update profile error:', error);
-      throw error;
-    }
-  },
-
-  async uploadAvatar(userId, formData) {
-    try {
-      const token = localStorage.getItem('token');
-      
-      const response = await fetch(`${API_BASE_URL}/api/auth/profile/${userId}/avatar`, {
-        method: 'POST',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : ''
-        },
-        body: formData
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل رفع الصورة');
-      }
-
-      return data;
-    } catch (error) {
-      console.error('❌ Upload avatar error:', error);
       throw error;
     }
   },
@@ -430,6 +414,7 @@ export const api = {
         localStorage.setItem('token', data.token);
         localStorage.setItem('user', JSON.stringify(data.user));
         localStorage.setItem('userType', 'guide');
+        console.log('✅ Guide logged in and saved to localStorage');
       }
 
       return data;
@@ -441,7 +426,21 @@ export const api = {
 
   async getGuidePrograms(guideId, token) {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}/programs`, {
+      // ✅ تحويل guideId إلى UUID إذا كان رقماً
+      let validGuideId = guideId;
+      if (typeof guideId === 'number' || (typeof guideId === 'string' && !guideId.includes('-'))) {
+        console.warn(`⚠️ Invalid guide ID format: ${guideId}, attempting to fix...`);
+        const userStr = localStorage.getItem('user');
+        if (userStr) {
+          const user = JSON.parse(userStr);
+          if (user.id && user.id.includes('-')) {
+            validGuideId = user.id;
+            console.log(`✅ Using UUID from user object: ${validGuideId}`);
+          }
+        }
+      }
+      
+      const response = await fetch(`${API_BASE_URL}/api/guides/${validGuideId}/programs`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -464,19 +463,48 @@ export const api = {
 
   async addTourProgram(guideId, token, programData) {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}/programs`, {
+      // ✅ تحويل guideId إلى UUID إذا كان رقماً
+      let validGuideId = guideId;
+      if (typeof guideId === 'number' || (typeof guideId === 'string' && !guideId.includes('-'))) {
+        const userStr = localStorage.getItem('user');
+        if (userStr) {
+          const user = JSON.parse(userStr);
+          if (user.id && user.id.includes('-')) {
+            validGuideId = user.id;
+            console.log(`✅ Using UUID from user object: ${validGuideId}`);
+          }
+        }
+      }
+      
+      const response = await fetch(`${API_BASE_URL}/api/programs`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(programData)
+        body: JSON.stringify({
+          guide_id: validGuideId,
+          ...programData
+        })
       });
 
       const data = await response.json();
+      console.log('📥 Add program response:', data);
       
       if (!response.ok) {
         throw new Error(data.message || 'فشل إضافة البرنامج');
+      }
+
+      // ✅ تحديث البرامج في localStorage بعد الإضافة الناجحة
+      if (data.success && data.program) {
+        const userStr = localStorage.getItem('user');
+        if (userStr) {
+          const user = JSON.parse(userStr);
+          const existingPrograms = JSON.parse(localStorage.getItem(`guide_programs_${validGuideId}`) || '[]');
+          existingPrograms.push(data.program);
+          localStorage.setItem(`guide_programs_${validGuideId}`, JSON.stringify(existingPrograms));
+          console.log('✅ Program saved to localStorage');
+        }
       }
 
       return data;
@@ -488,7 +516,7 @@ export const api = {
 
   async toggleProgramStatus(guideId, programId, token, status) {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}/programs/${programId}`, {
+      const response = await fetch(`${API_BASE_URL}/api/programs/${programId}/status`, {
         method: 'PATCH',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -620,10 +648,9 @@ export const api = {
   },
 
   // ============================================
-  // 👤 USER PROFILE SERVICES - خدمات الملف الشخصي (بعد الإصلاح)
+  // 👤 USER PROFILE SERVICES - خدمات الملف الشخصي
   // ============================================
 
-  // ✅ رفع الصورة الشخصية - المسار الصحيح
   async uploadAvatar(userId, formData) {
     try {
       const token = localStorage.getItem('token');
@@ -645,6 +672,17 @@ export const api = {
         throw new Error(data.message || 'فشل رفع الصورة');
       }
 
+      // ✅ تحديث صورة المستخدم في localStorage
+      if (data.success && data.avatar) {
+        const userStr = localStorage.getItem('user');
+        if (userStr) {
+          const user = JSON.parse(userStr);
+          user.avatar = data.avatar;
+          localStorage.setItem('user', JSON.stringify(user));
+          console.log('✅ Avatar updated in localStorage');
+        }
+      }
+
       return data;
     } catch (error) {
       console.error('❌ Upload avatar error:', error);
@@ -652,7 +690,6 @@ export const api = {
     }
   },
 
-  // ✅ حذف الصورة الشخصية
   async deleteAvatar(userId) {
     try {
       const token = localStorage.getItem('token');
@@ -674,6 +711,17 @@ export const api = {
         throw new Error(data.message || 'فشل حذف الصورة');
       }
 
+      // ✅ حذف صورة المستخدم من localStorage
+      if (data.success) {
+        const userStr = localStorage.getItem('user');
+        if (userStr) {
+          const user = JSON.parse(userStr);
+          user.avatar = null;
+          localStorage.setItem('user', JSON.stringify(user));
+          console.log('✅ Avatar removed from localStorage');
+        }
+      }
+
       return data;
     } catch (error) {
       console.error('❌ Delete avatar error:', error);
@@ -681,98 +729,6 @@ export const api = {
     }
   },
 
-  // ✅ تحديث الملف الشخصي
-  async updateUserProfile(userId, updates) {
-    try {
-      const token = localStorage.getItem('token');
-      
-      console.log('📤 Updating profile for user:', userId, updates);
-      
-      const response = await fetch(`${API_BASE_URL}/api/users/${userId}/profile`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(updates)
-      });
-
-      const data = await response.json();
-      console.log('📥 Update profile response:', data);
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل تحديث الملف الشخصي');
-      }
-
-      return data;
-    } catch (error) {
-      console.error('❌ Update profile error:', error);
-      throw error;
-    }
-  },
-
-  // ✅ جلب معلومات المستخدم
-  async getUserProfile(userId) {
-    try {
-      const token = localStorage.getItem('token');
-      
-      console.log('📤 Fetching user profile for:', userId);
-      
-      const response = await fetch(`${API_BASE_URL}/api/users/${userId}`, {
-        method: 'GET',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const data = await response.json();
-      console.log('📥 Get user profile response:', data);
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل تحميل الملف الشخصي');
-      }
-
-      return data;
-    } catch (error) {
-      console.error('❌ Get user profile error:', error);
-      throw error;
-    }
-  },
-
-  // ============================================
-  // 🔧 GENERIC HTTP METHODS - دوال عامة
-  // ============================================
-
-  async get(url, params = {}) {
-    try {
-      const token = localStorage.getItem('token');
-      const queryParams = new URLSearchParams(params).toString();
-      const fullUrl = `${API_BASE_URL}${url}${queryParams ? `?${queryParams}` : ''}`;
-      
-      console.log('📤 GET request to:', fullUrl);
-      
-      const response = await fetch(fullUrl, {
-        method: 'GET',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.message || `فشل الطلب (${response.status})`);
-      }
-
-      return { data };
-    } catch (error) {
-      console.error('❌ GET request error:', error);
-      throw error;
-    }
-  },
-  
   // ============================================
   // 🔧 GENERIC HTTP METHODS - دوال عامة
   // ============================================
@@ -889,7 +845,7 @@ export const api = {
   },
 
   // ============================================
-  // 🔔 NOTIFICATION SERVICES - الإشعارات (معدل للمسؤول)
+  // 🔔 NOTIFICATION SERVICES - الإشعارات
   // ============================================
 
   async getUserNotifications(params = {}) {
@@ -898,7 +854,6 @@ export const api = {
       const userStr = localStorage.getItem('user');
       const user = userStr ? JSON.parse(userStr) : null;
       
-      // ✅ إذا كان المستخدم مسؤولاً، استخدم الـ endpoint المجمع
       let baseUrl = `${API_BASE_URL}/api/notifications`;
       if (user?.role === 'admin' || user?.role === 'support') {
         baseUrl = `${API_BASE_URL}/api/notifications/admin-grouped`;
@@ -908,10 +863,7 @@ export const api = {
       const queryParams = new URLSearchParams(params).toString();
       const url = `${baseUrl}${queryParams ? `?${queryParams}` : ''}`;
       
-      console.log('🔍 [getUserNotifications] ==========');
-      console.log('🔍 URL:', url);
-      console.log('🔍 Token exists:', !!token);
-      console.log('🔍 User role:', user?.role);
+      console.log('🔍 [getUserNotifications] URL:', url);
       
       const response = await fetch(url, {
         method: 'GET',
@@ -921,11 +873,7 @@ export const api = {
         }
       });
 
-      console.log('🔍 Response status:', response.status);
-      
       const data = await response.json();
-      console.log('🔍 Response data:', JSON.stringify(data, null, 2));
-      console.log('🔍 =================================');
       
       if (!response.ok) {
         throw new Error(data.message || `فشل تحميل الإشعارات (${response.status})`);
@@ -934,32 +882,6 @@ export const api = {
       return data;
     } catch (error) {
       console.error('❌ Get notifications error:', error);
-      throw error;
-    }
-  },
-
-  async getNotificationStats() {
-    try {
-      const token = localStorage.getItem('token');
-      const url = `${API_BASE_URL}/api/notifications/stats`;
-      
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل تحميل الإحصائيات');
-      }
-
-      return data;
-    } catch (error) {
-      console.error('❌ Get stats error:', error);
       throw error;
     }
   },
@@ -1042,60 +964,6 @@ export const api = {
     }
   },
 
-  async deleteMultipleNotifications(notificationIds) {
-    try {
-      const token = localStorage.getItem('token');
-      const url = `${API_BASE_URL}/api/notifications/delete-multiple`;
-      
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ notificationIds })
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل حذف الإشعارات');
-      }
-
-      return data;
-    } catch (error) {
-      console.error('❌ Delete multiple error:', error);
-      throw error;
-    }
-  },
-
-  async replyToNotification(notificationId, message) {
-    try {
-      const token = localStorage.getItem('token');
-      const url = `${API_BASE_URL}/api/notifications/reply`;
-      
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ notificationId, message })
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل إرسال الرد');
-      }
-
-      return data;
-    } catch (error) {
-      console.error('❌ Reply error:', error);
-      throw error;
-    }
-  },
-
   // ============================================
   // 💬 CHAT SERVICES - خدمات المحادثات
   // ============================================
@@ -1137,109 +1005,6 @@ export const api = {
     }
   },
 
-  async startSupportChat(data) {
-    if (typeof data === 'string') {
-      data = { subject: data, manual: false };
-    }
-    
-    try {
-      const token = localStorage.getItem('token');
-      
-      if (!token) {
-        throw new Error('No authentication token found');
-      }
-      
-      console.log('📤 Starting support chat with data:', data);
-      
-      const response = await fetch(`${API_BASE_URL}/api/chats/support`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(data)
-      });
-
-      const responseData = await response.json();
-      console.log('📥 Support chat response:', responseData);
-      
-      if (!response.ok) {
-        let errorMessage = responseData.message || 'فشل بدء محادثة الدعم';
-        if (errorMessage.includes('status') || errorMessage.includes('column')) {
-          errorMessage = 'خدمة الدعم الفني قيد التحديث، يرجى المحاولة لاحقاً';
-        }
-        throw new Error(errorMessage);
-      }
-
-      return responseData;
-    } catch (error) {
-      console.error('❌ Start support chat error:', error);
-      throw error;
-    }
-  },
-
-  async createConversation(participantId, type = 'direct', bookingId = null) {
-    try {
-      const token = localStorage.getItem('token');
-      
-      if (!token) {
-        throw new Error('No authentication token found');
-      }
-      
-      const response = await fetch(`${API_BASE_URL}/api/chats`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ participantId, type, bookingId })
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل إنشاء المحادثة');
-      }
-
-      return data;
-    } catch (error) {
-      console.error('❌ Create conversation error:', error);
-      throw error;
-    }
-  },
-
-  async getConversationMessages(conversationId, page = 1, limit = 50) {
-    try {
-      const token = localStorage.getItem('token');
-      
-      if (!token) {
-        throw new Error('No authentication token found');
-      }
-      
-      const response = await fetch(
-        `${API_BASE_URL}/api/chats/${conversationId}/messages?page=${page}&limit=${limit}`,
-        {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل تحميل الرسائل');
-      }
-
-      return data;
-    } catch (error) {
-      console.error('❌ Get messages error:', error);
-      throw error;
-    }
-  },
-
   async sendTextMessage(chatId, content) {
     try {
       const token = localStorage.getItem('token');
@@ -1270,125 +1035,8 @@ export const api = {
     }
   },
 
-  async sendImageMessage(formData, onProgress) {
-    try {
-      const token = localStorage.getItem('token');
-      
-      if (!token) {
-        throw new Error('No authentication token found');
-      }
-      
-      const response = await fetch(`${API_BASE_URL}/api/chats/message/image`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        },
-        body: formData
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل إرسال الصورة');
-      }
-
-      return data;
-    } catch (error) {
-      console.error('❌ Send image error:', error);
-      throw error;
-    }
-  },
-
-  async sendFileMessage(formData) {
-    try {
-      const token = localStorage.getItem('token');
-      
-      if (!token) {
-        throw new Error('No authentication token found');
-      }
-      
-      const response = await fetch(`${API_BASE_URL}/api/chats/message/file`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        },
-        body: formData
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل إرسال الملف');
-      }
-
-      return data;
-    } catch (error) {
-      console.error('❌ Send file error:', error);
-      throw error;
-    }
-  },
-
-  async rateConversation(conversationId, rating) {
-    try {
-      const token = localStorage.getItem('token');
-      
-      if (!token) {
-        throw new Error('No authentication token found');
-      }
-      
-      const response = await fetch(`${API_BASE_URL}/api/chats/${conversationId}/rate`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ rating })
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل إرسال التقييم');
-      }
-
-      return data;
-    } catch (error) {
-      console.error('❌ Rate conversation error:', error);
-      throw error;
-    }
-  },
-
-  async markMessageAsRead(messageId) {
-    try {
-      const token = localStorage.getItem('token');
-      
-      if (!token) {
-        throw new Error('No authentication token found');
-      }
-      
-      const response = await fetch(`${API_BASE_URL}/api/chats/message/${messageId}/read`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل تحديث حالة القراءة');
-      }
-
-      return data;
-    } catch (error) {
-      console.error('❌ Mark as read error:', error);
-      throw error;
-    }
-  },
-
   // ============================================
-  // 🎫 SUPPORT TICKETS - تذاكر الدعم الفني (مع Fallback للتخزين المحلي)
+  // 🎫 SUPPORT TICKETS - تذاكر الدعم الفني
   // ============================================
 
   async createSupportTicket(data) {
@@ -1416,7 +1064,7 @@ export const api = {
       return responseData;
     } catch (error) {
       console.error('❌ Create support ticket error:', error);
-      throw this.createLocalTicket(data);
+      throw error;
     }
   },
 
@@ -1443,41 +1091,15 @@ export const api = {
       return responseData;
     } catch (error) {
       console.error('❌ Get support tickets error:', error);
-      return this.getLocalTickets(params);
+      throw error;
     }
   },
 
-  async getSupportTicket(ticketId) {
-    try {
-      const token = localStorage.getItem('token');
-      
-      const response = await fetch(`${API_BASE_URL}/api/support/tickets/${ticketId}`, {
-        method: 'GET',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const responseData = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(responseData.message || 'فشل تحميل التذكرة');
-      }
-
-      return responseData;
-    } catch (error) {
-      console.error('❌ Get support ticket error:', error);
-      return this.getLocalTicket(ticketId);
-    }
-  },
-
-  async sendSupportMessage(ticketId, message, attachments = []) {
+  async sendSupportMessage(ticketId, message) {
     try {
       const token = localStorage.getItem('token');
       
       console.log('📤 Sending support message to ticket:', ticketId);
-      console.log('📤 Message:', message);
       
       const response = await fetch(`${API_BASE_URL}/api/support/tickets/${ticketId}/messages`, {
         method: 'POST',
@@ -1485,7 +1107,7 @@ export const api = {
           'Authorization': token ? `Bearer ${token}` : '',
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ message, attachments })
+        body: JSON.stringify({ message })
       });
 
       const responseData = await response.json();
@@ -1498,7 +1120,7 @@ export const api = {
       return responseData;
     } catch (error) {
       console.error('❌ Send message error:', error);
-      return this.saveLocalMessage(ticketId, message);
+      throw error;
     }
   },
 
@@ -1523,384 +1145,10 @@ export const api = {
       return responseData;
     } catch (error) {
       console.error('❌ Get messages error:', error);
-      return this.getLocalMessages(ticketId);
-    }
-  },
-
-  async updateTicketStatus(ticketId, status) {
-    try {
-      const token = localStorage.getItem('token');
-      
-      const response = await fetch(`${API_BASE_URL}/api/support/tickets/${ticketId}/status`, {
-        method: 'PATCH',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ status })
-      });
-
-      const responseData = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(responseData.message || 'فشل تحديث حالة التذكرة');
-      }
-
-      return responseData;
-    } catch (error) {
-      console.error('❌ Update ticket status error:', error);
       throw error;
     }
   },
 
-  // ============================================
-  // 💾 LOCAL STORAGE FUNCTIONS (Fallback)
-  // ============================================
-
-  createLocalTicket(data) {
-    const userStr = localStorage.getItem('user');
-    const user = userStr ? JSON.parse(userStr) : null;
-    
-    const newTicket = {
-      id: Date.now(),
-      user_id: user?.id || data.user_id,
-      user_name: user?.fullName || user?.name || 'مستخدم',
-      subject: data.subject || 'طلب دعم جديد',
-      type: data.type || 'general',
-      priority: data.priority || 'normal',
-      status: 'open',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-      fromLocal: true
-    };
-    
-    const ticketsKey = 'support_tickets_local';
-    const existingTickets = localStorage.getItem(ticketsKey);
-    let allTickets = existingTickets ? JSON.parse(existingTickets) : [];
-    allTickets.unshift(newTicket);
-    localStorage.setItem(ticketsKey, JSON.stringify(allTickets));
-    
-    localStorage.setItem(`support_messages_${newTicket.id}`, JSON.stringify([]));
-    
-    return {
-      success: true,
-      ticket: newTicket,
-      fromLocal: true
-    };
-  },
-
-  getLocalTickets(params = {}) {
-    const ticketsKey = 'support_tickets_local';
-    const tickets = localStorage.getItem(ticketsKey);
-    let allTickets = tickets ? JSON.parse(tickets) : [];
-    
-    if (params.user_id) {
-      allTickets = allTickets.filter(t => t.user_id == params.user_id);
-    }
-    if (params.status) {
-      allTickets = allTickets.filter(t => t.status === params.status);
-    }
-    
-    return {
-      success: true,
-      tickets: allTickets,
-      fromLocal: true
-    };
-  },
-
-  getLocalTicket(ticketId) {
-    const ticketsKey = 'support_tickets_local';
-    const tickets = localStorage.getItem(ticketsKey);
-    let allTickets = tickets ? JSON.parse(tickets) : [];
-    const ticket = allTickets.find(t => t.id == ticketId);
-    
-    return {
-      success: true,
-      ticket: ticket || null,
-      fromLocal: true
-    };
-  },
-
-  getLocalMessages(ticketId) {
-    const messagesKey = `support_messages_${ticketId}`;
-    const messages = localStorage.getItem(messagesKey);
-    const allMessages = messages ? JSON.parse(messages) : [];
-    
-    return {
-      success: true,
-      messages: allMessages,
-      fromLocal: true
-    };
-  },
-
-  saveLocalMessage(ticketId, message) {
-    const userStr = localStorage.getItem('user');
-    const user = userStr ? JSON.parse(userStr) : null;
-    
-    const newMessage = {
-      id: Date.now(),
-      ticket_id: ticketId,
-      message: message,
-      is_from_user: true,
-      sender_name: user?.fullName || user?.name || 'أنت',
-      created_at: new Date().toISOString(),
-      status: 'sent',
-      fromLocal: true
-    };
-    
-    const messagesKey = `support_messages_${ticketId}`;
-    const existingMessages = localStorage.getItem(messagesKey);
-    let allMessages = existingMessages ? JSON.parse(existingMessages) : [];
-    allMessages.push(newMessage);
-    localStorage.setItem(messagesKey, JSON.stringify(allMessages));
-    
-    // تحديث التذكرة
-    const ticketsKey = 'support_tickets_local';
-    const existingTickets = localStorage.getItem(ticketsKey);
-    if (existingTickets) {
-      let allTickets = JSON.parse(existingTickets);
-      const ticketIndex = allTickets.findIndex(t => t.id == ticketId);
-      if (ticketIndex !== -1) {
-        allTickets[ticketIndex].updated_at = new Date().toISOString();
-        allTickets[ticketIndex].last_message = message;
-        localStorage.setItem(ticketsKey, JSON.stringify(allTickets));
-      }
-    }
-    
-    return {
-      success: true,
-      message: newMessage,
-      fromLocal: true
-    };
-  },
-
-  // دالة مساعدة لإنشاء محادثة دعم جديدة مع Fallback
-  async createSupportChat(userId, userName, message) {
-    try {
-      const ticketResponse = await this.createSupportTicket({
-        user_id: userId,
-        subject: 'طلب دعم جديد',
-        type: 'general',
-        priority: 'normal'
-      });
-      
-      if (ticketResponse.success) {
-        const ticketId = ticketResponse.ticket.id;
-        await this.sendSupportMessage(ticketId, message);
-        return ticketResponse;
-      }
-    } catch (error) {
-      console.log('⚠️ Creating support chat locally');
-      
-      const newTicket = this.createLocalTicket({
-        user_id: userId,
-        subject: 'طلب دعم جديد',
-        type: 'general',
-        priority: 'normal'
-      });
-      
-      if (newTicket.success) {
-        this.saveLocalMessage(newTicket.ticket.id, message);
-        
-        // محاولة إرسال إشعار للمسؤول
-        try {
-          await this.sendNotification({
-            userId: 3,
-            title: '🆕 طلب دعم جديد',
-            message: `${userName} يحتاج إلى مساعدة`,
-            type: 'support',
-            action_url: `/support/chats/${newTicket.ticket.id}`,
-            data: {
-              ticketId: newTicket.ticket.id,
-              userId: userId,
-              userName: userName,
-              message: message
-            }
-          });
-        } catch (notifError) {
-          console.log('Could not send notification to admin');
-        }
-      }
-      
-      return newTicket;
-    }
-  },
-
-  async sendNotification(data) {
-    try {
-      const token = localStorage.getItem('token');
-      
-      const response = await fetch(`${API_BASE_URL}/api/notifications/send`, {
-        method: 'POST',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(data)
-      });
-
-      const result = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(result.message || 'فشل إرسال الإشعار');
-      }
-
-      return result;
-    } catch (error) {
-      console.error('❌ Send notification error:', error);
-      return { success: false, error: error.message };
-    }
-  },
-
-  // ============================================
-  // 📢 ADMIN NOTIFICATIONS - إشعارات المسؤولين
-  // ============================================
-
-  // الحصول على إشعارات المسؤول
-  async getAdminNotifications(params = {}) {
-    try {
-      const token = localStorage.getItem('token');
-      const queryParams = new URLSearchParams(params).toString();
-      const url = `${API_BASE_URL}/api/admin/notifications${queryParams ? `?${queryParams}` : ''}`;
-      
-      console.log('🔍 [getAdminNotifications] URL:', url);
-      
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const data = await response.json();
-      console.log('📥 Admin notifications response:', data);
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل تحميل إشعارات المسؤول');
-      }
-
-      return data;
-    } catch (error) {
-      console.error('❌ Get admin notifications error:', error);
-      return {
-        success: false,
-        notifications: [],
-        unreadCount: 0,
-        error: error.message
-      };
-    }
-  },
-
-  // تحديث إشعار كمقروء
-  async markAdminNotificationAsRead(notificationId) {
-    try {
-      const token = localStorage.getItem('token');
-      const url = `${API_BASE_URL}/api/admin/notifications/${notificationId}/read`;
-      
-      const response = await fetch(url, {
-        method: 'PUT',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل تحديث الإشعار');
-      }
-
-      return data;
-    } catch (error) {
-      console.error('❌ Mark admin notification as read error:', error);
-      return { success: true };
-    }
-  },
-
-  // حذف إشعار
-  async deleteAdminNotification(notificationId) {
-    try {
-      const token = localStorage.getItem('token');
-      const url = `${API_BASE_URL}/api/admin/notifications/${notificationId}`;
-      
-      const response = await fetch(url, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل حذف الإشعار');
-      }
-
-      return data;
-    } catch (error) {
-      console.error('❌ Delete admin notification error:', error);
-      return { success: true };
-    }
-  },
-
-  // أرشفة إشعار
-  async archiveAdminNotification(notificationId) {
-    try {
-      const token = localStorage.getItem('token');
-      const url = `${API_BASE_URL}/api/admin/notifications/${notificationId}/archive`;
-      
-      const response = await fetch(url, {
-        method: 'PUT',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل أرشفة الإشعار');
-      }
-
-      return data;
-    } catch (error) {
-      console.error('❌ Archive admin notification error:', error);
-      return { success: true };
-    }
-  },
-
-  // إرسال إشعار لمستخدم
-  async sendUserNotification(userId, title, message, type = 'info') {
-    try {
-      const token = localStorage.getItem('token');
-      const url = `${API_BASE_URL}/api/notifications/send`;
-      
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ userId, title, message, type })
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل إرسال الإشعار');
-      }
-
-      return data;
-    } catch (error) {
-      console.error('❌ Send user notification error:', error);
-      return { success: false };
-    }
-  },
-  
   // ============================================
   // 📝 UPGRADE REQUESTS - طلبات الترقية
   // ============================================
@@ -2038,10 +1286,6 @@ export const api = {
     }
   },
 
-  // ============================================
-  // ✅ UPGRADE TO GUIDE - طلب ترقية إلى مرشد (مع رفع الملفات)
-  // ============================================
-
   async upgradeToGuide(formData) {
     try {
       const token = localStorage.getItem('token');
@@ -2052,7 +1296,6 @@ export const api = {
         method: 'POST',
         headers: {
           'Authorization': token ? `Bearer ${token}` : ''
-          // لا نضيف Content-Type لأن fetch سيتعامل مع FormData تلقائياً
         },
         body: formData
       });
