@@ -18,7 +18,7 @@ import bookingRoutes from './src/routes/bookingRoutes.js';
 import chatRoutes from './src/routes/chatRoutes.js';
 import notificationRoutes from './src/routes/notificationRoutes.js';
 import supportRoutes from './src/routes/supportRoutes.js';
-import upgradeRoutes from './src/routes/upgradeRoutes.js'; // ✅ إضافة مسار الترقيات
+import upgradeRoutes from './src/routes/upgradeRoutes.js';
 
 // استيراد دوال الوقت المساعدة
 import { createExpiryDate, isOTPValid, getTimeRemaining } from './src/utils/timeUtils.js';
@@ -106,7 +106,7 @@ console.log('☁️ Connecting to Supabase Cloud via DATABASE_URL');
 poolConfig = {
   connectionString: process.env.DATABASE_URL,
   ssl: {
-    rejectUnauthorized: false // ضروري لـ Supabase
+    rejectUnauthorized: false
   },
   max: 20,
   idleTimeoutMillis: 30000,
@@ -122,7 +122,6 @@ const connectDB = async () => {
   try {
     const client = await pool.connect();
     
-    // استخراج معلومات المضيف من connectionString
     const hostMatch = process.env.DATABASE_URL.match(/@([^:]+)/);
     const host = hostMatch ? hostMatch[1] : 'supabase.co';
     
@@ -190,7 +189,6 @@ app.use(cors({
   credentials: true
 }));
 
-// Middleware لإضافة معلومات الوقت لكل طلب
 app.use((req, res, next) => {
   console.log(`🕐 Request received at: ${new Date().toISOString()}`);
   next();
@@ -216,7 +214,7 @@ app.get('/', (req, res) => {
       chats: '/api/chats',
       notifications: '/api/notifications',
       support: '/api/support',
-      upgrade: '/api/upgrade' // ✅ إضافة نقطة نهاية الترقيات
+      upgrade: '/api/upgrade'
     }
   });
 });
@@ -229,7 +227,7 @@ app.use('/api/bookings', bookingRoutes);
 app.use('/api/chats', chatRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/support', supportRoutes);
-app.use('/api/upgrade', upgradeRoutes); // ✅ إضافة مسار الترقيات
+app.use('/api/upgrade', upgradeRoutes);
 
 // ===================== Route إضافي للمحفظة =====================
 app.get('/api/wallet/:userId', async (req, res) => {
@@ -262,6 +260,145 @@ app.get('/api/wallet/:userId', async (req, res) => {
   }
 });
 
+// ===================== مسارات البرامج =====================
+
+// ✅ جلب برامج مرشد معين
+app.get('/api/guides/:guideId/programs', async (req, res) => {
+  try {
+    const { guideId } = req.params;
+    
+    console.log(`📥 Fetching programs for guide: ${guideId}`);
+    
+    const result = await pool.query(
+      `SELECT p.*, u.name as guide_name
+       FROM programs p
+       LEFT JOIN users u ON p.guide_id = u.id
+       WHERE p.guide_id = $1::uuid
+       ORDER BY p.created_at DESC`,
+      [guideId]
+    );
+    
+    res.json({ 
+      success: true, 
+      programs: result.rows,
+      count: result.rows.length
+    });
+  } catch (error) {
+    console.error('❌ Error fetching guide programs:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
+  }
+});
+
+// ✅ جلب جميع البرامج (مع فلتر حسب المرشد)
+app.get('/api/programs', async (req, res) => {
+  try {
+    const { guide_id } = req.query;
+    
+    let query = `
+      SELECT p.*, u.name as guide_name
+      FROM programs p
+      LEFT JOIN users u ON p.guide_id = u.id
+      WHERE 1=1
+    `;
+    const params = [];
+    
+    if (guide_id) {
+      query += ` AND p.guide_id = $1::uuid`;
+      params.push(guide_id);
+    }
+    
+    query += ` ORDER BY p.created_at DESC`;
+    
+    const result = await pool.query(query, params);
+    
+    res.json({ 
+      success: true, 
+      programs: result.rows,
+      count: result.rows.length
+    });
+  } catch (error) {
+    console.error('❌ Error fetching programs:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
+  }
+});
+
+// ✅ إضافة برنامج جديد
+app.post('/api/programs', async (req, res) => {
+  try {
+    const { guide_id, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status } = req.body;
+    
+    console.log(`📤 Adding new program for guide: ${guide_id}`);
+    
+    const result = await pool.query(
+      `INSERT INTO programs (guide_id, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status, created_at)
+       VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
+       RETURNING *`,
+      [guide_id, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status || 'active']
+    );
+    
+    res.json({ 
+      success: true, 
+      program: result.rows[0],
+      message: 'Program added successfully'
+    });
+  } catch (error) {
+    console.error('❌ Error adding program:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
+  }
+});
+
+// ✅ حذف برنامج
+app.delete('/api/programs/:programId', async (req, res) => {
+  try {
+    const { programId } = req.params;
+    
+    const result = await pool.query(
+      `DELETE FROM programs WHERE id = $1 RETURNING *`,
+      [programId]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Program not found' });
+    }
+    
+    res.json({ success: true, message: 'Program deleted successfully' });
+  } catch (error) {
+    console.error('❌ Error deleting program:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ✅ تحديث حالة البرنامج
+app.patch('/api/programs/:programId/status', async (req, res) => {
+  try {
+    const { programId } = req.params;
+    const { status } = req.body;
+    
+    const result = await pool.query(
+      `UPDATE programs SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+      [status, programId]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Program not found' });
+    }
+    
+    res.json({ success: true, program: result.rows[0] });
+  } catch (error) {
+    console.error('❌ Error updating program status:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // ===================== Test route =====================
 app.get('/api/test', (req, res) => {
   res.json({ 
@@ -280,7 +417,6 @@ app.get('/api/test', (req, res) => {
 app.get('/health', async (req, res) => {
   const dbConnected = await connectDB().catch(() => false);
   
-  // استعلام إضافي للحصول على معلومات Supabase
   let dbInfo = {};
   if (dbConnected) {
     try {
@@ -310,7 +446,6 @@ app.get('/health', async (req, res) => {
 // 📢 ADMIN NOTIFICATIONS API
 // ============================================
 
-// إرسال إشعار لمسؤول معين
 async function sendAdminNotification(adminId, type, title, message, relatedId = null, priority = 'normal', actionUrl = null, metadata = {}) {
   try {
     const result = await pool.query(
@@ -327,7 +462,6 @@ async function sendAdminNotification(adminId, type, title, message, relatedId = 
   }
 }
 
-// إرسال إشعار لجميع المسؤولين والدعم الفني
 async function sendNotificationToAllAdmins(type, title, message, relatedId = null, priority = 'normal', actionUrl = null, metadata = {}) {
   try {
     const admins = await pool.query(
@@ -344,10 +478,8 @@ async function sendNotificationToAllAdmins(type, title, message, relatedId = nul
   }
 }
 
-// الحصول على إشعارات المسؤول
 app.get('/api/admin/notifications', async (req, res) => {
   try {
-    // التحقق من التوكن
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
@@ -383,7 +515,6 @@ app.get('/api/admin/notifications', async (req, res) => {
     
     const result = await pool.query(query, params);
     
-    // حساب عدد غير المقروءة
     const unreadResult = await pool.query(
       `SELECT COUNT(*) FROM app.admin_notifications 
        WHERE admin_id = $1 AND status = 'unread'`,
@@ -402,7 +533,6 @@ app.get('/api/admin/notifications', async (req, res) => {
   }
 });
 
-// تحديث إشعار كمقروء
 app.put('/api/admin/notifications/:id/read', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -441,7 +571,6 @@ app.put('/api/admin/notifications/:id/read', async (req, res) => {
   }
 });
 
-// تحديث جميع الإشعارات كمقروءة
 app.put('/api/admin/notifications/read-all', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -473,7 +602,6 @@ app.put('/api/admin/notifications/read-all', async (req, res) => {
   }
 });
 
-// حذف إشعار
 app.delete('/api/admin/notifications/:id', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -511,7 +639,6 @@ app.delete('/api/admin/notifications/:id', async (req, res) => {
   }
 });
 
-// أرشفة إشعار
 app.put('/api/admin/notifications/:id/archive', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -584,5 +711,4 @@ const startServer = async () => {
 
 startServer();
 
-// ===================== التصدير مرة واحدة فقط =====================
 export { io, onlineUsers, pool, createExpiryDate, isOTPValid, getTimeRemaining };
