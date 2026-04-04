@@ -1,6 +1,6 @@
 import express from 'express';
 import { protect, authorize } from '../middleware/authMiddleware.js';
-import { validate } from '../middleware/validationMiddleware.js'; // ✅ تم التعديل هنا
+import { validate } from '../middleware/validationMiddleware.js';
 import { body } from 'express-validator';
 import { pool } from '../config/database.js';
 
@@ -10,20 +10,14 @@ const router = express.Router();
 // قواعد التحقق
 // ============================================
 const programValidation = [
-  body('title').notEmpty().withMessage('عنوان البرنامج مطلوب'),
-  body('description').notEmpty().withMessage('وصف البرنامج مطلوب'),
+  body('name').notEmpty().withMessage('اسم البرنامج مطلوب'),
   body('price').isFloat({ min: 0 }).withMessage('السعر يجب أن يكون رقماً موجباً'),
-  body('duration').isInt({ min: 1 }).withMessage('المدة يجب أن تكون رقماً صحيحاً'),
-  body('maxParticipants').isInt({ min: 1 }).withMessage('عدد المشاركين يجب أن يكون رقماً صحيحاً'),
   body('location').notEmpty().withMessage('الموقع مطلوب')
 ];
 
 const programUpdateValidation = [
-  body('title').optional().notEmpty().withMessage('عنوان البرنامج لا يمكن أن يكون فارغاً'),
-  body('description').optional().notEmpty().withMessage('وصف البرنامج لا يمكن أن يكون فارغاً'),
+  body('name').optional().notEmpty().withMessage('اسم البرنامج لا يمكن أن يكون فارغاً'),
   body('price').optional().isFloat({ min: 0 }).withMessage('السعر يجب أن يكون رقماً موجباً'),
-  body('duration').optional().isInt({ min: 1 }).withMessage('المدة يجب أن تكون رقماً صحيحاً'),
-  body('maxParticipants').optional().isInt({ min: 1 }).withMessage('عدد المشاركين يجب أن يكون رقماً صحيحاً'),
   body('location').optional().notEmpty().withMessage('الموقع لا يمكن أن يكون فارغاً')
 ];
 
@@ -33,60 +27,64 @@ const programUpdateValidation = [
 // ============================================
 router.get('/', async (req, res) => {
   try {
-    const { guideId, minPrice, maxPrice, location, limit = 20, offset = 0 } = req.query;
+    const { guide_id, minPrice, maxPrice, location, limit = 50, offset = 0 } = req.query;
     
     let query = `
-      SELECT p.*, 
-             u.id as guide_id, 
-             u.full_name as guide_name, 
-             u.avatar as guide_avatar,
-             (SELECT COUNT(*) FROM app.bookings b WHERE b.program_id = p.id AND b.status = 'completed') as total_bookings,
-             (SELECT AVG(rating) FROM app.reviews r WHERE r.program_id = p.id) as avg_rating
-      FROM app.programs p
-      JOIN app.users u ON u.id = p.guide_id
-      WHERE p.status = 'active'
+      SELECT p.*, u.name as guide_name, u.email as guide_email
+      FROM programs p
+      LEFT JOIN users u ON p.guide_id = u.id
+      WHERE p.status = 'active' OR p.status IS NULL
     `;
     
     const queryParams = [];
     let paramIndex = 1;
     
-    if (guideId) {
-      query += ` AND p.guide_id = $${paramIndex}`;
-      queryParams.push(guideId);
+    if (guide_id) {
+      query += ` AND p.guide_id = $${paramIndex}::uuid`;
+      queryParams.push(guide_id);
       paramIndex++;
     }
     
     if (minPrice) {
       query += ` AND p.price >= $${paramIndex}`;
-      queryParams.push(minPrice);
+      queryParams.push(parseFloat(minPrice));
       paramIndex++;
     }
     
     if (maxPrice) {
       query += ` AND p.price <= $${paramIndex}`;
-      queryParams.push(maxPrice);
+      queryParams.push(parseFloat(maxPrice));
       paramIndex++;
     }
     
     if (location) {
-      query += ` AND p.location ILIKE $${paramIndex}`;
+      query += ` AND (p.location ILIKE $${paramIndex} OR p.location_name ILIKE $${paramIndex})`;
       queryParams.push(`%${location}%`);
       paramIndex++;
     }
     
     query += ` ORDER BY p.created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-    queryParams.push(limit, offset);
+    queryParams.push(parseInt(limit), parseInt(offset));
     
     const result = await pool.query(query, queryParams);
     
     // الحصول على العدد الإجمالي
-    const countResult = await pool.query('SELECT COUNT(*) FROM app.programs WHERE status = $1', ['active']);
+    let countQuery = 'SELECT COUNT(*) FROM programs WHERE status = $1 OR status IS NULL';
+    const countParams = ['active'];
+    
+    if (guide_id) {
+      countQuery += ' AND guide_id = $2::uuid';
+      countParams.push(guide_id);
+    }
+    
+    const countResult = await pool.query(countQuery, countParams);
     
     res.json({
       success: true,
       programs: result.rows,
+      count: result.rows.length,
+      total: parseInt(countResult.rows[0].count),
       pagination: {
-        total: parseInt(countResult.rows[0].count),
         limit: parseInt(limit),
         offset: parseInt(offset)
       }
@@ -96,7 +94,7 @@ router.get('/', async (req, res) => {
     console.error('❌ Get programs error:', error);
     res.status(500).json({
       success: false,
-      message: 'حدث خطأ في جلب البرامج'
+      message: 'حدث خطأ في جلب البرامج: ' + error.message
     });
   }
 });
@@ -110,25 +108,9 @@ router.get('/:id', async (req, res) => {
     const { id } = req.params;
     
     const query = `
-      SELECT p.*, 
-             u.id as guide_id, 
-             u.full_name as guide_name, 
-             u.avatar as guide_avatar,
-             u.bio as guide_bio,
-             u.phone as guide_phone,
-             u.email as guide_email,
-             (SELECT COUNT(*) FROM app.bookings b WHERE b.program_id = p.id AND b.status = 'completed') as total_bookings,
-             (SELECT AVG(rating) FROM app.reviews r WHERE r.program_id = p.id) as avg_rating,
-             (SELECT json_agg(r) FROM (
-                SELECT r.*, u.full_name as user_name, u.avatar as user_avatar
-                FROM app.reviews r
-                JOIN app.users u ON u.id = r.user_id
-                WHERE r.program_id = p.id
-                ORDER BY r.created_at DESC
-                LIMIT 10
-             ) r) as recent_reviews
-      FROM app.programs p
-      JOIN app.users u ON u.id = p.guide_id
+      SELECT p.*, u.name as guide_name, u.email as guide_email, u.avatar as guide_avatar
+      FROM programs p
+      LEFT JOIN users u ON p.guide_id = u.id
       WHERE p.id = $1
     `;
     
@@ -150,7 +132,7 @@ router.get('/:id', async (req, res) => {
     console.error('❌ Get program error:', error);
     res.status(500).json({
       success: false,
-      message: 'حدث خطأ في جلب البرنامج'
+      message: 'حدث خطأ في جلب البرنامج: ' + error.message
     });
   }
 });
@@ -163,37 +145,37 @@ router.post('/', protect, authorize('guide'), programValidation, validate, async
   try {
     const guideId = req.user.id;
     const {
-      title, description, price, duration,
-      maxParticipants, location, images, includes, excludes,
-      itinerary, startDate, endDate, category
+      name, description, price, duration,
+      max_participants, location, location_name,
+      location_lat, location_lng, image, status
     } = req.body;
     
+    console.log('📤 Creating program for guide:', guideId);
+    console.log('📤 Program data:', req.body);
+    
     const query = `
-      INSERT INTO app.programs (
-        guide_id, title, description, price, duration,
-        max_participants, location, images, includes, excludes,
-        itinerary, start_date, end_date, category, status,
+      INSERT INTO programs (
+        guide_id, name, description, price, duration,
+        max_participants, location, location_name,
+        location_lat, location_lng, image, status,
         created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
       RETURNING *
     `;
     
     const values = [
       guideId,
-      title,
-      description,
-      price,
-      duration,
-      maxParticipants,
+      name,
+      description || null,
+      price || 0,
+      duration || 'يوم واحد',
+      max_participants || 20,
       location,
-      images || [],
-      includes || [],
-      excludes || [],
-      itinerary || {},
-      startDate || null,
-      endDate || null,
-      category || 'general',
-      'active'
+      location_name || location,
+      location_lat || null,
+      location_lng || null,
+      image || null,
+      status || 'active'
     ];
     
     const result = await pool.query(query, values);
@@ -208,7 +190,7 @@ router.post('/', protect, authorize('guide'), programValidation, validate, async
     console.error('❌ Create program error:', error);
     res.status(500).json({
       success: false,
-      message: 'حدث خطأ في إنشاء البرنامج'
+      message: 'حدث خطأ في إنشاء البرنامج: ' + error.message
     });
   }
 });
@@ -223,13 +205,13 @@ router.put('/:id', protect, authorize('guide'), programUpdateValidation, validat
     const guideId = req.user.id;
     
     // التحقق من أن البرنامج يخص هذا المرشد
-    const checkQuery = 'SELECT * FROM app.programs WHERE id = $1 AND guide_id = $2';
+    const checkQuery = 'SELECT * FROM programs WHERE id = $1 AND guide_id = $2::uuid';
     const checkResult = await pool.query(checkQuery, [id, guideId]);
     
     if (checkResult.rows.length === 0) {
       return res.status(403).json({
         success: false,
-        message: 'غير مصرح لك بتعديل هذا البرنامج'
+        message: 'غير مصرح لك بتعديل هذا البرنامج أو البرنامج غير موجود'
       });
     }
     
@@ -239,9 +221,9 @@ router.put('/:id', protect, authorize('guide'), programUpdateValidation, validat
     let paramIndex = 1;
     
     const allowedFields = [
-      'title', 'description', 'price', 'duration', 'max_participants',
-      'location', 'images', 'includes', 'excludes', 'itinerary',
-      'start_date', 'end_date', 'category', 'status'
+      'name', 'description', 'price', 'duration', 'max_participants',
+      'location', 'location_name', 'location_lat', 'location_lng',
+      'image', 'status'
     ];
     
     for (const field of allowedFields) {
@@ -263,7 +245,7 @@ router.put('/:id', protect, authorize('guide'), programUpdateValidation, validat
     values.push(id);
     
     const query = `
-      UPDATE app.programs 
+      UPDATE programs 
       SET ${updates.join(', ')} 
       WHERE id = $${paramIndex}
       RETURNING *
@@ -281,7 +263,7 @@ router.put('/:id', protect, authorize('guide'), programUpdateValidation, validat
     console.error('❌ Update program error:', error);
     res.status(500).json({
       success: false,
-      message: 'حدث خطأ في تحديث البرنامج'
+      message: 'حدث خطأ في تحديث البرنامج: ' + error.message
     });
   }
 });
@@ -296,33 +278,19 @@ router.delete('/:id', protect, authorize('guide'), async (req, res) => {
     const guideId = req.user.id;
     
     // التحقق من أن البرنامج يخص هذا المرشد
-    const checkQuery = 'SELECT * FROM app.programs WHERE id = $1 AND guide_id = $2';
+    const checkQuery = 'SELECT * FROM programs WHERE id = $1 AND guide_id = $2::uuid';
     const checkResult = await pool.query(checkQuery, [id, guideId]);
     
     if (checkResult.rows.length === 0) {
       return res.status(403).json({
         success: false,
-        message: 'غير مصرح لك بحذف هذا البرنامج'
+        message: 'غير مصرح لك بحذف هذا البرنامج أو البرنامج غير موجود'
       });
     }
     
-    // التحقق من عدم وجود حجوزات نشطة
-    const bookingsQuery = `
-      SELECT COUNT(*) FROM app.bookings 
-      WHERE program_id = $1 AND status IN ('pending', 'confirmed', 'in_progress')
-    `;
-    const bookingsResult = await pool.query(bookingsQuery, [id]);
-    
-    if (parseInt(bookingsResult.rows[0].count) > 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'لا يمكن حذف البرنامج لوجود حجوزات نشطة'
-      });
-    }
-    
-    // حذف البرنامج (أو تغيير الحالة)
-    const query = 'UPDATE app.programs SET status = $1 WHERE id = $2 RETURNING *';
-    const result = await pool.query(query, ['deleted', id]);
+    // حذف البرنامج
+    const query = 'DELETE FROM programs WHERE id = $1 RETURNING *';
+    const result = await pool.query(query, [id]);
     
     res.json({
       success: true,
@@ -334,7 +302,59 @@ router.delete('/:id', protect, authorize('guide'), async (req, res) => {
     console.error('❌ Delete program error:', error);
     res.status(500).json({
       success: false,
-      message: 'حدث خطأ في حذف البرنامج'
+      message: 'حدث خطأ في حذف البرنامج: ' + error.message
+    });
+  }
+});
+
+// ============================================
+// ✅ PATCH /api/programs/:id/status
+// تحديث حالة البرنامج
+// ============================================
+router.patch('/:id/status', protect, authorize('guide'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const guideId = req.user.id;
+    const { status } = req.body;
+    
+    if (!status || !['active', 'inactive', 'cancelled'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'حالة غير صالحة. الحالات المسموحة: active, inactive, cancelled'
+      });
+    }
+    
+    // التحقق من أن البرنامج يخص هذا المرشد
+    const checkQuery = 'SELECT * FROM programs WHERE id = $1 AND guide_id = $2::uuid';
+    const checkResult = await pool.query(checkQuery, [id, guideId]);
+    
+    if (checkResult.rows.length === 0) {
+      return res.status(403).json({
+        success: false,
+        message: 'غير مصرح لك بتعديل هذا البرنامج'
+      });
+    }
+    
+    const query = `
+      UPDATE programs 
+      SET status = $1, updated_at = NOW()
+      WHERE id = $2
+      RETURNING *
+    `;
+    
+    const result = await pool.query(query, [status, id]);
+    
+    res.json({
+      success: true,
+      message: 'تم تحديث حالة البرنامج بنجاح',
+      program: result.rows[0]
+    });
+    
+  } catch (error) {
+    console.error('❌ Update program status error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'حدث خطأ في تحديث حالة البرنامج: ' + error.message
     });
   }
 });
@@ -348,11 +368,10 @@ router.get('/guide/:guideId', async (req, res) => {
     const { guideId } = req.params;
     
     const query = `
-      SELECT p.*, 
-             (SELECT COUNT(*) FROM app.bookings b WHERE b.program_id = p.id) as total_bookings,
-             (SELECT AVG(rating) FROM app.reviews r WHERE r.program_id = p.id) as avg_rating
-      FROM app.programs p
-      WHERE p.guide_id = $1 AND p.status = 'active'
+      SELECT p.*, u.name as guide_name
+      FROM programs p
+      LEFT JOIN users u ON p.guide_id = u.id
+      WHERE p.guide_id = $1::uuid
       ORDER BY p.created_at DESC
     `;
     
@@ -360,69 +379,15 @@ router.get('/guide/:guideId', async (req, res) => {
     
     res.json({
       success: true,
-      programs: result.rows
+      programs: result.rows,
+      count: result.rows.length
     });
     
   } catch (error) {
     console.error('❌ Get guide programs error:', error);
     res.status(500).json({
       success: false,
-      message: 'حدث خطأ في جلب برامج المرشد'
-    });
-  }
-});
-
-// ============================================
-// ✅ POST /api/programs/:id/reviews
-// إضافة تقييم لبرنامج
-// ============================================
-router.post('/:id/reviews', protect, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const userId = req.user.id;
-    const { rating, comment } = req.body;
-    
-    if (!rating || rating < 1 || rating > 5) {
-      return res.status(400).json({
-        success: false,
-        message: 'التقييم يجب أن يكون بين 1 و 5'
-      });
-    }
-    
-    // التحقق من أن المستخدم لديه حجز مكتمل لهذا البرنامج
-    const checkQuery = `
-      SELECT COUNT(*) FROM app.bookings 
-      WHERE program_id = $1 AND user_id = $2 AND status = 'completed'
-    `;
-    const checkResult = await pool.query(checkQuery, [id, userId]);
-    
-    if (parseInt(checkResult.rows[0].count) === 0) {
-      return res.status(403).json({
-        success: false,
-        message: 'يجب أن يكون لديك حجز مكتمل لهذا البرنامج لتقييمه'
-      });
-    }
-    
-    // إضافة التقييم
-    const query = `
-      INSERT INTO app.reviews (program_id, user_id, rating, comment, created_at)
-      VALUES ($1, $2, $3, $4, NOW())
-      RETURNING *
-    `;
-    
-    const result = await pool.query(query, [id, userId, rating, comment || null]);
-    
-    res.status(201).json({
-      success: true,
-      message: 'تم إضافة التقييم بنجاح',
-      review: result.rows[0]
-    });
-    
-  } catch (error) {
-    console.error('❌ Add review error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'حدث خطأ في إضافة التقييم'
+      message: 'حدث خطأ في جلب برامج المرشد: ' + error.message
     });
   }
 });
