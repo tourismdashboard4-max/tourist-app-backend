@@ -38,6 +38,7 @@ const io = new Server(server, {
       'http://localhost:5175', 
       'http://localhost:5176',
       'http://localhost:5177',
+      'http://localhost:5180',
       'https://tourist-app-api.onrender.com'
     ],
     credentials: true
@@ -184,6 +185,7 @@ app.use(cors({
     'http://localhost:5175',
     'http://localhost:5176',
     'http://localhost:5177',
+    'http://localhost:5180',
     'https://tourist-app-api.onrender.com'
   ],
   credentials: true
