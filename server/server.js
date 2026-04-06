@@ -7,11 +7,6 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import pkg from 'pg';
 import jwt from 'jsonwebtoken';
-import multer from 'multer';
-import path from 'path';
-import { v4 as uuidv4 } from 'uuid';
-import { createClient } from '@supabase/supabase-js';
-
 const { Pool } = pkg;
 
 // استيراد المسارات
@@ -179,45 +174,6 @@ const connectDB = async () => {
   }
 };
 
-// ===================== تهيئة Supabase Storage =====================
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-if (!supabaseUrl || !supabaseServiceKey) {
-  console.warn('⚠️ SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set. Avatar upload will not work.');
-}
-const supabaseAdmin = supabaseUrl && supabaseServiceKey 
-  ? createClient(supabaseUrl, supabaseServiceKey)
-  : null;
-
-// ===================== Helper: تحويل المعرف الرقمي إلى UUID =====================
-async function getUserIdByNumericId(numericId) {
-  try {
-    // البحث عن المستخدم الذي رقمه القديم يطابق أو تحويل id إلى نص
-    const result = await pool.query(
-      `SELECT id FROM users WHERE id::text = $1 OR old_id = $1 LIMIT 1`,
-      [String(numericId)]
-    );
-    return result.rows[0]?.id || null;
-  } catch (error) {
-    console.error('Error converting numeric ID to UUID:', error);
-    return null;
-  }
-}
-
-// ===================== إعداد Multer للصور =====================
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 2 * 1024 * 1024 }, // 2MB
-  fileFilter: (req, file, cb) => {
-    const allowed = /jpeg|jpg|png|gif|webp/;
-    const ext = allowed.test(path.extname(file.originalname).toLowerCase());
-    const mime = allowed.test(file.mimetype);
-    if (ext && mime) return cb(null, true);
-    cb(new Error('Only images are allowed (jpeg, jpg, png, gif, webp)'));
-  }
-});
-
 // ===================== Middleware =====================
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" }
@@ -262,132 +218,11 @@ app.get('/', (req, res) => {
       chats: '/api/chats',
       notifications: '/api/notifications',
       support: '/api/support',
-      upgrade: '/api/upgrade',
-      avatar: 'POST /api/users/:userId/avatar'
+      upgrade: '/api/upgrade'
     }
   });
 });
 
-// ===================== مسار رفع الصورة الشخصية =====================
-app.post('/api/users/:userId/avatar', upload.single('avatar'), async (req, res) => {
-  try {
-    let { userId } = req.params;
-    console.log(`📤 Upload avatar request for userId: ${userId}`);
-
-    // تحويل الرقم إلى UUID إذا لزم الأمر
-    if (/^\d+$/.test(userId)) {
-      const uuid = await getUserIdByNumericId(userId);
-      if (!uuid) {
-        return res.status(404).json({ success: false, message: 'User not found' });
-      }
-      userId = uuid;
-      console.log(`✅ Converted numeric to UUID: ${userId}`);
-    }
-
-    if (!req.file) {
-      return res.status(400).json({ success: false, message: 'No file uploaded' });
-    }
-
-    if (!supabaseAdmin) {
-      return res.status(500).json({ success: false, message: 'Storage service not configured' });
-    }
-
-    // إنشاء اسم فريد للملف
-    const fileExt = path.extname(req.file.originalname);
-    const fileName = `${userId}-${Date.now()}${fileExt}`;
-    const filePath = `avatars/${fileName}`;
-
-    // رفع الملف إلى Supabase Storage
-    const { data, error } = await supabaseAdmin.storage
-      .from('avatars')
-      .upload(filePath, req.file.buffer, {
-        contentType: req.file.mimetype,
-        upsert: true
-      });
-
-    if (error) {
-      console.error('❌ Supabase upload error:', error);
-      return res.status(500).json({ success: false, message: 'Failed to upload image to storage' });
-    }
-
-    // الحصول على الرابط العام
-    const { data: publicUrlData } = supabaseAdmin.storage
-      .from('avatars')
-      .getPublicUrl(filePath);
-    const avatarUrl = publicUrlData.publicUrl;
-
-    // تحديث قاعدة البيانات
-    const updateResult = await pool.query(
-      `UPDATE users SET avatar_url = $1, updated_at = NOW() WHERE id = $2::uuid RETURNING avatar_url`,
-      [avatarUrl, userId]
-    );
-
-    if (updateResult.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'User not found after update' });
-    }
-
-    res.json({
-      success: true,
-      message: 'Avatar uploaded successfully',
-      avatarUrl: avatarUrl
-    });
-  } catch (error) {
-    console.error('❌ Avatar upload error:', error);
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// ===================== مسار حذف الصورة الشخصية =====================
-app.delete('/api/users/:userId/avatar', async (req, res) => {
-  try {
-    let { userId } = req.params;
-    console.log(`🗑️ Delete avatar request for userId: ${userId}`);
-
-    // تحويل الرقم إلى UUID
-    if (/^\d+$/.test(userId)) {
-      const uuid = await getUserIdByNumericId(userId);
-      if (!uuid) {
-        return res.status(404).json({ success: false, message: 'User not found' });
-      }
-      userId = uuid;
-    }
-
-    // جلب avatar_url الحالي
-    const userRes = await pool.query(
-      `SELECT avatar_url FROM users WHERE id = $1::uuid`,
-      [userId]
-    );
-
-    if (userRes.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-
-    const currentAvatarUrl = userRes.rows[0].avatar_url;
-    
-    if (currentAvatarUrl && supabaseAdmin) {
-      // استخراج مسار الملف من الرابط
-      const urlParts = currentAvatarUrl.split('/');
-      const filePath = urlParts.slice(urlParts.indexOf('avatars')).join('/');
-      if (filePath) {
-        await supabaseAdmin.storage.from('avatars').remove([filePath]);
-        console.log(`🗑️ Deleted old avatar file: ${filePath}`);
-      }
-    }
-
-    // تحديث قاعدة البيانات: إزالة الرابط
-    await pool.query(
-      `UPDATE users SET avatar_url = NULL, updated_at = NOW() WHERE id = $1::uuid`,
-      [userId]
-    );
-
-    res.json({ success: true, message: 'Avatar deleted successfully' });
-  } catch (error) {
-    console.error('❌ Avatar deletion error:', error);
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// ===================== Routes API الأخرى =====================
 app.use('/api/auth', authRoutes);
 app.use('/api/guides', guideRoutes);
 app.use('/api/programs', programRoutes);
@@ -431,22 +266,12 @@ app.get('/api/wallet/:userId', async (req, res) => {
 
 // ===================== مسارات البرامج =====================
 
-// ✅ جلب برامج مرشد معين (مع دعم الأرقام)
+// ✅ جلب برامج مرشد معين
 app.get('/api/guides/:guideId/programs', async (req, res) => {
   try {
-    let { guideId } = req.params;
+    const { guideId } = req.params;
     
     console.log(`📥 Fetching programs for guide: ${guideId}`);
-    
-    // تحويل الرقم إلى UUID إذا لزم الأمر
-    if (/^\d+$/.test(guideId)) {
-      const uuid = await getUserIdByNumericId(guideId);
-      if (!uuid) {
-        return res.status(404).json({ success: false, message: 'Guide not found' });
-      }
-      guideId = uuid;
-      console.log(`✅ Converted numeric guideId to UUID: ${guideId}`);
-    }
     
     const result = await pool.query(
       `SELECT p.*, u.name as guide_name
@@ -471,10 +296,10 @@ app.get('/api/guides/:guideId/programs', async (req, res) => {
   }
 });
 
-// ✅ جلب جميع البرامج (مع فلتر حسب المرشد مع دعم الأرقام)
+// ✅ جلب جميع البرامج (مع فلتر حسب المرشد)
 app.get('/api/programs', async (req, res) => {
   try {
-    let { guide_id } = req.query;
+    const { guide_id } = req.query;
     
     let query = `
       SELECT p.*, u.name as guide_name
@@ -485,14 +310,8 @@ app.get('/api/programs', async (req, res) => {
     const params = [];
     
     if (guide_id) {
-      let finalGuideId = guide_id;
-      if (/^\d+$/.test(String(guide_id))) {
-        const uuid = await getUserIdByNumericId(guide_id);
-        if (uuid) finalGuideId = uuid;
-        else return res.status(404).json({ success: false, message: 'Guide not found' });
-      }
       query += ` AND p.guide_id = $1::uuid`;
-      params.push(finalGuideId);
+      params.push(guide_id);
     }
     
     query += ` ORDER BY p.created_at DESC`;
@@ -513,22 +332,12 @@ app.get('/api/programs', async (req, res) => {
   }
 });
 
-// ✅ إضافة برنامج جديد (مع دعم guide_id رقمي)
+// ✅ إضافة برنامج جديد
 app.post('/api/programs', async (req, res) => {
   try {
-    let { guide_id, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status } = req.body;
+    const { guide_id, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status } = req.body;
     
     console.log(`📤 Adding new program for guide: ${guide_id}`);
-    
-    // تحويل guide_id إذا كان رقماً
-    if (guide_id && /^\d+$/.test(String(guide_id))) {
-      const uuid = await getUserIdByNumericId(guide_id);
-      if (!uuid) {
-        return res.status(404).json({ success: false, message: 'Guide not found' });
-      }
-      guide_id = uuid;
-      console.log(`✅ Converted numeric guide_id to UUID: ${guide_id}`);
-    }
     
     const result = await pool.query(
       `INSERT INTO programs (guide_id, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status, created_at)
