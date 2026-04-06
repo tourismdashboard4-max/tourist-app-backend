@@ -267,7 +267,7 @@ app.get('/', (req, res) => {
   });
 });
 
-// ===================== مسارات رفع الصور الشخصية =====================
+// ===================== مسارات رفع الصور الشخصية (معدلة) =====================
 app.post('/api/users/:userId/avatar', upload.single('avatar'), async (req, res) => {
   try {
     const { userId } = req.params;
@@ -290,9 +290,9 @@ app.post('/api/users/:userId/avatar', upload.single('avatar'), async (req, res) 
     
     const avatarUrl = `/uploads/avatars/${optimizedFilename}`;
     
-    // تحديث قاعدة البيانات
+    // تحديث قاعدة البيانات - بدون ::uuid لأن id في app.users هو INTEGER
     const result = await pool.query(
-      `UPDATE app.users SET avatar_url = $1, updated_at = NOW() WHERE id = $2::uuid RETURNING avatar_url`,
+      `UPDATE app.users SET avatar_url = $1, updated_at = NOW() WHERE id = $2 RETURNING avatar_url`,
       [avatarUrl, userId]
     );
     
@@ -317,7 +317,7 @@ app.delete('/api/users/:userId/avatar', async (req, res) => {
     const { userId } = req.params;
     
     const userResult = await pool.query(
-      `SELECT avatar_url FROM app.users WHERE id = $1::uuid`,
+      `SELECT avatar_url FROM app.users WHERE id = $1`,
       [userId]
     );
     
@@ -334,7 +334,7 @@ app.delete('/api/users/:userId/avatar', async (req, res) => {
     }
     
     await pool.query(
-      `UPDATE app.users SET avatar_url = NULL, updated_at = NOW() WHERE id = $1::uuid`,
+      `UPDATE app.users SET avatar_url = NULL, updated_at = NOW() WHERE id = $1`,
       [userId]
     );
     
@@ -351,7 +351,7 @@ app.get('/api/users/:userId', async (req, res) => {
     const result = await pool.query(
       `SELECT id, email, full_name, phone, avatar_url, created_at 
        FROM app.users 
-       WHERE id = $1::uuid`,
+       WHERE id = $1`,
       [userId]
     );
     
@@ -395,7 +395,7 @@ app.put('/api/users/:userId/profile', async (req, res) => {
     updates.push(`updated_at = NOW()`);
     values.push(userId);
     
-    const query = `UPDATE app.users SET ${updates.join(', ')} WHERE id = $${paramIndex}::uuid RETURNING id, full_name, phone, email, avatar_url`;
+    const query = `UPDATE app.users SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING id, full_name, phone, email, avatar_url`;
     
     const result = await pool.query(query, values);
     
@@ -421,7 +421,7 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/support', supportRoutes);
 app.use('/api/upgrade', upgradeRoutes);
 
-// ===================== Route إضافي للمحفظة =====================
+// ===================== Route إضافي للمحفظة (معدل) =====================
 app.get('/api/wallet/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
@@ -452,7 +452,7 @@ app.get('/api/wallet/:userId', async (req, res) => {
   }
 });
 
-// ===================== مسارات البرامج =====================
+// ===================== مسارات البرامج (معدلة) =====================
 
 // ✅ جلب برامج مرشد معين
 app.get('/api/guides/:guideId/programs', async (req, res) => {
@@ -461,11 +461,12 @@ app.get('/api/guides/:guideId/programs', async (req, res) => {
     
     console.log(`📥 Fetching programs for guide: ${guideId}`);
     
+    // ملاحظة: إذا كان guideId من نوع INTEGER في جدول programs، نستخدمه مباشرة بدون ::uuid
     const result = await pool.query(
-      `SELECT p.*, u.name as guide_name
+      `SELECT p.*, u.full_name as guide_name
        FROM programs p
-       LEFT JOIN users u ON p.guide_id = u.id
-       WHERE p.guide_id = $1::uuid
+       LEFT JOIN app.users u ON p.guide_id = u.id
+       WHERE p.guide_id = $1
        ORDER BY p.created_at DESC`,
       [guideId]
     );
@@ -490,15 +491,15 @@ app.get('/api/programs', async (req, res) => {
     const { guide_id } = req.query;
     
     let query = `
-      SELECT p.*, u.name as guide_name
+      SELECT p.*, u.full_name as guide_name
       FROM programs p
-      LEFT JOIN users u ON p.guide_id = u.id
+      LEFT JOIN app.users u ON p.guide_id = u.id
       WHERE 1=1
     `;
     const params = [];
     
     if (guide_id) {
-      query += ` AND p.guide_id = $1::uuid`;
+      query += ` AND p.guide_id = $1`;
       params.push(guide_id);
     }
     
@@ -529,7 +530,7 @@ app.post('/api/programs', async (req, res) => {
     
     const result = await pool.query(
       `INSERT INTO programs (guide_id, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status, created_at)
-       VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
        RETURNING *`,
       [guide_id, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status || 'active']
     );
@@ -635,7 +636,7 @@ app.get('/health', async (req, res) => {
 });
 
 // ============================================
-// 📢 ADMIN NOTIFICATIONS API
+// 📢 ADMIN NOTIFICATIONS API (بدون تغيير، لأنها تستخدم app.admin_notifications)
 // ============================================
 
 async function sendAdminNotification(adminId, type, title, message, relatedId = null, priority = 'normal', actionUrl = null, metadata = {}) {
