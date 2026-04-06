@@ -1,4 +1,3 @@
-// server.js (المعدل)
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -8,12 +7,6 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import pkg from 'pg';
 import jwt from 'jsonwebtoken';
-import multer from 'multer';
-import sharp from 'sharp';
-import path from 'path';
-import fs from 'fs';
-import { fileURLToPath } from 'url';
-
 const { Pool } = pkg;
 
 // استيراد المسارات
@@ -209,43 +202,6 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));
 
-// ===================== إعداد رفع الصور (Multer + Sharp) =====================
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const uploadDir = path.join(__dirname, 'uploads', 'avatars');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const ext = path.extname(file.originalname);
-    cb(null, `avatar_${req.params.userId}_${uniqueSuffix}${ext}`);
-  }
-});
-
-const upload = multer({
-  storage,
-  limits: { fileSize: 2 * 1024 * 1024 }, // 2 MB
-  fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|gif/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
-    if (mimetype && extname) {
-      return cb(null, true);
-    }
-    cb(new Error('نوع الملف غير مدعوم. استخدم JPG, PNG, GIF فقط.'));
-  }
-});
-
-// خدمة الملفات الثابتة (static)
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
 // ===================== Routes الرئيسية =====================
 app.get('/', (req, res) => {
   res.json({ 
@@ -262,156 +218,11 @@ app.get('/', (req, res) => {
       chats: '/api/chats',
       notifications: '/api/notifications',
       support: '/api/support',
-      upgrade: '/api/upgrade',
-      users: '/api/users'
+      upgrade: '/api/upgrade'
     }
   });
 });
 
-// ===================== مسارات رفع الصور الشخصية =====================
-app.post('/api/users/:userId/avatar', upload.single('avatar'), async (req, res) => {
-  try {
-    const { userId } = req.params;
-    
-    if (!req.file) {
-      return res.status(400).json({ success: false, message: 'لم يتم إرسال أي صورة.' });
-    }
-
-    // تحسين الصورة (ضغط وتغيير الحجم)
-    const optimizedFilename = `optimized_${Date.now()}_${userId}.jpg`;
-    const optimizedPath = path.join(uploadDir, optimizedFilename);
-    
-    await sharp(req.file.path)
-      .resize(200, 200, { fit: 'cover' })
-      .jpeg({ quality: 80 })
-      .toFile(optimizedPath);
-    
-    // حذف الملف الأصلي
-    fs.unlinkSync(req.file.path);
-    
-    const avatarUrl = `/uploads/avatars/${optimizedFilename}`;
-    
-    // تحديث قاعدة البيانات
-    const result = await pool.query(
-      `UPDATE app.users SET avatar_url = $1, updated_at = NOW() WHERE id = $2::uuid RETURNING avatar_url`,
-      [avatarUrl, userId]
-    );
-    
-    if (result.rows.length === 0) {
-      fs.unlinkSync(optimizedPath);
-      return res.status(404).json({ success: false, message: 'المستخدم غير موجود.' });
-    }
-    
-    res.json({
-      success: true,
-      message: 'تم رفع الصورة بنجاح',
-      avatarUrl: avatarUrl
-    });
-  } catch (error) {
-    console.error('❌ Error uploading avatar:', error);
-    res.status(500).json({ success: false, message: 'خطأ في الخادم أثناء رفع الصورة.' });
-  }
-});
-
-app.delete('/api/users/:userId/avatar', async (req, res) => {
-  try {
-    const { userId } = req.params;
-    
-    const userResult = await pool.query(
-      `SELECT avatar_url FROM app.users WHERE id = $1::uuid`,
-      [userId]
-    );
-    
-    if (userResult.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'المستخدم غير موجود.' });
-    }
-    
-    const oldAvatarUrl = userResult.rows[0].avatar_url;
-    if (oldAvatarUrl) {
-      const oldPath = path.join(__dirname, oldAvatarUrl);
-      if (fs.existsSync(oldPath)) {
-        fs.unlinkSync(oldPath);
-      }
-    }
-    
-    await pool.query(
-      `UPDATE app.users SET avatar_url = NULL, updated_at = NOW() WHERE id = $1::uuid`,
-      [userId]
-    );
-    
-    res.json({ success: true, message: 'تم حذف الصورة بنجاح' });
-  } catch (error) {
-    console.error('❌ Error deleting avatar:', error);
-    res.status(500).json({ success: false, message: 'خطأ في الخادم أثناء حذف الصورة.' });
-  }
-});
-
-app.get('/api/users/:userId', async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const result = await pool.query(
-      `SELECT id, email, full_name, phone, avatar_url, created_at 
-       FROM app.users 
-       WHERE id = $1::uuid`,
-      [userId]
-    );
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'المستخدم غير موجود.' });
-    }
-    
-    res.json({ success: true, user: result.rows[0] });
-  } catch (error) {
-    console.error('❌ Error fetching user:', error);
-    res.status(500).json({ success: false, message: 'خطأ في الخادم.' });
-  }
-});
-
-app.put('/api/users/:userId/profile', async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const { full_name, phone, email } = req.body;
-    
-    const updates = [];
-    const values = [];
-    let paramIndex = 1;
-    
-    if (full_name !== undefined) {
-      updates.push(`full_name = $${paramIndex++}`);
-      values.push(full_name);
-    }
-    if (phone !== undefined) {
-      updates.push(`phone = $${paramIndex++}`);
-      values.push(phone);
-    }
-    if (email !== undefined) {
-      updates.push(`email = $${paramIndex++}`);
-      values.push(email);
-    }
-    
-    if (updates.length === 0) {
-      return res.status(400).json({ success: false, message: 'لا توجد بيانات للتحديث.' });
-    }
-    
-    updates.push(`updated_at = NOW()`);
-    values.push(userId);
-    
-    const query = `UPDATE app.users SET ${updates.join(', ')} WHERE id = $${paramIndex}::uuid RETURNING id, full_name, phone, email, avatar_url`;
-    
-    const result = await pool.query(query, values);
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'المستخدم غير موجود.' });
-    }
-    
-    res.json({ success: true, user: result.rows[0] });
-  } catch (error) {
-    console.error('❌ Error updating profile:', error);
-    res.status(500).json({ success: false, message: 'خطأ في الخادم.' });
-  }
-});
-
-// ===================== Routes الأصلية =====================
 app.use('/api/auth', authRoutes);
 app.use('/api/guides', guideRoutes);
 app.use('/api/programs', programRoutes);
