@@ -200,82 +200,6 @@ export const api = {
     }
   },
 
-  async getUserProfile(userId) {
-    try {
-      const token = localStorage.getItem('token');
-      
-      const response = await fetch(`${API_BASE_URL}/api/auth/profile/${userId}`, {
-        method: 'GET',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل تحميل الملف الشخصي');
-      }
-
-      return data;
-    } catch (error) {
-      console.error('❌ Get profile error:', error);
-      throw error;
-    }
-  },
-
-  async updateUserProfile(userId, updates) {
-    try {
-      const token = localStorage.getItem('token');
-      
-      const response = await fetch(`${API_BASE_URL}/api/auth/profile/${userId}`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(updates)
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل تحديث الملف الشخصي');
-      }
-
-      return data;
-    } catch (error) {
-      console.error('❌ Update profile error:', error);
-      throw error;
-    }
-  },
-
-  async uploadAvatar(userId, formData) {
-    try {
-      const token = localStorage.getItem('token');
-      
-      const response = await fetch(`${API_BASE_URL}/api/auth/profile/${userId}/avatar`, {
-        method: 'POST',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : ''
-        },
-        body: formData
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل رفع الصورة');
-      }
-
-      return data;
-    } catch (error) {
-      console.error('❌ Upload avatar error:', error);
-      throw error;
-    }
-  },
-
   // ============================================
   // 📱 PHONE VERIFICATION SERVICES - التحقق من الجوال
   // ============================================
@@ -623,7 +547,7 @@ export const api = {
   // 👤 USER PROFILE SERVICES - خدمات الملف الشخصي (بعد الإصلاح)
   // ============================================
 
-  // ✅ رفع الصورة الشخصية - المسار الصحيح
+  // ✅ رفع الصورة الشخصية - المسار الصحيح مع تحويل الرابط إلى مطلق
   async uploadAvatar(userId, formData) {
     try {
       const token = localStorage.getItem('token');
@@ -643,6 +567,11 @@ export const api = {
       
       if (!response.ok) {
         throw new Error(data.message || 'فشل رفع الصورة');
+      }
+
+      // ✅ تحويل الرابط النسبي إلى رابط كامل
+      if (data.avatarUrl && !data.avatarUrl.startsWith('http')) {
+        data.avatarUrl = `${API_BASE_URL}${data.avatarUrl}`;
       }
 
       return data;
@@ -740,39 +669,6 @@ export const api = {
     }
   },
 
-  // ============================================
-  // 🔧 GENERIC HTTP METHODS - دوال عامة
-  // ============================================
-
-  async get(url, params = {}) {
-    try {
-      const token = localStorage.getItem('token');
-      const queryParams = new URLSearchParams(params).toString();
-      const fullUrl = `${API_BASE_URL}${url}${queryParams ? `?${queryParams}` : ''}`;
-      
-      console.log('📤 GET request to:', fullUrl);
-      
-      const response = await fetch(fullUrl, {
-        method: 'GET',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.message || `فشل الطلب (${response.status})`);
-      }
-
-      return { data };
-    } catch (error) {
-      console.error('❌ GET request error:', error);
-      throw error;
-    }
-  },
-  
   // ============================================
   // 🔧 GENERIC HTTP METHODS - دوال عامة
   // ============================================
@@ -2052,7 +1948,6 @@ export const api = {
         method: 'POST',
         headers: {
           'Authorization': token ? `Bearer ${token}` : ''
-          // لا نضيف Content-Type لأن fetch سيتعامل مع FormData تلقائياً
         },
         body: formData
       });
