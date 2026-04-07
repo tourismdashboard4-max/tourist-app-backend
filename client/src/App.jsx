@@ -2484,7 +2484,7 @@ function EventsPage({ lang }) {
   );
 }
 
-// ===================== 👤 Profile Page (معدلة مع إصلاح زر التعديل وإضافة التحقق من الجوال والإشعارات) =====================
+// ===================== 👤 Profile Page (معدلة مع إصلاح الصورة الشخصية وزر التعديل والتحقق من الجوال والإشعارات) =====================
 function ProfilePage({ lang, user, setPage, setShowLogin, onLogout }) {
   const t = (k) => LOCALES[lang][k] || k;
   
@@ -2565,7 +2565,6 @@ function ProfilePage({ lang, user, setPage, setShowLogin, onLogout }) {
     setTempPhone(phoneNumber);
 
     try {
-      // إرسال طلب التحقق إلى API
       const response = await api.sendPhoneVerification(userData.id, phoneNumber);
       
       if (response.success) {
@@ -2648,29 +2647,44 @@ function ProfilePage({ lang, user, setPage, setShowLogin, onLogout }) {
         localStorage.setItem('touristAppUser', JSON.stringify(updatedUser));
         setUserData(updatedUser);
         setIsEditing(false);
-        alert('✅ تم تحديث الاسم بنجاح');
+        alert(lang === 'ar' ? '✅ تم تحديث الاسم بنجاح' : '✅ Name updated successfully');
       }
     } catch (error) {
       console.error('Error updating profile:', error);
-      alert('❌ فشل تحديث الملف الشخصي');
+      alert(lang === 'ar' ? '❌ فشل تحديث الملف الشخصي' : '❌ Failed to update profile');
     } finally {
       setSaveLoading(false);
     }
   };
 
+  // دالة تغيير الصورة الشخصية (تم إصلاحها)
   const handleAvatarChange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
+    // التحقق من حجم الصورة
     if (file.size > 2 * 1024 * 1024) {
-      alert('حجم الصورة كبير جداً. الرجاء اختيار صورة أقل من 2 ميجابايت');
+      alert(lang === 'ar' 
+        ? '⚠️ حجم الصورة كبير جداً. الرجاء اختيار صورة أقل من 2 ميجابايت'
+        : '⚠️ Image size too large. Please choose an image less than 2MB');
       return;
     }
 
+    // التحقق من نوع الملف
     if (!file.type.startsWith('image/')) {
-      alert('الرجاء اختيار صورة فقط');
+      alert(lang === 'ar' 
+        ? '⚠️ الرجاء اختيار صورة فقط'
+        : '⚠️ Please select an image only');
       return;
     }
+
+    // إنشاء معاينة للصورة
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      // يمكنك عرض المعاينة إذا أردت
+      console.log('Preview ready');
+    };
+    reader.readAsDataURL(file);
 
     const formData = new FormData();
     formData.append('avatar', file);
@@ -2679,14 +2693,54 @@ function ProfilePage({ lang, user, setPage, setShowLogin, onLogout }) {
     try {
       const response = await api.uploadAvatar(userData.id, formData);
       if (response.success) {
-        const updatedUser = { ...userData, avatar: response.avatar };
+        const updatedUser = { 
+          ...userData, 
+          avatar: response.avatar || response.data?.avatar 
+        };
         localStorage.setItem('touristAppUser', JSON.stringify(updatedUser));
         setUserData(updatedUser);
-        alert('✅ تم تحديث الصورة بنجاح');
+        alert(lang === 'ar' 
+          ? '✅ تم تحديث الصورة بنجاح'
+          : '✅ Profile picture updated successfully');
+      } else {
+        throw new Error(response.message || 'Upload failed');
       }
     } catch (error) {
       console.error('Error uploading avatar:', error);
-      alert('❌ فشل تحديث الصورة');
+      alert(lang === 'ar' 
+        ? '❌ فشل تحديث الصورة. الرجاء المحاولة مرة أخرى'
+        : '❌ Failed to update profile picture. Please try again');
+    } finally {
+      setLoading(false);
+      // مسح قيمة input للسماح برفع نفس الصورة مرة أخرى
+      e.target.value = '';
+    }
+  };
+
+  // دالة حذف الصورة الشخصية (إضافة جديدة)
+  const handleDeleteAvatar = async () => {
+    if (!confirm(lang === 'ar' 
+      ? '⚠️ هل أنت متأكد من حذف الصورة الشخصية؟'
+      : '⚠️ Are you sure you want to delete your profile picture?')) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await api.deleteAvatar(userData.id);
+      if (response.success) {
+        const updatedUser = { ...userData, avatar: null };
+        localStorage.setItem('touristAppUser', JSON.stringify(updatedUser));
+        setUserData(updatedUser);
+        alert(lang === 'ar'
+          ? '✅ تم حذف الصورة الشخصية بنجاح'
+          : '✅ Profile picture deleted successfully');
+      }
+    } catch (error) {
+      console.error('Error deleting avatar:', error);
+      alert(lang === 'ar'
+        ? '❌ فشل حذف الصورة'
+        : '❌ Failed to delete profile picture');
     } finally {
       setLoading(false);
     }
@@ -2712,13 +2766,12 @@ function ProfilePage({ lang, user, setPage, setShowLogin, onLogout }) {
     setPage('settings');
   };
 
-  // ✅ تم تعديل هذه الدالة - الآن تنتقل لصفحة الإشعارات بدلاً من التنبيه
   const navigateToNotifications = () => {
     setPage('notifications');
   };
 
   const navigateToMyTrips = () => {
-    alert('📅 صفحة رحلاتي - قيد التطوير');
+    alert(lang === 'ar' ? '📅 صفحة رحلاتي - قيد التطوير' : '📅 My Trips page - Under development');
   };
 
   // عرض الملف الشخصي كامل
@@ -2726,7 +2779,7 @@ function ProfilePage({ lang, user, setPage, setShowLogin, onLogout }) {
     <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg overflow-hidden mb-4">
       {/* رأس الملف الشخصي مع زر إغلاق */}
       <div className="bg-gradient-to-r from-green-500 to-emerald-600 p-4 flex items-center justify-between">
-        <h3 className="text-white font-bold text-lg">الملف الشخصي</h3>
+        <h3 className="text-white font-bold text-lg">{lang === 'ar' ? 'الملف الشخصي' : 'Profile'}</h3>
         <button 
           onClick={toggleProfileContent}
           className="text-white/80 hover:text-white transition"
@@ -2736,34 +2789,55 @@ function ProfilePage({ lang, user, setPage, setShowLogin, onLogout }) {
       </div>
       
       <div className="p-5">
-        {/* الصورة الشخصية والاسم */}
+        {/* الصورة الشخصية والاسم - تم إصلاحها مع إضافة زر الحذف */}
         <div className="flex items-center gap-4 mb-4">
-          <div className="relative">
+          <div className="relative group">
             <div className="w-20 h-20 rounded-full bg-gradient-to-br from-green-400 to-emerald-500 flex items-center justify-center text-white text-2xl font-bold border-4 border-white dark:border-gray-800 shadow-md overflow-hidden">
               {userData.avatar ? (
                 <img 
                   src={userData.avatar} 
                   alt={userData.fullName} 
                   className="w-full h-full object-cover"
+                  onError={(e) => {
+                    e.target.onerror = null;
+                    e.target.style.display = 'none';
+                    if (e.target.parentElement) {
+                      e.target.parentElement.innerHTML = userData.fullName?.charAt(0) || 'U';
+                    }
+                  }}
                 />
               ) : (
                 userData.fullName?.charAt(0) || 'U'
               )}
             </div>
             
+            {/* زر تغيير الصورة */}
             <button 
               onClick={() => document.getElementById('avatar-upload').click()}
               className="absolute -bottom-1 -right-1 bg-green-600 text-white p-1.5 rounded-full hover:bg-green-700 transition shadow-md"
               disabled={loading}
+              title={lang === 'ar' ? 'تغيير الصورة' : 'Change picture'}
             >
               <Camera size={14} />
             </button>
+            
+            {/* زر حذف الصورة - يظهر فقط عند وجود صورة */}
+            {userData.avatar && (
+              <button 
+                onClick={handleDeleteAvatar}
+                className="absolute -top-1 -right-1 bg-red-500 text-white p-1 rounded-full hover:bg-red-600 transition shadow-md text-xs w-6 h-6 flex items-center justify-center"
+                disabled={loading}
+                title={lang === 'ar' ? 'حذف الصورة' : 'Delete picture'}
+              >
+                ✕
+              </button>
+            )}
             
             <input 
               type="file" 
               id="avatar-upload" 
               className="hidden" 
-              accept="image/*"
+              accept="image/jpeg,image/png,image/jpg,image/gif,image/webp"
               onChange={handleAvatarChange}
             />
           </div>
@@ -2773,10 +2847,21 @@ function ProfilePage({ lang, user, setPage, setShowLogin, onLogout }) {
               {userData.fullName}
             </h4>
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              عضو منذ {new Date(userData.createdAt).toLocaleDateString('ar-SA')}
+              {lang === 'ar' ? 'عضو منذ ' : 'Member since '}
+              {new Date(userData.createdAt).toLocaleDateString(lang === 'ar' ? 'ar-SA' : 'en-US')}
             </p>
           </div>
         </div>
+
+        {/* مؤشر التحميل */}
+        {loading && (
+          <div className="mb-4 p-2 bg-blue-50 dark:bg-blue-900/20 rounded-lg text-center">
+            <div className="inline-flex items-center gap-2 text-blue-600 dark:text-blue-400">
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+              <span className="text-sm">{lang === 'ar' ? 'جاري المعالجة...' : 'Processing...'}</span>
+            </div>
+          </div>
+        )}
 
         {/* معلومات الاتصال */}
         <div className="space-y-3 border-t border-gray-100 dark:border-gray-700 pt-4 mb-4">
@@ -2785,7 +2870,7 @@ function ProfilePage({ lang, user, setPage, setShowLogin, onLogout }) {
               <Mail size={16} className="text-green-600 dark:text-green-400" />
             </div>
             <div className="flex-1">
-              <p className="text-xs text-gray-500 dark:text-gray-400">البريد الإلكتروني</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">{lang === 'ar' ? 'البريد الإلكتروني' : 'Email'}</p>
               <p className="text-sm font-medium text-gray-800 dark:text-white">{userData.email}</p>
             </div>
           </div>
@@ -2796,14 +2881,14 @@ function ProfilePage({ lang, user, setPage, setShowLogin, onLogout }) {
               <Phone size={16} className="text-green-600 dark:text-green-400" />
             </div>
             <div className="flex-1">
-              <p className="text-xs text-gray-500 dark:text-gray-400">رقم الجوال</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">{lang === 'ar' ? 'رقم الجوال' : 'Phone Number'}</p>
               <div className="flex items-center justify-between">
                 <p className="text-sm font-medium text-gray-800 dark:text-white">
-                  {userData.phone || 'غير مضاف'}
+                  {userData.phone || (lang === 'ar' ? 'غير مضاف' : 'Not added')}
                 </p>
                 {userData.phone && userData.phoneVerified && (
                   <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full">
-                    ✓ موثق
+                    ✓ {lang === 'ar' ? 'موثق' : 'Verified'}
                   </span>
                 )}
               </div>
@@ -2817,13 +2902,13 @@ function ProfilePage({ lang, user, setPage, setShowLogin, onLogout }) {
           className="w-full py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition flex items-center justify-center gap-2 text-sm font-medium"
         >
           <Edit2 size={18} />
-          {isEditing ? 'إلغاء' : 'تعديل الملف الشخصي'}
+          {isEditing ? (lang === 'ar' ? 'إلغاء' : 'Cancel') : (lang === 'ar' ? 'تعديل الملف الشخصي' : 'Edit Profile')}
         </button>
 
         {/* واجهة التعديل مع التحقق من رقم الجوال */}
         {isEditing && (
           <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg space-y-3 border border-green-200 dark:border-green-800">
-            <h4 className="font-medium text-gray-700 dark:text-gray-300 mb-2">تعديل البيانات</h4>
+            <h4 className="font-medium text-gray-700 dark:text-gray-300 mb-2">{lang === 'ar' ? 'تعديل البيانات' : 'Edit Data'}</h4>
             
             {/* تعديل الاسم */}
             <input
@@ -2831,7 +2916,7 @@ function ProfilePage({ lang, user, setPage, setShowLogin, onLogout }) {
               name="fullName"
               value={editData.fullName}
               onChange={handleInputChange}
-              placeholder="الاسم الكامل"
+              placeholder={lang === 'ar' ? 'الاسم الكامل' : 'Full Name'}
               className="w-full p-3 border rounded-lg dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent"
             />
             
@@ -2843,7 +2928,7 @@ function ProfilePage({ lang, user, setPage, setShowLogin, onLogout }) {
                   name="phone"
                   value={editData.phone}
                   onChange={handleInputChange}
-                  placeholder="رقم الجوال (مثال: 05xxxxxxxx)"
+                  placeholder={lang === 'ar' ? 'رقم الجوال (مثال: 05xxxxxxxx)' : 'Phone Number (e.g., 05xxxxxxxx)'}
                   className="flex-1 p-3 border rounded-lg dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent"
                   dir="ltr"
                 />
@@ -2854,7 +2939,7 @@ function ProfilePage({ lang, user, setPage, setShowLogin, onLogout }) {
                     disabled={phoneVerificationStep === 'sending' || phoneVerificationStep === 'verifying'}
                     className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50 whitespace-nowrap"
                   >
-                    {phoneVerificationStep === 'sending' ? 'جاري الإرسال...' : 'تحقق'}
+                    {phoneVerificationStep === 'sending' ? (lang === 'ar' ? 'جاري الإرسال...' : 'Sending...') : (lang === 'ar' ? 'تحقق' : 'Verify')}
                   </button>
                 )}
               </div>
@@ -2863,14 +2948,14 @@ function ProfilePage({ lang, user, setPage, setShowLogin, onLogout }) {
               {showVerificationInput && (
                 <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
                   <p className="text-sm text-gray-700 dark:text-gray-300 mb-2">
-                    تم إرسال رمز التحقق إلى {tempPhone}
+                    {lang === 'ar' ? `تم إرسال رمز التحقق إلى ${tempPhone}` : `Verification code sent to ${tempPhone}`}
                   </p>
                   <div className="flex gap-2">
                     <input
                       type="text"
                       value={verificationCode}
                       onChange={(e) => setVerificationCode(e.target.value)}
-                      placeholder="أدخل رمز التحقق"
+                      placeholder={lang === 'ar' ? 'أدخل رمز التحقق' : 'Enter verification code'}
                       className="flex-1 p-2 border rounded-lg dark:bg-gray-700 dark:text-white text-center"
                       maxLength="6"
                     />
@@ -2879,7 +2964,7 @@ function ProfilePage({ lang, user, setPage, setShowLogin, onLogout }) {
                       disabled={phoneVerificationStep === 'verifying'}
                       className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition disabled:opacity-50"
                     >
-                      {phoneVerificationStep === 'verifying' ? '...' : 'تأكيد'}
+                      {phoneVerificationStep === 'verifying' ? '...' : (lang === 'ar' ? 'تأكيد' : 'Confirm')}
                     </button>
                   </div>
                   
@@ -2891,8 +2976,8 @@ function ProfilePage({ lang, user, setPage, setShowLogin, onLogout }) {
                       className="text-sm text-blue-600 hover:underline disabled:text-gray-400 disabled:no-underline"
                     >
                       {countdown > 0 
-                        ? `إعادة الإرسال بعد ${countdown} ثانية` 
-                        : 'إعادة إرسال الرمز'}
+                        ? (lang === 'ar' ? `إعادة الإرسال بعد ${countdown} ثانية` : `Resend in ${countdown} seconds`)
+                        : (lang === 'ar' ? 'إعادة إرسال الرمز' : 'Resend code')}
                     </button>
                   </div>
                 </div>
@@ -2905,7 +2990,7 @@ function ProfilePage({ lang, user, setPage, setShowLogin, onLogout }) {
               disabled={saveLoading}
               className="w-full py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition disabled:opacity-50 font-medium"
             >
-              {saveLoading ? 'جاري الحفظ...' : 'حفظ الاسم'}
+              {saveLoading ? (lang === 'ar' ? 'جاري الحفظ...' : 'Saving...') : (lang === 'ar' ? 'حفظ الاسم' : 'Save Name')}
             </button>
           </div>
         )}
@@ -2923,8 +3008,8 @@ function ProfilePage({ lang, user, setPage, setShowLogin, onLogout }) {
               <User size={32} />
             </div>
             <div>
-              <h1 className="text-xl font-bold">زائر</h1>
-              <p className="text-white/80">مستكشف</p>
+              <h1 className="text-xl font-bold">{lang === 'ar' ? 'زائر' : 'Guest'}</h1>
+              <p className="text-white/80">{lang === 'ar' ? 'مستكشف' : 'Explorer'}</p>
             </div>
           </div>
         </div>
@@ -2933,7 +3018,7 @@ function ProfilePage({ lang, user, setPage, setShowLogin, onLogout }) {
             onClick={() => setShowLogin(true)}
             className="w-full py-3 bg-green-600 text-white rounded-xl font-medium hover:bg-green-700 transition"
           >
-            تسجيل الدخول
+            {lang === 'ar' ? 'تسجيل الدخول' : 'Login'}
           </button>
         </div>
       </div>
@@ -2945,8 +3030,8 @@ function ProfilePage({ lang, user, setPage, setShowLogin, onLogout }) {
     <div className="h-full overflow-y-auto bg-gray-50 dark:bg-gray-900 pb-20">
       {/* رأس الصفحة مع اسم المستخدم */}
       <div className="bg-gradient-to-b from-green-500 to-emerald-600 p-6 text-white">
-        <h1 className="text-2xl font-bold">مرحباً، {userData.fullName?.split(' ')[0]}</h1>
-        <p className="text-white/80 mt-1">استعرض وأدر حسابك من هنا</p>
+        <h1 className="text-2xl font-bold">{lang === 'ar' ? `مرحباً، ${userData.fullName?.split(' ')[0]}` : `Welcome, ${userData.fullName?.split(' ')[0]}`}</h1>
+        <p className="text-white/80 mt-1">{lang === 'ar' ? 'استعرض وأدر حسابك من هنا' : 'View and manage your account here'}</p>
       </div>
 
       <div className="p-4">
@@ -2960,7 +3045,7 @@ function ProfilePage({ lang, user, setPage, setShowLogin, onLogout }) {
             <div className="w-12 h-12 rounded-full bg-gradient-to-br from-green-400 to-emerald-500 flex items-center justify-center">
               <User size={24} className="text-white" />
             </div>
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">الملف الشخصي</span>
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{lang === 'ar' ? 'الملف الشخصي' : 'Profile'}</span>
           </button>
 
           {/* أيقونة رحلاتي */}
@@ -2971,10 +3056,10 @@ function ProfilePage({ lang, user, setPage, setShowLogin, onLogout }) {
             <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center">
               <Package size={24} className="text-white" />
             </div>
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">رحلاتي</span>
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{lang === 'ar' ? 'رحلاتي' : 'My Trips'}</span>
           </button>
 
-          {/* ✅ أيقونة الإشعارات - الآن تعمل بشكل صحيح */}
+          {/* أيقونة الإشعارات */}
           <button
             onClick={navigateToNotifications}
             className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-md hover:shadow-lg transition-all flex flex-col items-center gap-2 hover:scale-105"
@@ -2982,7 +3067,7 @@ function ProfilePage({ lang, user, setPage, setShowLogin, onLogout }) {
             <div className="w-12 h-12 rounded-full bg-gradient-to-br from-yellow-400 to-orange-500 flex items-center justify-center">
               <Bell size={24} className="text-white" />
             </div>
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">الإشعارات</span>
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{lang === 'ar' ? 'الإشعارات' : 'Notifications'}</span>
           </button>
 
           {/* أيقونة الإعدادات */}
@@ -2993,7 +3078,7 @@ function ProfilePage({ lang, user, setPage, setShowLogin, onLogout }) {
             <div className="w-12 h-12 rounded-full bg-gradient-to-br from-purple-400 to-pink-500 flex items-center justify-center">
               <Settings size={24} className="text-white" />
             </div>
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">الإعدادات</span>
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{lang === 'ar' ? 'الإعدادات' : 'Settings'}</span>
           </button>
         </div>
 
@@ -3001,19 +3086,18 @@ function ProfilePage({ lang, user, setPage, setShowLogin, onLogout }) {
         {showProfileContent && renderProfileContent()}
 
         {/* قسم المساعدة والدعم */}
-          <div className="bg-white dark:bg-gray-800 rounded-xl p-5 shadow-md mb-4">
-            <h3 className="font-bold text-gray-800 dark:text-white mb-3">المساعدة والدعم</h3>
-             <div className="space-y-2">
-             {/* ✅ زر الأسئلة الشائعة فقط - تم إزالة زر الدعم */}
+        <div className="bg-white dark:bg-gray-800 rounded-xl p-5 shadow-md mb-4">
+          <h3 className="font-bold text-gray-800 dark:text-white mb-3">{lang === 'ar' ? 'المساعدة والدعم' : 'Help & Support'}</h3>
+          <div className="space-y-2">
             <button className="flex items-center justify-between w-full p-3 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg transition">
-           <span className="text-gray-700 dark:text-gray-300 flex items-center gap-3">
-          <FileText size={18} className="text-purple-600" />
-         الأسئلة الشائعة
-       </span>
-      <span className="text-gray-400">‹</span>
-    </button>
-  </div>
-</div>
+              <span className="text-gray-700 dark:text-gray-300 flex items-center gap-3">
+                <FileText size={18} className="text-purple-600" />
+                {lang === 'ar' ? 'الأسئلة الشائعة' : 'FAQ'}
+              </span>
+              <span className="text-gray-400">‹</span>
+            </button>
+          </div>
+        </div>
 
         {/* زر تسجيل الخروج */}
         <button 
@@ -3021,14 +3105,12 @@ function ProfilePage({ lang, user, setPage, setShowLogin, onLogout }) {
           className="w-full py-3 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-xl font-medium hover:bg-red-100 dark:hover:bg-red-900/30 transition flex items-center justify-center gap-2"
         >
           <LogOut size={18} />
-          تسجيل الخروج
+          {lang === 'ar' ? 'تسجيل الخروج' : 'Logout'}
         </button>
       </div>
     </div>
   );
-}
-
-// ===================== ⚙️ Settings Page =====================
+}// ===================== ⚙️ Settings Page =====================
 function SettingsPage({ lang, dark, setDark, setLang, setPage, locationEnabled, setLocationEnabled }) {
   const t = (k) => LOCALES[lang][k] || k;
   
