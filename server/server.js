@@ -39,9 +39,9 @@ const PORT = process.env.PORT || 5002;
 const io = new Server(server, {
   cors: {
     origin: [
-      'http://localhost:5173', 
-      'http://localhost:5174', 
-      'http://localhost:5175', 
+      'http://localhost:5173',
+      'http://localhost:5174',
+      'http://localhost:5175',
       'http://localhost:5176',
       'http://localhost:5177',
       'http://localhost:5178',
@@ -125,14 +125,23 @@ poolConfig = {
 
 pool = new Pool(poolConfig);
 
+// ✅ دالة مساعدة لتحويل المعرف الرقمي إلى UUID باستخدام عمود old_id في public.users
+async function getUUIDFromNumericId(numericId) {
+  const result = await pool.query(
+    'SELECT id FROM public.users WHERE old_id = $1',
+    [parseInt(numericId)]
+  );
+  return result.rows[0]?.id;
+}
+
 // اختبار الاتصال بقاعدة البيانات السحابية
 const connectDB = async () => {
   try {
     const client = await pool.connect();
-    
+
     const hostMatch = process.env.DATABASE_URL.match(/@([^:]+)/);
     const host = hostMatch ? hostMatch[1] : 'supabase.co';
-    
+
     console.log(`
     ╔══════════════════════════════════════════╗
     ║   ✅ Supabase PostgreSQL Connected       ║
@@ -144,7 +153,7 @@ const connectDB = async () => {
     ║  Pool Size: 20                           ║
     ╚══════════════════════════════════════════╝
     `);
-    
+
     client.release();
 
     pool.on('error', (err) => {
@@ -169,13 +178,13 @@ const connectDB = async () => {
     ║  Time: ${new Date().toLocaleString().padEnd(30)}║
     ╚══════════════════════════════════════════╝
     `);
-    
+
     if (process.env.DATABASE_URL) {
       console.error('⚠️ Please check that DATABASE_URL is correct');
       console.error('🔑 Make sure your password is correct');
       console.error('🌐 Verify that your Supabase project is active');
     }
-    
+
     return false;
   }
 };
@@ -187,9 +196,9 @@ app.use(helmet({
 
 app.use(cors({
   origin: [
-    'http://localhost:5173', 
-      'http://localhost:5174', 
-      'http://localhost:5175', 
+    'http://localhost:5173',
+      'http://localhost:5174',
+      'http://localhost:5175',
       'http://localhost:5176',
       'http://localhost:5177',
       'http://localhost:5178',
@@ -247,8 +256,8 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // ===================== Routes الرئيسية =====================
 app.get('/', (req, res) => {
-  res.json({ 
-    success: true, 
+  res.json({
+    success: true,
     message: 'Tourist App API is running on Supabase Cloud',
     docs: '/api/test',
     health: '/health',
@@ -271,7 +280,7 @@ app.get('/', (req, res) => {
 app.post('/api/users/:userId/avatar', upload.single('avatar'), async (req, res) => {
   try {
     const { userId } = req.params;
-    
+
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'لم يتم إرسال أي صورة.' });
     }
@@ -279,28 +288,28 @@ app.post('/api/users/:userId/avatar', upload.single('avatar'), async (req, res) 
     // تحسين الصورة (ضغط وتغيير الحجم)
     const optimizedFilename = `optimized_${Date.now()}_${userId}.jpg`;
     const optimizedPath = path.join(uploadDir, optimizedFilename);
-    
+
     await sharp(req.file.path)
       .resize(200, 200, { fit: 'cover' })
       .jpeg({ quality: 80 })
       .toFile(optimizedPath);
-    
+
     // حذف الملف الأصلي
     fs.unlinkSync(req.file.path);
-    
+
     const avatarUrl = `/uploads/avatars/${optimizedFilename}`;
-    
+
     // تحديث قاعدة البيانات - بدون ::uuid لأن id في app.users هو INTEGER
     const result = await pool.query(
       `UPDATE app.users SET avatar_url = $1, updated_at = NOW() WHERE id = $2 RETURNING avatar_url`,
       [avatarUrl, userId]
     );
-    
+
     if (result.rows.length === 0) {
       fs.unlinkSync(optimizedPath);
       return res.status(404).json({ success: false, message: 'المستخدم غير موجود.' });
     }
-    
+
     res.json({
       success: true,
       message: 'تم رفع الصورة بنجاح',
@@ -315,16 +324,16 @@ app.post('/api/users/:userId/avatar', upload.single('avatar'), async (req, res) 
 app.delete('/api/users/:userId/avatar', async (req, res) => {
   try {
     const { userId } = req.params;
-    
+
     const userResult = await pool.query(
       `SELECT avatar_url FROM app.users WHERE id = $1`,
       [userId]
     );
-    
+
     if (userResult.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'المستخدم غير موجود.' });
     }
-    
+
     const oldAvatarUrl = userResult.rows[0].avatar_url;
     if (oldAvatarUrl) {
       const oldPath = path.join(__dirname, oldAvatarUrl);
@@ -332,12 +341,12 @@ app.delete('/api/users/:userId/avatar', async (req, res) => {
         fs.unlinkSync(oldPath);
       }
     }
-    
+
     await pool.query(
       `UPDATE app.users SET avatar_url = NULL, updated_at = NOW() WHERE id = $1`,
       [userId]
     );
-    
+
     res.json({ success: true, message: 'تم حذف الصورة بنجاح' });
   } catch (error) {
     console.error('❌ Error deleting avatar:', error);
@@ -349,16 +358,16 @@ app.get('/api/users/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
     const result = await pool.query(
-      `SELECT id, email, full_name, phone, avatar_url, created_at 
-       FROM app.users 
+      `SELECT id, email, full_name, phone, avatar_url, created_at
+       FROM app.users
        WHERE id = $1`,
       [userId]
     );
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'المستخدم غير موجود.' });
     }
-    
+
     res.json({ success: true, user: result.rows[0] });
   } catch (error) {
     console.error('❌ Error fetching user:', error);
@@ -370,11 +379,11 @@ app.put('/api/users/:userId/profile', async (req, res) => {
   try {
     const { userId } = req.params;
     const { full_name, phone, email } = req.body;
-    
+
     const updates = [];
     const values = [];
     let paramIndex = 1;
-    
+
     if (full_name !== undefined) {
       updates.push(`full_name = $${paramIndex++}`);
       values.push(full_name);
@@ -387,22 +396,22 @@ app.put('/api/users/:userId/profile', async (req, res) => {
       updates.push(`email = $${paramIndex++}`);
       values.push(email);
     }
-    
+
     if (updates.length === 0) {
       return res.status(400).json({ success: false, message: 'لا توجد بيانات للتحديث.' });
     }
-    
+
     updates.push(`updated_at = NOW()`);
     values.push(userId);
-    
+
     const query = `UPDATE app.users SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING id, full_name, phone, email, avatar_url`;
-    
+
     const result = await pool.query(query, values);
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'المستخدم غير موجود.' });
     }
-    
+
     res.json({ success: true, user: result.rows[0] });
   } catch (error) {
     console.error('❌ Error updating profile:', error);
@@ -426,42 +435,50 @@ app.get('/api/wallet/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
     console.log(`📥 Fetching wallet for user: ${userId}`);
-    
+
     const result = await pool.query(
       'SELECT * FROM app.wallets WHERE user_id = $1',
       [userId]
     );
-    
+
     if (result.rows.length === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Wallet not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Wallet not found'
       });
     }
-    
-    res.json({ 
-      success: true, 
-      wallet: result.rows[0] 
+
+    res.json({
+      success: true,
+      wallet: result.rows[0]
     });
   } catch (error) {
     console.error('❌ Error fetching wallet:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error' 
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
     });
   }
 });
 
-// ===================== مسارات البرامج (معدلة) =====================
+// ===================== مسارات البرامج (معدلة بالكامل لتدعم تحويل integer إلى UUID) =====================
 
-// ✅ جلب برامج مرشد معين
+// ✅ جلب برامج مرشد معين (يدعم المعرف الرقمي أو UUID)
 app.get('/api/guides/:guideId/programs', async (req, res) => {
   try {
-    const { guideId } = req.params;
-    
+    let guideId = req.params.guideId;
+
+    // إذا كان guideId رقماً، نحوله إلى UUID الحقيقي
+    if (/^\d+$/.test(guideId)) {
+      const realId = await getUUIDFromNumericId(guideId);
+      if (!realId) {
+        return res.status(404).json({ success: false, message: 'المرشد غير موجود' });
+      }
+      guideId = realId;
+    }
+
     console.log(`📥 Fetching programs for guide: ${guideId}`);
-    
-    // ملاحظة: إذا كان guideId من نوع INTEGER في جدول programs، نستخدمه مباشرة بدون ::uuid
+
     const result = await pool.query(
       `SELECT p.*, u.full_name as guide_name
        FROM programs p
@@ -470,26 +487,26 @@ app.get('/api/guides/:guideId/programs', async (req, res) => {
        ORDER BY p.created_at DESC`,
       [guideId]
     );
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       programs: result.rows,
       count: result.rows.length
     });
   } catch (error) {
     console.error('❌ Error fetching guide programs:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
+    res.status(500).json({
+      success: false,
+      message: error.message
     });
   }
 });
 
-// ✅ جلب جميع البرامج (مع فلتر حسب المرشد)
+// ✅ جلب جميع البرامج (مع فلتر حسب المرشد، يدعم المعرف الرقمي)
 app.get('/api/programs', async (req, res) => {
   try {
-    const { guide_id } = req.query;
-    
+    let { guide_id } = req.query;
+
     let query = `
       SELECT p.*, u.full_name as guide_name
       FROM programs p
@@ -497,54 +514,73 @@ app.get('/api/programs', async (req, res) => {
       WHERE 1=1
     `;
     const params = [];
-    
+    let paramIndex = 1;
+
     if (guide_id) {
-      query += ` AND p.guide_id = $1`;
-      params.push(guide_id);
+      // إذا كان guide_id رقماً، نحوله إلى UUID
+      let realGuideId = guide_id;
+      if (/^\d+$/.test(guide_id)) {
+        const realId = await getUUIDFromNumericId(guide_id);
+        if (realId) realGuideId = realId;
+        else return res.status(404).json({ success: false, message: 'Guide not found' });
+      }
+      query += ` AND p.guide_id = $${paramIndex}`;
+      params.push(realGuideId);
+      paramIndex++;
     }
-    
+
     query += ` ORDER BY p.created_at DESC`;
-    
+
     const result = await pool.query(query, params);
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       programs: result.rows,
       count: result.rows.length
     });
   } catch (error) {
     console.error('❌ Error fetching programs:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
+    res.status(500).json({
+      success: false,
+      message: error.message
     });
   }
 });
 
-// ✅ إضافة برنامج جديد
+// ✅ إضافة برنامج جديد (يدعم guide_id رقماً)
 app.post('/api/programs', async (req, res) => {
   try {
-    const { guide_id, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status } = req.body;
-    
-    console.log(`📤 Adding new program for guide: ${guide_id}`);
-    
+    let { guide_id, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status } = req.body;
+
+    // تحويل guide_id إذا كان رقماً
+    let realGuideId = guide_id;
+    if (/^\d+$/.test(String(guide_id))) {
+      const realId = await getUUIDFromNumericId(guide_id);
+      if (!realId) {
+        return res.status(404).json({ success: false, message: 'المرشد غير موجود' });
+      }
+      realGuideId = realId;
+    }
+
+    console.log(`📤 Adding new program for guide: ${realGuideId}`);
+
     const result = await pool.query(
       `INSERT INTO programs (guide_id, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status, created_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
        RETURNING *`,
-      [guide_id, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status || 'active']
+      [realGuideId, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status || 'active']
     );
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       program: result.rows[0],
       message: 'Program added successfully'
     });
   } catch (error) {
     console.error('❌ Error adding program:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
+    res.status(500).json({
+      success: false,
+      message: error.message
     });
   }
 });
@@ -553,16 +589,16 @@ app.post('/api/programs', async (req, res) => {
 app.delete('/api/programs/:programId', async (req, res) => {
   try {
     const { programId } = req.params;
-    
+
     const result = await pool.query(
       `DELETE FROM programs WHERE id = $1 RETURNING *`,
       [programId]
     );
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Program not found' });
     }
-    
+
     res.json({ success: true, message: 'Program deleted successfully' });
   } catch (error) {
     console.error('❌ Error deleting program:', error);
@@ -575,16 +611,16 @@ app.patch('/api/programs/:programId/status', async (req, res) => {
   try {
     const { programId } = req.params;
     const { status } = req.body;
-    
+
     const result = await pool.query(
       `UPDATE programs SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
       [status, programId]
     );
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Program not found' });
     }
-    
+
     res.json({ success: true, program: result.rows[0] });
   } catch (error) {
     console.error('❌ Error updating program status:', error);
@@ -594,8 +630,8 @@ app.patch('/api/programs/:programId/status', async (req, res) => {
 
 // ===================== Test route =====================
 app.get('/api/test', (req, res) => {
-  res.json({ 
-    success: true, 
+  res.json({
+    success: true,
     message: '✅ Server is working with Supabase PostgreSQL!',
     timestamp: new Date().toISOString(),
     serverTime: new Date().toLocaleString(),
@@ -609,7 +645,7 @@ app.get('/api/test', (req, res) => {
 // ===================== Health check =====================
 app.get('/health', async (req, res) => {
   const dbConnected = await connectDB().catch(() => false);
-  
+
   let dbInfo = {};
   if (dbConnected) {
     try {
@@ -619,7 +655,7 @@ app.get('/health', async (req, res) => {
       dbInfo.version = 'PostgreSQL';
     }
   }
-  
+
   res.json({
     status: 'OK',
     timestamp: new Date().toISOString(),
@@ -642,7 +678,7 @@ app.get('/health', async (req, res) => {
 async function sendAdminNotification(adminId, type, title, message, relatedId = null, priority = 'normal', actionUrl = null, metadata = {}) {
   try {
     const result = await pool.query(
-      `INSERT INTO app.admin_notifications 
+      `INSERT INTO app.admin_notifications
        (admin_id, type, title, message, related_id, priority, action_url, metadata, created_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
        RETURNING *`,
@@ -660,7 +696,7 @@ async function sendNotificationToAllAdmins(type, title, message, relatedId = nul
     const admins = await pool.query(
       `SELECT id FROM app.users WHERE role IN ('admin', 'support')`
     );
-    
+
     for (const admin of admins.rows) {
       await sendAdminNotification(admin.id, type, title, message, relatedId, priority, actionUrl, metadata);
     }
@@ -677,43 +713,43 @@ app.get('/api/admin/notifications', async (req, res) => {
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
     }
-    
+
     const token = authHeader.split(' ')[1];
     let adminId;
-    
+
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       adminId = decoded.id;
     } catch (err) {
       return res.status(401).json({ success: false, message: 'توكن غير صالح' });
     }
-    
+
     const { status, limit = 50, offset = 0 } = req.query;
-    
+
     let query = `
-      SELECT * FROM app.admin_notifications 
+      SELECT * FROM app.admin_notifications
       WHERE admin_id = $1
     `;
     const params = [adminId];
     let paramIndex = 2;
-    
+
     if (status && status !== 'all') {
       query += ` AND status = $${paramIndex}`;
       params.push(status);
       paramIndex++;
     }
-    
+
     query += ` ORDER BY created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
     params.push(limit, offset);
-    
+
     const result = await pool.query(query, params);
-    
+
     const unreadResult = await pool.query(
-      `SELECT COUNT(*) FROM app.admin_notifications 
+      `SELECT COUNT(*) FROM app.admin_notifications
        WHERE admin_id = $1 AND status = 'unread'`,
       [adminId]
     );
-    
+
     res.json({
       success: true,
       notifications: result.rows,
@@ -732,31 +768,31 @@ app.put('/api/admin/notifications/:id/read', async (req, res) => {
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
     }
-    
+
     const token = authHeader.split(' ')[1];
     let adminId;
-    
+
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       adminId = decoded.id;
     } catch (err) {
       return res.status(401).json({ success: false, message: 'توكن غير صالح' });
     }
-    
+
     const { id } = req.params;
-    
+
     const result = await pool.query(
-      `UPDATE app.admin_notifications 
+      `UPDATE app.admin_notifications
        SET status = 'read', read_at = NOW()
        WHERE id = $1 AND admin_id = $2
        RETURNING *`,
       [id, adminId]
     );
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'الإشعار غير موجود' });
     }
-    
+
     res.json({ success: true, notification: result.rows[0] });
   } catch (error) {
     console.error('Error marking notification as read:', error);
@@ -770,24 +806,24 @@ app.put('/api/admin/notifications/read-all', async (req, res) => {
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
     }
-    
+
     const token = authHeader.split(' ')[1];
     let adminId;
-    
+
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       adminId = decoded.id;
     } catch (err) {
       return res.status(401).json({ success: false, message: 'توكن غير صالح' });
     }
-    
+
     await pool.query(
-      `UPDATE app.admin_notifications 
+      `UPDATE app.admin_notifications
        SET status = 'read', read_at = NOW()
        WHERE admin_id = $1 AND status = 'unread'`,
       [adminId]
     );
-    
+
     res.json({ success: true, message: 'تم تحديث جميع الإشعارات' });
   } catch (error) {
     console.error('Error marking all as read:', error);
@@ -801,30 +837,30 @@ app.delete('/api/admin/notifications/:id', async (req, res) => {
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
     }
-    
+
     const token = authHeader.split(' ')[1];
     let adminId;
-    
+
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       adminId = decoded.id;
     } catch (err) {
       return res.status(401).json({ success: false, message: 'توكن غير صالح' });
     }
-    
+
     const { id } = req.params;
-    
+
     const result = await pool.query(
-      `DELETE FROM app.admin_notifications 
+      `DELETE FROM app.admin_notifications
        WHERE id = $1 AND admin_id = $2
        RETURNING id`,
       [id, adminId]
     );
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'الإشعار غير موجود' });
     }
-    
+
     res.json({ success: true, message: 'تم حذف الإشعار' });
   } catch (error) {
     console.error('Error deleting notification:', error);
@@ -838,31 +874,31 @@ app.put('/api/admin/notifications/:id/archive', async (req, res) => {
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
     }
-    
+
     const token = authHeader.split(' ')[1];
     let adminId;
-    
+
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       adminId = decoded.id;
     } catch (err) {
       return res.status(401).json({ success: false, message: 'توكن غير صالح' });
     }
-    
+
     const { id } = req.params;
-    
+
     const result = await pool.query(
-      `UPDATE app.admin_notifications 
+      `UPDATE app.admin_notifications
        SET status = 'archived', archived_at = NOW()
        WHERE id = $1 AND admin_id = $2
        RETURNING *`,
       [id, adminId]
     );
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'الإشعار غير موجود' });
     }
-    
+
     res.json({ success: true, notification: result.rows[0] });
   } catch (error) {
     console.error('Error archiving notification:', error);
@@ -873,9 +909,9 @@ app.put('/api/admin/notifications/:id/archive', async (req, res) => {
 // ===================== Database connection and server start =====================
 const startServer = async () => {
   console.log('🚀 Starting server with Supabase Cloud connection...');
-  
+
   const dbConnected = await connectDB();
-  
+
   if (!dbConnected) {
     console.error('❌ Failed to connect to Supabase database. Exiting...');
     process.exit(1);
