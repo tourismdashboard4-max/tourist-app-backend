@@ -113,7 +113,7 @@ poolConfig = {
   ssl: { rejectUnauthorized: false },
   max: 20,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 30000,
+  connectionTimeoutMillis: 30000, // زيادة المهلة إلى 30 ثانية
   keepAlive: true,
   keepAliveInitialDelayMillis: 10000
 };
@@ -122,11 +122,18 @@ pool = new Pool(poolConfig);
 
 // دالة مساعدة لتحويل المعرف الرقمي إلى UUID
 async function getUUIDFromNumericId(numericId) {
+  console.log(`🔍 Looking for UUID with old_id = ${numericId}`);
   const result = await pool.query(
     'SELECT id FROM public.users WHERE old_id = $1',
     [parseInt(numericId)]
   );
-  return result.rows[0]?.id;
+  if (result.rows.length === 0) {
+    console.warn(`⚠️ No user found with old_id = ${numericId}`);
+    return null;
+  }
+  const uuid = result.rows[0].id;
+  console.log(`✅ Found UUID: ${uuid} for old_id: ${numericId}`);
+  return uuid;
 }
 
 const connectDB = async () => {
@@ -317,13 +324,27 @@ app.put('/api/users/:userId/profile', async (req, res) => {
 app.get('/api/guides/:guideId/programs', async (req, res) => {
   try {
     let guideId = req.params.guideId;
+    console.log(`📥 Received request for guide: ${guideId}`);
+    
+    // تحويل المعرف الرقمي إلى UUID
     if (/^\d+$/.test(guideId)) {
       const realId = await getUUIDFromNumericId(guideId);
-      if (!realId) return res.status(404).json({ success: false, message: 'المرشد غير موجود' });
+      if (!realId) {
+        console.error(`❌ No UUID found for numeric guide ID: ${guideId}`);
+        return res.status(404).json({ success: false, message: 'المرشد غير موجود' });
+      }
+      console.log(`🔄 Converted numeric ID ${guideId} to UUID: ${realId}`);
       guideId = realId;
     }
+    
+    // التحقق من صيغة UUID
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (!uuidRegex.test(guideId)) return res.status(400).json({ success: false, message: 'صيغة معرف المرشد غير صالحة' });
+    if (!uuidRegex.test(guideId)) {
+      console.error(`❌ Invalid UUID format: ${guideId}`);
+      return res.status(400).json({ success: false, message: 'صيغة معرف المرشد غير صالحة' });
+    }
+    
+    console.log(`🔍 Fetching programs for guide UUID: ${guideId}`);
     
     const result = await pool.query(
       `SELECT p.*, u.full_name as guide_name
@@ -333,6 +354,8 @@ app.get('/api/guides/:guideId/programs', async (req, res) => {
        ORDER BY p.created_at DESC`,
       [guideId]
     );
+    
+    console.log(`✅ Found ${result.rows.length} programs for guide ${guideId}`);
     res.json({ success: true, programs: result.rows, count: result.rows.length });
   } catch (error) {
     console.error('❌ Error fetching guide programs:', error);
