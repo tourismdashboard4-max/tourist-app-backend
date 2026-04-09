@@ -318,7 +318,7 @@ app.put('/api/users/:userId/profile', async (req, res) => {
   }
 });
 
-// ===================== مسارات البرامج (مُصلحة لتحويل الرقم إلى UUID) =====================
+// ===================== مسارات البرامج (مُصلحة لتحويل الرقم إلى UUID وJOIN مع public.users) =====================
 
 // ✅ جلب برامج مرشد معين
 app.get('/api/guides/:guideId/programs', async (req, res) => {
@@ -346,10 +346,11 @@ app.get('/api/guides/:guideId/programs', async (req, res) => {
     
     console.log(`🔍 Fetching programs for guide UUID: ${guideId}`);
     
+    // ✅ استخدم public.users بدلاً من app.users لتجنب خطأ uuid = integer
     const result = await pool.query(
       `SELECT p.*, u.full_name as guide_name
        FROM programs p
-       LEFT JOIN app.users u ON p.guide_id = u.id
+       LEFT JOIN public.users u ON p.guide_id = u.id
        WHERE p.guide_id = $1
        ORDER BY p.created_at DESC`,
       [guideId]
@@ -370,7 +371,7 @@ app.get('/api/programs', async (req, res) => {
     let query = `
       SELECT p.*, u.full_name as guide_name
       FROM programs p
-      LEFT JOIN app.users u ON p.guide_id = u.id
+      LEFT JOIN public.users u ON p.guide_id = u.id
       WHERE 1=1
     `;
     const params = [];
