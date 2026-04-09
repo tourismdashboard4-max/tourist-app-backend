@@ -318,7 +318,7 @@ app.put('/api/users/:userId/profile', async (req, res) => {
   }
 });
 
-// ===================== مسارات البرامج (مُصلحة - بدون location_name) =====================
+// ===================== مسارات البرامج (مُصلحة) =====================
 
 // ✅ جلب برامج مرشد معين
 app.get('/api/guides/:guideId/programs', async (req, res) => {
@@ -389,7 +389,7 @@ app.get('/api/programs', async (req, res) => {
   }
 });
 
-// ✅ إضافة برنامج جديد - تم إزالة location_name نهائياً
+// ✅ إضافة برنامج جديد (مُصلح – بدون location_name وبدون image، مع استخدام images)
 app.post('/api/programs', async (req, res) => {
   try {
     let { guide_id, name, description, price, duration, max_participants, location, location_lat, location_lng, image, status, guide_name } = req.body;
@@ -399,11 +399,12 @@ app.post('/api/programs', async (req, res) => {
       if (!realId) return res.status(404).json({ success: false, message: 'المرشد غير موجود' });
       realGuideId = realId;
     }
+    const imagesArray = image ? [image] : [];
     const result = await pool.query(
-      `INSERT INTO programs (guide_id, name, description, price, duration, max_participants, location, location_lat, location_lng, image, status, guide_name, created_at)
+      `INSERT INTO programs (guide_id, name, description, price, duration, max_participants, location, location_lat, location_lng, images, status, guide_name, created_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
        RETURNING *`,
-      [realGuideId, name, description, price, duration, max_participants, location, location_lat, location_lng, image, status || 'active', guide_name || 'مرشد سياحي']
+      [realGuideId, name, description, price, duration, max_participants, location, location_lat, location_lng, imagesArray, status || 'active', guide_name || 'مرشد سياحي']
     );
     res.json({ success: true, program: result.rows[0], message: 'Program added successfully' });
   } catch (error) {
