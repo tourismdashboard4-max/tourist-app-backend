@@ -318,7 +318,7 @@ app.put('/api/users/:userId/profile', async (req, res) => {
   }
 });
 
-// ===================== مسارات البرامج (مُصلحة لتحويل الرقم إلى UUID وJOIN مع public.users) =====================
+// ===================== مسارات البرامج (مُصلحة - تعتمد على guide_name من جدول programs) =====================
 
 // ✅ جلب برامج مرشد معين
 app.get('/api/guides/:guideId/programs', async (req, res) => {
@@ -326,7 +326,6 @@ app.get('/api/guides/:guideId/programs', async (req, res) => {
     let guideId = req.params.guideId;
     console.log(`📥 Received request for guide: ${guideId}`);
     
-    // تحويل المعرف الرقمي إلى UUID
     if (/^\d+$/.test(guideId)) {
       const realId = await getUUIDFromNumericId(guideId);
       if (!realId) {
@@ -337,20 +336,17 @@ app.get('/api/guides/:guideId/programs', async (req, res) => {
       guideId = realId;
     }
     
-    // التحقق من صيغة UUID
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(guideId)) {
-      console.error(`❌ Invalid UUID format: ${guideId}`);
       return res.status(400).json({ success: false, message: 'صيغة معرف المرشد غير صالحة' });
     }
     
     console.log(`🔍 Fetching programs for guide UUID: ${guideId}`);
     
-    // ✅ استخدم public.users بدلاً من app.users لتجنب خطأ uuid = integer
+    // ✅ استخدم guide_name من جدول programs مباشرة (لا JOIN)
     const result = await pool.query(
-      `SELECT p.*, u.full_name as guide_name
+      `SELECT p.*, p.guide_name
        FROM programs p
-       LEFT JOIN public.users u ON p.guide_id = u.id
        WHERE p.guide_id = $1
        ORDER BY p.created_at DESC`,
       [guideId]
@@ -369,9 +365,8 @@ app.get('/api/programs', async (req, res) => {
   try {
     let { guide_id } = req.query;
     let query = `
-      SELECT p.*, u.full_name as guide_name
+      SELECT p.*, p.guide_name
       FROM programs p
-      LEFT JOIN public.users u ON p.guide_id = u.id
       WHERE 1=1
     `;
     const params = [];
@@ -398,7 +393,7 @@ app.get('/api/programs', async (req, res) => {
 // ✅ إضافة برنامج جديد
 app.post('/api/programs', async (req, res) => {
   try {
-    let { guide_id, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status } = req.body;
+    let { guide_id, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status, guide_name } = req.body;
     let realGuideId = guide_id;
     if (/^\d+$/.test(String(guide_id))) {
       const realId = await getUUIDFromNumericId(guide_id);
@@ -406,10 +401,10 @@ app.post('/api/programs', async (req, res) => {
       realGuideId = realId;
     }
     const result = await pool.query(
-      `INSERT INTO programs (guide_id, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
+      `INSERT INTO programs (guide_id, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status, guide_name, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
        RETURNING *`,
-      [realGuideId, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status || 'active']
+      [realGuideId, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status || 'active', guide_name || 'مرشد سياحي']
     );
     res.json({ success: true, program: result.rows[0], message: 'Program added successfully' });
   } catch (error) {
