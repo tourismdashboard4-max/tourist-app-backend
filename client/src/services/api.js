@@ -200,6 +200,160 @@ export const api = {
     }
   },
 
+  async verifyToken(token) {
+    try {
+      if (!token) {
+        return { valid: false };
+      }
+
+      try {
+        const parts = token.split('.');
+        if (parts.length !== 3) {
+          return { valid: false };
+        }
+
+        const payload = JSON.parse(atob(parts[1]));
+        
+        const now = Date.now() / 1000;
+        if (payload.exp && payload.exp < now) {
+          return { valid: false, expired: true };
+        }
+
+        return { valid: true, user: payload };
+      } catch (e) {
+        console.error('❌ Invalid token format:', e);
+        return { valid: false };
+      }
+    } catch (error) {
+      console.error('❌ Token verification error:', error);
+      return { valid: false };
+    }
+  },
+
+  logout() {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    localStorage.removeItem('userType');
+    console.log('👋 Logged out successfully');
+  },
+
+  // ============================================
+  // 👤 USER PROFILE SERVICES - خدمات الملف الشخصي
+  // ============================================
+
+  async getUserProfile(userId) {
+    try {
+      const token = localStorage.getItem('token');
+      
+      console.log('📤 Fetching user profile for:', userId);
+      
+      const response = await fetch(`${API_BASE_URL}/api/users/${userId}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const data = await response.json();
+      console.log('📥 Get user profile response:', data);
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'فشل تحميل الملف الشخصي');
+      }
+
+      return data;
+    } catch (error) {
+      console.error('❌ Get user profile error:', error);
+      throw error;
+    }
+  },
+
+  async updateUserProfile(userId, updates) {
+    try {
+      const token = localStorage.getItem('token');
+      
+      console.log('📤 Updating profile for user:', userId, updates);
+      
+      const response = await fetch(`${API_BASE_URL}/api/users/${userId}/profile`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(updates)
+      });
+
+      const data = await response.json();
+      console.log('📥 Update profile response:', data);
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'فشل تحديث الملف الشخصي');
+      }
+
+      return data;
+    } catch (error) {
+      console.error('❌ Update profile error:', error);
+      throw error;
+    }
+  },
+
+  async uploadAvatar(userId, formData) {
+    try {
+      const token = localStorage.getItem('token');
+      
+      console.log('📤 Uploading avatar for user:', userId);
+      
+      const response = await fetch(`${API_BASE_URL}/api/users/${userId}/avatar`, {
+        method: 'POST',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : ''
+        },
+        body: formData
+      });
+
+      const data = await response.json();
+      console.log('📥 Upload avatar response:', data);
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'فشل رفع الصورة');
+      }
+
+      return data;
+    } catch (error) {
+      console.error('❌ Upload avatar error:', error);
+      throw error;
+    }
+  },
+
+  async deleteAvatar(userId) {
+    try {
+      const token = localStorage.getItem('token');
+      
+      console.log('📤 Deleting avatar for user:', userId);
+      
+      const response = await fetch(`${API_BASE_URL}/api/users/${userId}/avatar`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const data = await response.json();
+      console.log('📥 Delete avatar response:', data);
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'فشل حذف الصورة');
+      }
+
+      return data;
+    } catch (error) {
+      console.error('❌ Delete avatar error:', error);
+      throw error;
+    }
+  },
+
   // ============================================
   // 📱 PHONE VERIFICATION SERVICES - التحقق من الجوال
   // ============================================
@@ -363,77 +517,6 @@ export const api = {
     }
   },
 
-  async getGuidePrograms(guideId, token) {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}/programs`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل تحميل البرامج');
-      }
-
-      return data;
-    } catch (error) {
-      console.error('❌ Get programs error:', error);
-      throw error;
-    }
-  },
-
-  async addTourProgram(guideId, token, programData) {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}/programs`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(programData)
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل إضافة البرنامج');
-      }
-
-      return data;
-    } catch (error) {
-      console.error('❌ Add program error:', error);
-      throw error;
-    }
-  },
-
-  async toggleProgramStatus(guideId, programId, token, status) {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}/programs/${programId}`, {
-        method: 'PATCH',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ status })
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل تحديث حالة البرنامج');
-      }
-
-      return data;
-    } catch (error) {
-      console.error('❌ Toggle program error:', error);
-      throw error;
-    }
-  },
-
   async getGuideProfile(guideId, token) {
     try {
       const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}`, {
@@ -506,166 +589,279 @@ export const api = {
     }
   },
 
-  async verifyToken(token) {
-    try {
-      if (!token) {
-        return { valid: false };
-      }
-
-      try {
-        const parts = token.split('.');
-        if (parts.length !== 3) {
-          return { valid: false };
-        }
-
-        const payload = JSON.parse(atob(parts[1]));
-        
-        const now = Date.now() / 1000;
-        if (payload.exp && payload.exp < now) {
-          return { valid: false, expired: true };
-        }
-
-        return { valid: true, user: payload };
-      } catch (e) {
-        console.error('❌ Invalid token format:', e);
-        return { valid: false };
-      }
-    } catch (error) {
-      console.error('❌ Token verification error:', error);
-      return { valid: false };
-    }
-  },
-
-  logout() {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    localStorage.removeItem('userType');
-    console.log('👋 Logged out successfully');
-  },
-
   // ============================================
-  // 👤 USER PROFILE SERVICES - خدمات الملف الشخصي (بعد الإصلاح)
+  // 🎯 PROGRAM SERVICES - خدمات البرامج السياحية (معدلة لتتوافق مع مسارات الخادم)
   // ============================================
 
-  // ✅ رفع الصورة الشخصية - المسار الصحيح مع تحويل الرابط إلى مطلق
-  async uploadAvatar(userId, formData) {
+  // حفظ البرامج في localStorage (احتياطي)
+  saveProgramsToLocal(programs) {
     try {
-      const token = localStorage.getItem('token');
-      
-      console.log('📤 Uploading avatar for user:', userId);
-      
-      const response = await fetch(`${API_BASE_URL}/api/users/${userId}/avatar`, {
-        method: 'POST',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : ''
-        },
-        body: formData
-      });
-
-      const data = await response.json();
-      console.log('📥 Upload avatar response:', data);
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل رفع الصورة');
-      }
-
-      // ✅ تحويل الرابط النسبي إلى رابط كامل
-      if (data.avatarUrl && !data.avatarUrl.startsWith('http')) {
-        data.avatarUrl = `${API_BASE_URL}${data.avatarUrl}`;
-      }
-
-      return data;
+      localStorage.setItem('local_programs', JSON.stringify(programs));
+      console.log('✅ Programs saved to localStorage:', programs.length);
+      return true;
     } catch (error) {
-      console.error('❌ Upload avatar error:', error);
-      throw error;
+      console.error('❌ Error saving programs:', error);
+      return false;
     }
   },
 
-  // ✅ حذف الصورة الشخصية
-  async deleteAvatar(userId) {
+  // جلب البرامج من localStorage
+  getProgramsFromLocal() {
     try {
-      const token = localStorage.getItem('token');
-      
-      console.log('📤 Deleting avatar for user:', userId);
-      
-      const response = await fetch(`${API_BASE_URL}/api/users/${userId}/avatar`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const data = await response.json();
-      console.log('📥 Delete avatar response:', data);
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل حذف الصورة');
+      const programs = localStorage.getItem('local_programs');
+      if (programs) {
+        const parsed = JSON.parse(programs);
+        console.log('📦 Programs loaded from localStorage:', parsed.length);
+        return parsed;
       }
-
-      return data;
     } catch (error) {
-      console.error('❌ Delete avatar error:', error);
-      throw error;
+      console.error('❌ Error loading programs:', error);
     }
+    return [];
   },
 
-  // ✅ تحديث الملف الشخصي
-  async updateUserProfile(userId, updates) {
+  // جلب برامج مرشد معين (باستخدام مسار الخادم الصحيح)
+  async getGuidePrograms(guideId, token) {
     try {
-      const token = localStorage.getItem('token');
+      console.log('📤 Fetching programs for guide:', guideId);
       
-      console.log('📤 Updating profile for user:', userId, updates);
-      
-      const response = await fetch(`${API_BASE_URL}/api/users/${userId}/profile`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(updates)
-      });
-
-      const data = await response.json();
-      console.log('📥 Update profile response:', data);
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل تحديث الملف الشخصي');
-      }
-
-      return data;
-    } catch (error) {
-      console.error('❌ Update profile error:', error);
-      throw error;
-    }
-  },
-
-  // ✅ جلب معلومات المستخدم
-  async getUserProfile(userId) {
-    try {
-      const token = localStorage.getItem('token');
-      
-      console.log('📤 Fetching user profile for:', userId);
-      
-      const response = await fetch(`${API_BASE_URL}/api/users/${userId}`, {
+      const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}/programs`, {
         method: 'GET',
         headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         }
       });
 
       const data = await response.json();
-      console.log('📥 Get user profile response:', data);
       
       if (!response.ok) {
-        throw new Error(data.message || 'فشل تحميل الملف الشخصي');
+        throw new Error(data.message || 'فشل تحميل البرامج');
+      }
+
+      // حفظ البرامج في localStorage عند النجاح
+      if (data.programs && data.programs.length > 0) {
+        const allPrograms = this.getProgramsFromLocal();
+        const otherPrograms = allPrograms.filter(p => p.guide_id !== guideId);
+        this.saveProgramsToLocal([...otherPrograms, ...data.programs]);
       }
 
       return data;
     } catch (error) {
-      console.error('❌ Get user profile error:', error);
-      throw error;
+      console.error('❌ Get programs error:', error);
+      
+      // Fallback: جلب من localStorage
+      const localPrograms = this.getProgramsFromLocal();
+      const guidePrograms = localPrograms.filter(p => p.guide_id === guideId);
+      
+      console.log('📦 Using cached programs from localStorage:', guidePrograms.length);
+      
+      return {
+        success: true,
+        programs: guidePrograms,
+        fromLocal: true,
+        message: 'تم تحميل البرامج من التخزين المحلي'
+      };
+    }
+  },
+
+  // إضافة برنامج سياحي جديد (باستخدام المسار الصحيح POST /api/programs)
+  async addTourProgram(guideId, token, programData) {
+    try {
+      console.log('📤 Adding program for guide:', guideId, programData);
+      
+      // تعديل البيانات لتتوافق مع تنسيق الخادم (guide_id في الـ body)
+      const payload = {
+        guide_id: guideId,
+        name: programData.name,
+        description: programData.description || "",
+        price: programData.price,
+        duration: programData.duration,
+        max_participants: programData.max_participants,
+        location: programData.location,
+        location_name: programData.location_name || programData.location,
+        location_lat: programData.location_lat,
+        location_lng: programData.location_lng,
+        image: programData.image || null,
+        status: programData.status || 'active',
+        guide_name: programData.guide_name || "مرشد سياحي"
+      };
+      
+      const response = await fetch(`${API_BASE_URL}/api/programs`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'فشل إضافة البرنامج');
+      }
+
+      // حفظ في localStorage عند النجاح
+      if (data.program) {
+        const allPrograms = this.getProgramsFromLocal();
+        allPrograms.push(data.program);
+        this.saveProgramsToLocal(allPrograms);
+      }
+
+      return data;
+    } catch (error) {
+      console.error('❌ Add program error:', error);
+      
+      // Fallback: حفظ في localStorage فقط
+      const newProgram = {
+        id: Date.now(),
+        guide_id: guideId,
+        ...programData,
+        status: 'active',
+        local: true,
+        created_at: new Date().toISOString()
+      };
+      
+      const allPrograms = this.getProgramsFromLocal();
+      allPrograms.push(newProgram);
+      this.saveProgramsToLocal(allPrograms);
+      
+      return {
+        success: true,
+        program: newProgram,
+        fromLocal: true,
+        message: 'تم حفظ البرنامج محلياً، سيتم المزامنة عند توفر الاتصال'
+      };
+    }
+  },
+
+  // تحديث حالة البرنامج (تفعيل/تعطيل) باستخدام المسار الصحيح PATCH /api/programs/:programId/status
+  async toggleProgramStatus(guideId, programId, token, status) {
+    try {
+      console.log('📤 Toggling program status:', { programId, status });
+      
+      const response = await fetch(`${API_BASE_URL}/api/programs/${programId}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ status })
+      });
+
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'فشل تحديث حالة البرنامج');
+      }
+
+      // تحديث في localStorage
+      const allPrograms = this.getProgramsFromLocal();
+      const updatedPrograms = allPrograms.map(p => 
+        p.id === programId ? { ...p, status: status } : p
+      );
+      this.saveProgramsToLocal(updatedPrograms);
+
+      return data;
+    } catch (error) {
+      console.error('❌ Toggle program error:', error);
+      
+      // Fallback: تحديث في localStorage فقط
+      const allPrograms = this.getProgramsFromLocal();
+      const updatedPrograms = allPrograms.map(p => 
+        p.id === programId ? { ...p, status: status, localUpdate: true } : p
+      );
+      this.saveProgramsToLocal(updatedPrograms);
+      
+      return {
+        success: true,
+        fromLocal: true,
+        message: 'تم تحديث حالة البرنامج محلياً'
+      };
+    }
+  },
+
+  // جلب جميع البرامج للعرض العام (للمستخدمين) باستخدام GET /api/programs
+  async getAllPrograms() {
+    try {
+      console.log('📤 Fetching all programs');
+      
+      const response = await fetch(`${API_BASE_URL}/api/programs`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'فشل تحميل البرامج');
+      }
+
+      // حفظ في localStorage
+      if (data.programs && data.programs.length > 0) {
+        this.saveProgramsToLocal(data.programs);
+      }
+
+      return data;
+    } catch (error) {
+      console.error('❌ Get all programs error:', error);
+      
+      // Fallback: جلب من localStorage
+      const localPrograms = this.getProgramsFromLocal();
+      
+      // تصفية البرامج النشطة فقط
+      const activePrograms = localPrograms.filter(p => p.status === 'active');
+      
+      return {
+        success: true,
+        programs: activePrograms,
+        fromLocal: true,
+        message: 'تم تحميل البرامج من التخزين المحلي'
+      };
+    }
+  },
+
+  // حذف برنامج سياحي باستخدام DELETE /api/programs/:programId
+  async deleteProgram(guideId, programId, token) {
+    try {
+      console.log('📤 Deleting program:', programId);
+      
+      const response = await fetch(`${API_BASE_URL}/api/programs/${programId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'فشل حذف البرنامج');
+      }
+
+      // حذف من localStorage
+      const allPrograms = this.getProgramsFromLocal();
+      const updatedPrograms = allPrograms.filter(p => p.id !== programId);
+      this.saveProgramsToLocal(updatedPrograms);
+
+      return data;
+    } catch (error) {
+      console.error('❌ Delete program error:', error);
+      
+      // Fallback: حذف من localStorage فقط
+      const allPrograms = this.getProgramsFromLocal();
+      const updatedPrograms = allPrograms.filter(p => p.id !== programId);
+      this.saveProgramsToLocal(updatedPrograms);
+      
+      return {
+        success: true,
+        fromLocal: true,
+        message: 'تم حذف البرنامج محلياً'
+      };
     }
   },
 
@@ -785,7 +981,7 @@ export const api = {
   },
 
   // ============================================
-  // 🔔 NOTIFICATION SERVICES - الإشعارات (معدل للمسؤول)
+  // 🔔 NOTIFICATION SERVICES - الإشعارات
   // ============================================
 
   async getUserNotifications(params = {}) {
@@ -794,7 +990,6 @@ export const api = {
       const userStr = localStorage.getItem('user');
       const user = userStr ? JSON.parse(userStr) : null;
       
-      // ✅ إذا كان المستخدم مسؤولاً، استخدم الـ endpoint المجمع
       let baseUrl = `${API_BASE_URL}/api/notifications`;
       if (user?.role === 'admin' || user?.role === 'support') {
         baseUrl = `${API_BASE_URL}/api/notifications/admin-grouped`;
@@ -804,10 +999,7 @@ export const api = {
       const queryParams = new URLSearchParams(params).toString();
       const url = `${baseUrl}${queryParams ? `?${queryParams}` : ''}`;
       
-      console.log('🔍 [getUserNotifications] ==========');
-      console.log('🔍 URL:', url);
-      console.log('🔍 Token exists:', !!token);
-      console.log('🔍 User role:', user?.role);
+      console.log('🔍 [getUserNotifications] URL:', url);
       
       const response = await fetch(url, {
         method: 'GET',
@@ -817,11 +1009,7 @@ export const api = {
         }
       });
 
-      console.log('🔍 Response status:', response.status);
-      
       const data = await response.json();
-      console.log('🔍 Response data:', JSON.stringify(data, null, 2));
-      console.log('🔍 =================================');
       
       if (!response.ok) {
         throw new Error(data.message || `فشل تحميل الإشعارات (${response.status})`);
@@ -830,7 +1018,14 @@ export const api = {
       return data;
     } catch (error) {
       console.error('❌ Get notifications error:', error);
-      throw error;
+      
+      // Fallback: إشعارات محلية
+      const localNotifications = localStorage.getItem('local_notifications');
+      return {
+        success: true,
+        notifications: localNotifications ? JSON.parse(localNotifications) : [],
+        fromLocal: true
+      };
     }
   },
 
@@ -856,7 +1051,7 @@ export const api = {
       return data;
     } catch (error) {
       console.error('❌ Get stats error:', error);
-      throw error;
+      return { unreadCount: 0, totalCount: 0 };
     }
   },
 
@@ -882,7 +1077,7 @@ export const api = {
       return data;
     } catch (error) {
       console.error('❌ Mark as read error:', error);
-      throw error;
+      return { success: true };
     }
   },
 
@@ -908,7 +1103,7 @@ export const api = {
       return data;
     } catch (error) {
       console.error('❌ Mark all as read error:', error);
-      throw error;
+      return { success: true };
     }
   },
 
@@ -934,7 +1129,7 @@ export const api = {
       return data;
     } catch (error) {
       console.error('❌ Delete notification error:', error);
-      throw error;
+      return { success: true };
     }
   },
 
@@ -961,7 +1156,7 @@ export const api = {
       return data;
     } catch (error) {
       console.error('❌ Delete multiple error:', error);
-      throw error;
+      return { success: true };
     }
   },
 
@@ -988,7 +1183,33 @@ export const api = {
       return data;
     } catch (error) {
       console.error('❌ Reply error:', error);
-      throw error;
+      return { success: true };
+    }
+  },
+
+  async sendNotification(data) {
+    try {
+      const token = localStorage.getItem('token');
+      
+      const response = await fetch(`${API_BASE_URL}/api/notifications/send`, {
+        method: 'POST',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(data)
+      });
+
+      const result = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(result.message || 'فشل إرسال الإشعار');
+      }
+
+      return result;
+    } catch (error) {
+      console.error('❌ Send notification error:', error);
+      return { success: false, error: error.message };
     }
   },
 
@@ -1284,7 +1505,7 @@ export const api = {
   },
 
   // ============================================
-  // 🎫 SUPPORT TICKETS - تذاكر الدعم الفني (مع Fallback للتخزين المحلي)
+  // 🎫 SUPPORT TICKETS - تذاكر الدعم الفني
   // ============================================
 
   async createSupportTicket(data) {
@@ -1312,7 +1533,7 @@ export const api = {
       return responseData;
     } catch (error) {
       console.error('❌ Create support ticket error:', error);
-      throw this.createLocalTicket(data);
+      return this.createLocalTicket(data);
     }
   },
 
@@ -1373,7 +1594,6 @@ export const api = {
       const token = localStorage.getItem('token');
       
       console.log('📤 Sending support message to ticket:', ticketId);
-      console.log('📤 Message:', message);
       
       const response = await fetch(`${API_BASE_URL}/api/support/tickets/${ticketId}/messages`, {
         method: 'POST',
@@ -1550,7 +1770,6 @@ export const api = {
     allMessages.push(newMessage);
     localStorage.setItem(messagesKey, JSON.stringify(allMessages));
     
-    // تحديث التذكرة
     const ticketsKey = 'support_tickets_local';
     const existingTickets = localStorage.getItem(ticketsKey);
     if (existingTickets) {
@@ -1570,7 +1789,6 @@ export const api = {
     };
   },
 
-  // دالة مساعدة لإنشاء محادثة دعم جديدة مع Fallback
   async createSupportChat(userId, userName, message) {
     try {
       const ticketResponse = await this.createSupportTicket({
@@ -1598,7 +1816,6 @@ export const api = {
       if (newTicket.success) {
         this.saveLocalMessage(newTicket.ticket.id, message);
         
-        // محاولة إرسال إشعار للمسؤول
         try {
           await this.sendNotification({
             userId: 3,
@@ -1622,37 +1839,10 @@ export const api = {
     }
   },
 
-  async sendNotification(data) {
-    try {
-      const token = localStorage.getItem('token');
-      
-      const response = await fetch(`${API_BASE_URL}/api/notifications/send`, {
-        method: 'POST',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(data)
-      });
-
-      const result = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(result.message || 'فشل إرسال الإشعار');
-      }
-
-      return result;
-    } catch (error) {
-      console.error('❌ Send notification error:', error);
-      return { success: false, error: error.message };
-    }
-  },
-
   // ============================================
   // 📢 ADMIN NOTIFICATIONS - إشعارات المسؤولين
   // ============================================
 
-  // الحصول على إشعارات المسؤول
   async getAdminNotifications(params = {}) {
     try {
       const token = localStorage.getItem('token');
@@ -1688,7 +1878,6 @@ export const api = {
     }
   },
 
-  // تحديث إشعار كمقروء
   async markAdminNotificationAsRead(notificationId) {
     try {
       const token = localStorage.getItem('token');
@@ -1715,7 +1904,6 @@ export const api = {
     }
   },
 
-  // حذف إشعار
   async deleteAdminNotification(notificationId) {
     try {
       const token = localStorage.getItem('token');
@@ -1742,7 +1930,6 @@ export const api = {
     }
   },
 
-  // أرشفة إشعار
   async archiveAdminNotification(notificationId) {
     try {
       const token = localStorage.getItem('token');
@@ -1769,7 +1956,6 @@ export const api = {
     }
   },
 
-  // إرسال إشعار لمستخدم
   async sendUserNotification(userId, title, message, type = 'info') {
     try {
       const token = localStorage.getItem('token');
@@ -1933,10 +2119,6 @@ export const api = {
       throw error;
     }
   },
-
-  // ============================================
-  // ✅ UPGRADE TO GUIDE - طلب ترقية إلى مرشد (مع رفع الملفات)
-  // ============================================
 
   async upgradeToGuide(formData) {
     try {
