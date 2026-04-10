@@ -57,30 +57,24 @@ const onlineUsers = new Map();
 
 io.on('connection', (socket) => {
   console.log('🔌 New client connected:', socket.id);
-
   socket.on('user-connected', (userId) => {
     onlineUsers.set(userId, socket.id);
     io.emit('users-online', Array.from(onlineUsers.keys()));
     console.log(`👤 User ${userId} is online`);
   });
-
   socket.on('join-chat', (chatId) => {
     socket.join(`chat:${chatId}`);
     console.log(`📢 User joined chat: ${chatId}`);
   });
-
   socket.on('leave-chat', (chatId) => {
     socket.leave(`chat:${chatId}`);
   });
-
   socket.on('send-message', (message) => {
     socket.to(`chat:${message.chatId}`).emit('new-message', message);
   });
-
   socket.on('typing', ({ chatId, isTyping }) => {
     socket.to(`chat:${chatId}`).emit('typing', { userId: socket.userId, isTyping });
   });
-
   socket.on('disconnect', () => {
     let disconnectedUserId = null;
     for (let [userId, socketId] of onlineUsers.entries()) {
@@ -113,18 +107,18 @@ poolConfig = {
   ssl: { rejectUnauthorized: false },
   max: 20,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 30000, // زيادة المهلة إلى 30 ثانية
+  connectionTimeoutMillis: 30000,
   keepAlive: true,
   keepAliveInitialDelayMillis: 10000
 };
 
 pool = new Pool(poolConfig);
 
-// دالة مساعدة لتحويل المعرف الرقمي إلى UUID
+// دالة مساعدة لتحويل المعرف الرقمي إلى UUID (استخدام app.users)
 async function getUUIDFromNumericId(numericId) {
   console.log(`🔍 Looking for UUID with old_id = ${numericId}`);
   const result = await pool.query(
-    'SELECT id FROM public.users WHERE old_id = $1',
+    'SELECT id FROM app.users WHERE old_id = $1',
     [parseInt(numericId)]
   );
   if (result.rows.length === 0) {
@@ -153,11 +147,9 @@ const connectDB = async () => {
     ╚══════════════════════════════════════════╝
     `);
     client.release();
-
     pool.on('error', (err) => console.error('❌ Supabase error:', err));
     pool.on('connect', () => console.log('🔄 New client connected'));
     pool.on('remove', () => console.log('🔄 Client removed from pool'));
-
     return true;
   } catch (error) {
     console.error('❌ Supabase Connection Failed:', error.message);
@@ -206,7 +198,7 @@ const programStorage = multer.diskStorage({
 
 const uploadProgramImages = multer({
   storage: programStorage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB لكل صورة
+  limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowedTypes = /jpeg|jpg|png|gif/;
     const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
@@ -216,7 +208,7 @@ const uploadProgramImages = multer({
   }
 });
 
-// رفع الصورة الشخصية (كما هو)
+// رفع الصورة الشخصية
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => {
@@ -240,7 +232,7 @@ const upload = multer({
 
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// ===================== Routes الرئيسية (قبل تحميل الـ Routers) =====================
+// ===================== Routes الرئيسية =====================
 app.get('/', (req, res) => {
   res.json({ 
     success: true, 
@@ -267,13 +259,11 @@ app.post('/api/users/:userId/avatar', upload.single('avatar'), async (req, res) 
   try {
     const { userId } = req.params;
     if (!req.file) return res.status(400).json({ success: false, message: 'لم يتم إرسال أي صورة.' });
-
     const optimizedFilename = `optimized_${Date.now()}_${userId}.jpg`;
     const optimizedPath = path.join(uploadDir, optimizedFilename);
     await sharp(req.file.path).resize(200, 200, { fit: 'cover' }).jpeg({ quality: 80 }).toFile(optimizedPath);
     fs.unlinkSync(req.file.path);
     const avatarUrl = `/uploads/avatars/${optimizedFilename}`;
-
     const result = await pool.query(
       `UPDATE app.users SET avatar_url = $1, updated_at = NOW() WHERE id = $2 RETURNING avatar_url`,
       [avatarUrl, userId]
@@ -345,14 +335,11 @@ app.put('/api/users/:userId/profile', async (req, res) => {
   }
 });
 
-// ===================== مسارات البرامج (مُصلحة - تعتمد على guide_name من جدول programs) =====================
-
-// ✅ جلب برامج مرشد معين
+// ===================== مسارات البرامج =====================
 app.get('/api/guides/:guideId/programs', async (req, res) => {
   try {
     let guideId = req.params.guideId;
     console.log(`📥 Received request for guide: ${guideId}`);
-    
     if (/^\d+$/.test(guideId)) {
       const realId = await getUUIDFromNumericId(guideId);
       if (!realId) {
@@ -362,23 +349,15 @@ app.get('/api/guides/:guideId/programs', async (req, res) => {
       console.log(`🔄 Converted numeric ID ${guideId} to UUID: ${realId}`);
       guideId = realId;
     }
-    
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(guideId)) {
       return res.status(400).json({ success: false, message: 'صيغة معرف المرشد غير صالحة' });
     }
-    
     console.log(`🔍 Fetching programs for guide UUID: ${guideId}`);
-    
-    // ✅ استخدم guide_name من جدول programs مباشرة (لا JOIN)
     const result = await pool.query(
-      `SELECT p.*, p.guide_name
-       FROM programs p
-       WHERE p.guide_id = $1
-       ORDER BY p.created_at DESC`,
+      `SELECT p.*, p.guide_name FROM programs p WHERE p.guide_id = $1 ORDER BY p.created_at DESC`,
       [guideId]
     );
-    
     console.log(`✅ Found ${result.rows.length} programs for guide ${guideId}`);
     res.json({ success: true, programs: result.rows, count: result.rows.length });
   } catch (error) {
@@ -387,15 +366,10 @@ app.get('/api/guides/:guideId/programs', async (req, res) => {
   }
 });
 
-// ✅ جلب جميع البرامج (مع فلتر حسب المرشد)
 app.get('/api/programs', async (req, res) => {
   try {
     let { guide_id } = req.query;
-    let query = `
-      SELECT p.*, p.guide_name
-      FROM programs p
-      WHERE 1=1
-    `;
+    let query = `SELECT p.*, p.guide_name FROM programs p WHERE 1=1`;
     const params = [];
     let paramIndex = 1;
     if (guide_id) {
@@ -417,7 +391,6 @@ app.get('/api/programs', async (req, res) => {
   }
 });
 
-// ✅ إضافة برنامج جديد
 app.post('/api/programs', async (req, res) => {
   try {
     let { guide_id, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status, guide_name } = req.body;
@@ -440,12 +413,12 @@ app.post('/api/programs', async (req, res) => {
   }
 });
 
-// ✅ تحديث برنامج (مع التحقق من الملكية)
+// ✅ تحديث برنامج (مع التحقق من الملكية باستخدام JWT)
 app.put('/api/programs/:programId', async (req, res) => {
   const { programId } = req.params;
   const { name, description, price, duration, max_participants, location, location_lat, location_lng, image } = req.body;
   
-  // الحصول على معرف المستخدم من التوكن (يفترض وجود middleware للتوكن)
+  // التحقق من التوكن
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
@@ -468,11 +441,8 @@ app.put('/api/programs/:programId', async (req, res) => {
   }
   
   try {
-    // التحقق من أن البرنامج يخص هذا المستخدم
-    const checkOwner = await pool.query(
-      'SELECT guide_id FROM programs WHERE id = $1',
-      [programId]
-    );
+    // التحقق من ملكية البرنامج
+    const checkOwner = await pool.query('SELECT guide_id FROM programs WHERE id = $1', [programId]);
     if (checkOwner.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'البرنامج غير موجود' });
     }
@@ -489,7 +459,6 @@ app.put('/api/programs/:programId', async (req, res) => {
        WHERE id = $10 RETURNING *`,
       [name, description, price, duration, max_participants, location, location_lat, location_lng, image, programId]
     );
-    
     res.json({ success: true, program: result.rows[0] });
   } catch (error) {
     console.error('❌ Error updating program:', error);
@@ -497,7 +466,6 @@ app.put('/api/programs/:programId', async (req, res) => {
   }
 });
 
-// ✅ حذف برنامج
 app.delete('/api/programs/:programId', async (req, res) => {
   try {
     const { programId } = req.params;
@@ -510,7 +478,6 @@ app.delete('/api/programs/:programId', async (req, res) => {
   }
 });
 
-// ✅ تحديث حالة البرنامج
 app.patch('/api/programs/:programId/status', async (req, res) => {
   try {
     const { programId } = req.params;
@@ -528,51 +495,31 @@ app.patch('/api/programs/:programId/status', async (req, res) => {
 });
 
 // ===================== مسارات صور البرامج المتعددة =====================
-
-// رفع صور متعددة لبرنامج (حتى 10 صور)
 app.post('/api/programs/:programId/images', uploadProgramImages.array('images', 10), async (req, res) => {
   const { programId } = req.params;
   const files = req.files;
-  
   if (!files || files.length === 0) {
     return res.status(400).json({ success: false, message: 'لم يتم رفع أي صور' });
   }
-  
   try {
     const uploadedImages = [];
-    
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      // تحسين الصورة وضغطها
       const optimizedFilename = `program_${programId}_${Date.now()}_${i}.jpg`;
       const optimizedPath = path.join(__dirname, 'uploads', 'programs', optimizedFilename);
-      
-      // التأكد من وجود المجلد
       const programsDir = path.join(__dirname, 'uploads', 'programs');
       if (!fs.existsSync(programsDir)) fs.mkdirSync(programsDir, { recursive: true });
-      
-      await sharp(file.path)
-        .resize(800, 600, { fit: 'inside' })
-        .jpeg({ quality: 80 })
-        .toFile(optimizedPath);
-      
-      // حذف الملف المؤقت
+      await sharp(file.path).resize(800, 600, { fit: 'inside' }).jpeg({ quality: 80 }).toFile(optimizedPath);
       fs.unlinkSync(file.path);
-      
       const imageUrl = `/uploads/programs/${optimizedFilename}`;
-      
-      // تحديد إذا كانت هذه أول صورة (تصبح رئيسية تلقائياً)
       const isPrimary = i === 0;
-      
       const result = await pool.query(
         `INSERT INTO program_images (program_id, image_url, is_primary, display_order)
          VALUES ($1, $2, $3, $4) RETURNING *`,
         [programId, imageUrl, isPrimary, i]
       );
-      
       uploadedImages.push(result.rows[0]);
     }
-    
     res.json({ success: true, images: uploadedImages });
   } catch (error) {
     console.error('Error uploading program images:', error);
@@ -580,7 +527,6 @@ app.post('/api/programs/:programId/images', uploadProgramImages.array('images', 
   }
 });
 
-// جلب جميع صور برنامج معين
 app.get('/api/programs/:programId/images', async (req, res) => {
   const { programId } = req.params;
   try {
@@ -595,37 +541,26 @@ app.get('/api/programs/:programId/images', async (req, res) => {
   }
 });
 
-// حذف صورة من البرنامج
 app.delete('/api/programs/:programId/images/:imageId', async (req, res) => {
   const { programId, imageId } = req.params;
   try {
-    // جلب مسار الصورة لحذفها من الملفات
     const imageResult = await pool.query(
       'SELECT image_url FROM program_images WHERE id = $1 AND program_id = $2',
       [imageId, programId]
     );
-    
     if (imageResult.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'الصورة غير موجودة' });
     }
-    
     const imagePath = path.join(__dirname, imageResult.rows[0].image_url);
     if (fs.existsSync(imagePath)) fs.unlinkSync(imagePath);
-    
     await pool.query('DELETE FROM program_images WHERE id = $1', [imageId]);
-    
-    // إذا تم حذف الصورة الرئيسية، اجعل أول صورة متبقية هي الرئيسية
     const remaining = await pool.query(
       'SELECT id FROM program_images WHERE program_id = $1 ORDER BY display_order ASC LIMIT 1',
       [programId]
     );
     if (remaining.rows.length > 0) {
-      await pool.query(
-        'UPDATE program_images SET is_primary = true WHERE id = $1',
-        [remaining.rows[0].id]
-      );
+      await pool.query('UPDATE program_images SET is_primary = true WHERE id = $1', [remaining.rows[0].id]);
     }
-    
     res.json({ success: true, message: 'تم حذف الصورة' });
   } catch (error) {
     console.error('Error deleting program image:', error);
@@ -633,20 +568,11 @@ app.delete('/api/programs/:programId/images/:imageId', async (req, res) => {
   }
 });
 
-// تعيين صورة كصورة رئيسية
 app.put('/api/programs/:programId/images/:imageId/primary', async (req, res) => {
   const { programId, imageId } = req.params;
   try {
-    // إزالة الخاصية الرئيسية عن جميع الصور الأخرى
-    await pool.query(
-      'UPDATE program_images SET is_primary = false WHERE program_id = $1',
-      [programId]
-    );
-    // تعيين الصورة المحددة كرئيسية
-    await pool.query(
-      'UPDATE program_images SET is_primary = true WHERE id = $1 AND program_id = $2',
-      [imageId, programId]
-    );
+    await pool.query('UPDATE program_images SET is_primary = false WHERE program_id = $1', [programId]);
+    await pool.query('UPDATE program_images SET is_primary = true WHERE id = $1 AND program_id = $2', [imageId, programId]);
     res.json({ success: true, message: 'تم تعيين الصورة كرئيسية' });
   } catch (error) {
     console.error('Error setting primary image:', error);
@@ -668,7 +594,7 @@ app.get('/api/wallet/:userId', async (req, res) => {
   }
 });
 
-// ===================== تحميل الـ Routers (بعد مسارات البرامج) =====================
+// ===================== تحميل الـ Routers =====================
 app.use('/api/auth', authRoutes);
 app.use('/api/guides', guideRoutes);
 app.use('/api/programs', programRoutes);
@@ -870,7 +796,6 @@ const startServer = async () => {
     console.error('❌ Failed to connect to Supabase database. Exiting...');
     process.exit(1);
   }
-  // التأكد من وجود جدول program_images
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS program_images (
