@@ -190,6 +190,33 @@ const __dirname = path.dirname(__filename);
 const uploadDir = path.join(__dirname, 'uploads', 'avatars');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
+// إعداد رفع الصور للبرامج (يدعم عدة ملفات)
+const programStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = path.join(__dirname, 'uploads', 'programs');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = path.extname(file.originalname);
+    cb(null, `program_${req.params.programId}_${uniqueSuffix}${ext}`);
+  }
+});
+
+const uploadProgramImages = multer({
+  storage: programStorage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB لكل صورة
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = /jpeg|jpg|png|gif/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+    if (mimetype && extname) return cb(null, true);
+    cb(new Error('نوع الملف غير مدعوم. استخدم JPG, PNG, GIF فقط.'));
+  }
+});
+
+// رفع الصورة الشخصية (كما هو)
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => {
@@ -443,6 +470,133 @@ app.patch('/api/programs/:programId/status', async (req, res) => {
   }
 });
 
+// ===================== مسارات صور البرامج المتعددة =====================
+
+// رفع صور متعددة لبرنامج (حتى 10 صور)
+app.post('/api/programs/:programId/images', uploadProgramImages.array('images', 10), async (req, res) => {
+  const { programId } = req.params;
+  const files = req.files;
+  
+  if (!files || files.length === 0) {
+    return res.status(400).json({ success: false, message: 'لم يتم رفع أي صور' });
+  }
+  
+  try {
+    const uploadedImages = [];
+    
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      // تحسين الصورة وضغطها
+      const optimizedFilename = `program_${programId}_${Date.now()}_${i}.jpg`;
+      const optimizedPath = path.join(__dirname, 'uploads', 'programs', optimizedFilename);
+      
+      // التأكد من وجود المجلد
+      const programsDir = path.join(__dirname, 'uploads', 'programs');
+      if (!fs.existsSync(programsDir)) fs.mkdirSync(programsDir, { recursive: true });
+      
+      await sharp(file.path)
+        .resize(800, 600, { fit: 'inside' })
+        .jpeg({ quality: 80 })
+        .toFile(optimizedPath);
+      
+      // حذف الملف المؤقت
+      fs.unlinkSync(file.path);
+      
+      const imageUrl = `/uploads/programs/${optimizedFilename}`;
+      
+      // تحديد إذا كانت هذه أول صورة (تصبح رئيسية تلقائياً)
+      const isPrimary = i === 0;
+      
+      const result = await pool.query(
+        `INSERT INTO program_images (program_id, image_url, is_primary, display_order)
+         VALUES ($1, $2, $3, $4) RETURNING *`,
+        [programId, imageUrl, isPrimary, i]
+      );
+      
+      uploadedImages.push(result.rows[0]);
+    }
+    
+    res.json({ success: true, images: uploadedImages });
+  } catch (error) {
+    console.error('Error uploading program images:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// جلب جميع صور برنامج معين
+app.get('/api/programs/:programId/images', async (req, res) => {
+  const { programId } = req.params;
+  try {
+    const result = await pool.query(
+      `SELECT * FROM program_images WHERE program_id = $1 ORDER BY is_primary DESC, display_order ASC`,
+      [programId]
+    );
+    res.json({ success: true, images: result.rows });
+  } catch (error) {
+    console.error('Error fetching program images:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// حذف صورة من البرنامج
+app.delete('/api/programs/:programId/images/:imageId', async (req, res) => {
+  const { programId, imageId } = req.params;
+  try {
+    // جلب مسار الصورة لحذفها من الملفات
+    const imageResult = await pool.query(
+      'SELECT image_url FROM program_images WHERE id = $1 AND program_id = $2',
+      [imageId, programId]
+    );
+    
+    if (imageResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'الصورة غير موجودة' });
+    }
+    
+    const imagePath = path.join(__dirname, imageResult.rows[0].image_url);
+    if (fs.existsSync(imagePath)) fs.unlinkSync(imagePath);
+    
+    await pool.query('DELETE FROM program_images WHERE id = $1', [imageId]);
+    
+    // إذا تم حذف الصورة الرئيسية، اجعل أول صورة متبقية هي الرئيسية
+    const remaining = await pool.query(
+      'SELECT id FROM program_images WHERE program_id = $1 ORDER BY display_order ASC LIMIT 1',
+      [programId]
+    );
+    if (remaining.rows.length > 0) {
+      await pool.query(
+        'UPDATE program_images SET is_primary = true WHERE id = $1',
+        [remaining.rows[0].id]
+      );
+    }
+    
+    res.json({ success: true, message: 'تم حذف الصورة' });
+  } catch (error) {
+    console.error('Error deleting program image:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// تعيين صورة كصورة رئيسية
+app.put('/api/programs/:programId/images/:imageId/primary', async (req, res) => {
+  const { programId, imageId } = req.params;
+  try {
+    // إزالة الخاصية الرئيسية عن جميع الصور الأخرى
+    await pool.query(
+      'UPDATE program_images SET is_primary = false WHERE program_id = $1',
+      [programId]
+    );
+    // تعيين الصورة المحددة كرئيسية
+    await pool.query(
+      'UPDATE program_images SET is_primary = true WHERE id = $1 AND program_id = $2',
+      [imageId, programId]
+    );
+    res.json({ success: true, message: 'تم تعيين الصورة كرئيسية' });
+  } catch (error) {
+    console.error('Error setting primary image:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // ===================== Route إضافي للمحفظة =====================
 app.get('/api/wallet/:userId', async (req, res) => {
   try {
@@ -659,6 +813,23 @@ const startServer = async () => {
     console.error('❌ Failed to connect to Supabase database. Exiting...');
     process.exit(1);
   }
+  // التأكد من وجود جدول program_images
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS program_images (
+        id SERIAL PRIMARY KEY,
+        program_id INTEGER REFERENCES programs(id) ON DELETE CASCADE,
+        image_url TEXT NOT NULL,
+        is_primary BOOLEAN DEFAULT FALSE,
+        display_order INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    console.log('✅ program_images table ensured');
+  } catch (err) {
+    console.error('Error creating program_images table:', err);
+  }
+  
   server.listen(PORT, '0.0.0.0', () => {
     setTimeout(() => {
       console.log(`
