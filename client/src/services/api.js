@@ -590,10 +590,10 @@ export const api = {
   },
 
   // ============================================
-  // 🎯 PROGRAM SERVICES - خدمات البرامج السياحية (معدلة لتتوافق مع مسارات الخادم)
+  // 🎯 PROGRAM SERVICES - خدمات البرامج السياحية (مع Local Storage Fallback)
   // ============================================
 
-  // حفظ البرامج في localStorage (احتياطي)
+  // حفظ البرامج في localStorage
   saveProgramsToLocal(programs) {
     try {
       localStorage.setItem('local_programs', JSON.stringify(programs));
@@ -620,7 +620,7 @@ export const api = {
     return [];
   },
 
-  // جلب برامج مرشد معين (باستخدام مسار الخادم الصحيح)
+  // جلب برامج مرشد معين (مع Fallback)
   async getGuidePrograms(guideId, token) {
     try {
       console.log('📤 Fetching programs for guide:', guideId);
@@ -665,35 +665,18 @@ export const api = {
     }
   },
 
-  // إضافة برنامج سياحي جديد (باستخدام المسار الصحيح POST /api/programs)
+  // إضافة برنامج سياحي جديد (مع Fallback)
   async addTourProgram(guideId, token, programData) {
     try {
       console.log('📤 Adding program for guide:', guideId, programData);
       
-      // تعديل البيانات لتتوافق مع تنسيق الخادم (guide_id في الـ body)
-      const payload = {
-        guide_id: guideId,
-        name: programData.name,
-        description: programData.description || "",
-        price: programData.price,
-        duration: programData.duration,
-        max_participants: programData.max_participants,
-        location: programData.location,
-        location_name: programData.location_name || programData.location,
-        location_lat: programData.location_lat,
-        location_lng: programData.location_lng,
-        image: programData.image || null,
-        status: programData.status || 'active',
-        guide_name: programData.guide_name || "مرشد سياحي"
-      };
-      
-      const response = await fetch(`${API_BASE_URL}/api/programs`, {
+      const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}/programs`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(programData)
       });
 
       const data = await response.json();
@@ -736,12 +719,12 @@ export const api = {
     }
   },
 
-  // تحديث حالة البرنامج (تفعيل/تعطيل) باستخدام المسار الصحيح PATCH /api/programs/:programId/status
+  // تحديث حالة البرنامج (تفعيل/تعطيل)
   async toggleProgramStatus(guideId, programId, token, status) {
     try {
       console.log('📤 Toggling program status:', { programId, status });
       
-      const response = await fetch(`${API_BASE_URL}/api/programs/${programId}/status`, {
+      const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}/programs/${programId}`, {
         method: 'PATCH',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -782,7 +765,7 @@ export const api = {
     }
   },
 
-  // جلب جميع البرامج للعرض العام (للمستخدمين) باستخدام GET /api/programs
+  // جلب جميع البرامج للعرض العام (للمستخدمين)
   async getAllPrograms() {
     try {
       console.log('📤 Fetching all programs');
@@ -824,12 +807,12 @@ export const api = {
     }
   },
 
-  // حذف برنامج سياحي باستخدام DELETE /api/programs/:programId
+  // حذف برنامج سياحي
   async deleteProgram(guideId, programId, token) {
     try {
       console.log('📤 Deleting program:', programId);
       
-      const response = await fetch(`${API_BASE_URL}/api/programs/${programId}`, {
+      const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}/programs/${programId}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -1210,6 +1193,33 @@ export const api = {
     } catch (error) {
       console.error('❌ Send notification error:', error);
       return { success: false, error: error.message };
+    }
+  },
+
+  async sendUserNotification(userId, title, message, type = 'info') {
+    try {
+      const token = localStorage.getItem('token');
+      const url = `${API_BASE_URL}/api/notifications/send`;
+      
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ userId, title, message, type })
+      });
+
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'فشل إرسال الإشعار');
+      }
+
+      return data;
+    } catch (error) {
+      console.error('❌ Send user notification error:', error);
+      return { success: false };
     }
   },
 
