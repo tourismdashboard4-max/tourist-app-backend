@@ -440,6 +440,63 @@ app.post('/api/programs', async (req, res) => {
   }
 });
 
+// ✅ تحديث برنامج (مع التحقق من الملكية)
+app.put('/api/programs/:programId', async (req, res) => {
+  const { programId } = req.params;
+  const { name, description, price, duration, max_participants, location, location_lat, location_lng, image } = req.body;
+  
+  // الحصول على معرف المستخدم من التوكن (يفترض وجود middleware للتوكن)
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
+  }
+  const token = authHeader.split(' ')[1];
+  let userId;
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    userId = decoded.id;
+  } catch (err) {
+    return res.status(401).json({ success: false, message: 'توكن غير صالح' });
+  }
+  
+  // تحويل userId إلى UUID إذا كان رقماً
+  let userUuid = userId;
+  if (/^\d+$/.test(String(userId))) {
+    const realId = await getUUIDFromNumericId(userId);
+    if (!realId) return res.status(404).json({ success: false, message: 'المستخدم غير موجود' });
+    userUuid = realId;
+  }
+  
+  try {
+    // التحقق من أن البرنامج يخص هذا المستخدم
+    const checkOwner = await pool.query(
+      'SELECT guide_id FROM programs WHERE id = $1',
+      [programId]
+    );
+    if (checkOwner.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'البرنامج غير موجود' });
+    }
+    const programOwner = checkOwner.rows[0].guide_id;
+    if (programOwner !== userUuid) {
+      return res.status(403).json({ success: false, message: 'لا يمكنك تعديل هذا البرنامج لأنه لا يخصك' });
+    }
+    
+    // تحديث البيانات
+    const result = await pool.query(
+      `UPDATE programs 
+       SET name = $1, description = $2, price = $3, duration = $4, max_participants = $5,
+           location = $6, location_lat = $7, location_lng = $8, image = $9, updated_at = NOW()
+       WHERE id = $10 RETURNING *`,
+      [name, description, price, duration, max_participants, location, location_lat, location_lng, image, programId]
+    );
+    
+    res.json({ success: true, program: result.rows[0] });
+  } catch (error) {
+    console.error('❌ Error updating program:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // ✅ حذف برنامج
 app.delete('/api/programs/:programId', async (req, res) => {
   try {
