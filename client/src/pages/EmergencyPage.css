@@ -1,21 +1,97 @@
 /* client/src/pages/EmergencyPage.css */
+/* متغيرات الوضع الفاتح (Light Mode) */
+:root {
+  --emergency-bg: linear-gradient(135deg, #fff5f5 0%, #fff 100%);
+  --emergency-container-bg: white;
+  --emergency-container-border: #fee2e2;
+  --emergency-text-primary: #1f2937;
+  --emergency-text-secondary: #4b5563;
+  --emergency-text-muted: #6b7280;
+  --emergency-card-bg: white;
+  --emergency-card-border: #e5e7eb;
+  --emergency-card-hover-border: #dc2626;
+  --emergency-card-selected-bg: #fee2e2;
+  --emergency-form-bg: #f9fafb;
+  --emergency-input-border: #e5e7eb;
+  --emergency-input-focus-border: #dc2626;
+  --emergency-checkbox-bg: #f9fafb;
+  --emergency-service-bg: #f9fafb;
+  --emergency-service-hover-bg: #fee2e2;
+  --emergency-error-bg: #fee2e2;
+  --emergency-error-text: #991b1b;
+  --emergency-error-border: #fecaca;
+  --emergency-info-bg: #f9fafb;
+  --emergency-info-border: #e5e7eb;
+  --emergency-tips-bg: #eff6ff;
+  --emergency-home-bg: #059669;
+  --emergency-home-hover: #047857;
+  --emergency-call-bg: #2563eb;
+  --emergency-call-hover: #1d4ed8;
+  --emergency-back-bg: #f3f4f6;
+  --emergency-back-hover: #e5e7eb;
+  --emergency-back-text: #4b5563;
+  --emergency-submit-bg: #dc2626;
+  --emergency-submit-hover: #b91c1c;
+  --emergency-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+  --emergency-button-shadow: 0 10px 30px rgba(220, 38, 38, 0.3);
+}
+
+/* متغيرات الوضع الليلي (Dark Mode) */
+.dark {
+  --emergency-bg: linear-gradient(135deg, #1e1e2f 0%, #111827 100%);
+  --emergency-container-bg: #1f2937;
+  --emergency-container-border: #374151;
+  --emergency-text-primary: #f9fafb;
+  --emergency-text-secondary: #d1d5db;
+  --emergency-text-muted: #9ca3af;
+  --emergency-card-bg: #374151;
+  --emergency-card-border: #4b5563;
+  --emergency-card-hover-border: #ef4444;
+  --emergency-card-selected-bg: rgba(220, 38, 38, 0.2);
+  --emergency-form-bg: #374151;
+  --emergency-input-border: #4b5563;
+  --emergency-input-focus-border: #ef4444;
+  --emergency-checkbox-bg: #374151;
+  --emergency-service-bg: #374151;
+  --emergency-service-hover-bg: rgba(220, 38, 38, 0.2);
+  --emergency-error-bg: rgba(220, 38, 38, 0.2);
+  --emergency-error-text: #fca5a5;
+  --emergency-error-border: #7f1d1d;
+  --emergency-info-bg: #374151;
+  --emergency-info-border: #4b5563;
+  --emergency-tips-bg: #1e3a8a;
+  --emergency-home-bg: #059669;
+  --emergency-home-hover: #10b981;
+  --emergency-call-bg: #3b82f6;
+  --emergency-call-hover: #60a5fa;
+  --emergency-back-bg: #4b5563;
+  --emergency-back-hover: #6b7280;
+  --emergency-back-text: #e5e7eb;
+  --emergency-submit-bg: #dc2626;
+  --emergency-submit-hover: #ef4444;
+  --emergency-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+  --emergency-button-shadow: 0 10px 30px rgba(220, 38, 38, 0.4);
+}
+
 .emergency-page {
   min-height: 100vh;
-  background: linear-gradient(135deg, #fff5f5 0%, #fff 100%);
+  background: var(--emergency-bg);
   padding: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: background 0.3s ease;
 }
 
 .emergency-container {
   max-width: 600px;
   width: 100%;
-  background: white;
+  background: var(--emergency-container-bg);
   border-radius: 20px;
   padding: 30px;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
-  border: 1px solid #fee2e2;
+  box-shadow: var(--emergency-shadow);
+  border: 1px solid var(--emergency-container-border);
+  transition: all 0.3s ease;
 }
 
 .warning-icon {
@@ -33,13 +109,13 @@
   width: 200px;
   height: 200px;
   border-radius: 50%;
-  background: #dc2626;
+  background: var(--emergency-submit-bg);
   color: white;
   font-size: 80px;
   border: none;
   cursor: pointer;
   transition: all 0.3s;
-  box-shadow: 0 10px 30px rgba(220, 38, 38, 0.3);
+  box-shadow: var(--emergency-button-shadow);
   animation: emergency-pulse 1.5s infinite;
   display: flex;
   align-items: center;
@@ -54,14 +130,14 @@
 }
 
 .emergency-big-button:hover {
-  background: #b91c1c;
+  background: var(--emergency-submit-hover);
   transform: scale(1.05);
 }
 
 .call-button {
   width: 100%;
   padding: 15px;
-  background: #2563eb;
+  background: var(--emergency-call-bg);
   color: white;
   border: none;
   border-radius: 12px;
@@ -78,14 +154,14 @@
 
 .call-button:hover {
   transform: translateY(-2px);
-  filter: brightness(1.05);
+  background: var(--emergency-call-hover);
 }
 
 .back-button {
   width: 100%;
   padding: 12px;
-  background: #f3f4f6;
-  color: #4b5563;
+  background: var(--emergency-back-bg);
+  color: var(--emergency-back-text);
   border: none;
   border-radius: 12px;
   font-size: 16px;
@@ -94,7 +170,7 @@
 }
 
 .back-button:hover:not(:disabled) {
-  background: #e5e7eb;
+  background: var(--emergency-back-hover);
 }
 
 .back-button:disabled {
@@ -107,7 +183,7 @@
   font-weight: bold;
   text-align: center;
   margin-bottom: 30px;
-  color: #1f2937;
+  color: var(--emergency-text-primary);
 }
 
 .types-grid {
@@ -119,23 +195,23 @@
 
 .type-card {
   padding: 20px;
-  border: 2px solid #e5e7eb;
+  border: 2px solid var(--emergency-card-border);
   border-radius: 12px;
-  background: white;
+  background: var(--emergency-card-bg);
   cursor: pointer;
   transition: all 0.3s;
   text-align: center;
 }
 
 .type-card:hover {
-  border-color: #dc2626;
+  border-color: var(--emergency-card-hover-border);
   transform: translateY(-2px);
   box-shadow: 0 5px 15px rgba(220, 38, 38, 0.1);
 }
 
 .type-card.selected {
   border-color: #dc2626;
-  background: #fee2e2;
+  background: var(--emergency-card-selected-bg);
 }
 
 .type-icon {
@@ -146,12 +222,12 @@
 .type-label {
   font-weight: bold;
   margin-bottom: 4px;
-  color: #1f2937;
+  color: var(--emergency-text-primary);
 }
 
 .type-description {
   font-size: 12px;
-  color: #6b7280;
+  color: var(--emergency-text-muted);
 }
 
 .severity-grid {
@@ -163,9 +239,9 @@
 
 .severity-card {
   padding: 15px;
-  border: 2px solid #e5e7eb;
+  border: 2px solid var(--emergency-card-border);
   border-radius: 10px;
-  background: white;
+  background: var(--emergency-card-bg);
   cursor: pointer;
   transition: all 0.3s;
   text-align: center;
@@ -177,7 +253,7 @@
 
 .severity-card.selected {
   border-color: currentColor;
-  background: #fee2e2;
+  background: var(--emergency-card-selected-bg);
 }
 
 .severity-icon {
@@ -189,11 +265,12 @@
   font-weight: bold;
   font-size: 14px;
   margin-bottom: 2px;
+  color: var(--emergency-text-primary);
 }
 
 .severity-description {
   font-size: 11px;
-  color: #6b7280;
+  color: var(--emergency-text-muted);
 }
 
 .form-section {
@@ -204,40 +281,44 @@
   display: block;
   font-weight: 500;
   margin-bottom: 8px;
-  color: #374151;
+  color: var(--emergency-text-secondary);
 }
 
 .form-textarea {
   width: 100%;
   padding: 12px;
-  border: 2px solid #e5e7eb;
+  border: 2px solid var(--emergency-input-border);
   border-radius: 10px;
   resize: vertical;
   font-size: 14px;
   transition: all 0.3s;
   font-family: inherit;
+  background: var(--emergency-form-bg);
+  color: var(--emergency-text-primary);
 }
 
 .form-textarea:focus {
   outline: none;
-  border-color: #dc2626;
+  border-color: var(--emergency-input-focus-border);
 }
 
 .form-input {
   padding: 8px 12px;
-  border: 2px solid #e5e7eb;
+  border: 2px solid var(--emergency-input-border);
   border-radius: 8px;
   font-size: 14px;
   transition: all 0.3s;
+  background: var(--emergency-form-bg);
+  color: var(--emergency-text-primary);
 }
 
 .form-input:focus {
   outline: none;
-  border-color: #dc2626;
+  border-color: var(--emergency-input-focus-border);
 }
 
 .checkbox-group {
-  background: #f9fafb;
+  background: var(--emergency-checkbox-bg);
   padding: 15px;
   border-radius: 10px;
 }
@@ -247,6 +328,7 @@
   align-items: center;
   gap: 10px;
   cursor: pointer;
+  color: var(--emergency-text-secondary);
 }
 
 .checkbox-input {
@@ -268,15 +350,16 @@
   justify-content: center;
   gap: 8px;
   padding: 10px;
-  background: #f9fafb;
+  background: var(--emergency-service-bg);
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.3s;
   font-size: 14px;
+  color: var(--emergency-text-secondary);
 }
 
 .service-label:hover {
-  background: #fee2e2;
+  background: var(--emergency-service-hover-bg);
 }
 
 .button-group {
@@ -288,7 +371,7 @@
 .submit-button {
   flex: 1;
   padding: 15px;
-  background: #dc2626;
+  background: var(--emergency-submit-bg);
   color: white;
   border: none;
   border-radius: 12px;
@@ -299,7 +382,7 @@
 }
 
 .submit-button:hover:not(:disabled) {
-  background: #b91c1c;
+  background: var(--emergency-submit-hover);
   transform: translateY(-2px);
 }
 
@@ -310,11 +393,11 @@
 
 .error-message {
   padding: 12px;
-  background: #fee2e2;
-  color: #991b1b;
+  background: var(--emergency-error-bg);
+  color: var(--emergency-error-text);
   border-radius: 8px;
   text-align: center;
-  border: 1px solid #fecaca;
+  border: 1px solid var(--emergency-error-border);
   margin-bottom: 20px;
 }
 
@@ -329,29 +412,34 @@
 }
 
 .info-card {
-  background: #f9fafb;
+  background: var(--emergency-info-bg);
   padding: 20px;
   border-radius: 12px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--emergency-info-border);
   text-align: right;
 }
 
 .info-card p {
   margin: 8px 0;
+  color: var(--emergency-text-secondary);
 }
 
 .safety-tips {
-  background: #eff6ff;
+  background: var(--emergency-tips-bg);
   padding: 20px;
   border-radius: 12px;
   text-align: right;
   margin-top: 20px;
 }
 
+.safety-tips p {
+  color: var(--emergency-text-primary);
+}
+
 .home-button {
   width: 100%;
   padding: 15px;
-  background: #059669;
+  background: var(--emergency-home-bg);
   color: white;
   border: none;
   border-radius: 12px;
@@ -366,7 +454,7 @@
 }
 
 .home-button:hover {
-  background: #047857;
+  background: var(--emergency-home-hover);
   transform: translateY(-2px);
 }
 
@@ -397,4 +485,36 @@
     height: 150px;
     font-size: 60px;
   }
+}
+
+/* تحسينات إضافية للخريطة (تضاف إلى ملف css عام) */
+.custom-marker {
+  transition: transform 0.2s ease;
+}
+
+.custom-marker:hover {
+  transform: scale(1.15);
+}
+
+.mapboxgl-popup-content {
+  padding: 0 !important;
+  border-radius: 12px !important;
+  overflow: hidden;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+}
+
+.mapboxgl-popup-close-button {
+  font-size: 18px;
+  padding: 5px 8px;
+  color: #666;
+  z-index: 1;
+}
+
+.mapboxgl-popup-close-button:hover {
+  background: rgba(0,0,0,0.1);
+  color: #333;
+}
+
+.mapboxgl-canvas {
+  outline: none;
 }
