@@ -1,4 +1,4 @@
-// client/src/services/api.js
+// client/src/services/api.js - after fixing createConversation to accept UUID
 const API_BASE_URL = 'https://tourist-app-api.onrender.com';
 
 export const api = {
@@ -849,6 +849,90 @@ export const api = {
   },
 
   // ============================================
+  // 🖼️ PROGRAM IMAGES SERVICES - صور البرامج المتعددة
+  // ============================================
+
+  // رفع صور متعددة لبرنامج
+  async uploadProgramImages(programId, formData) {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE_URL}/api/programs/${programId}/images`, {
+        method: 'POST',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : ''
+        },
+        body: formData
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || 'فشل رفع الصور');
+      return data;
+    } catch (error) {
+      console.error('❌ Upload program images error:', error);
+      throw error;
+    }
+  },
+
+  // جلب صور برنامج
+  async getProgramImages(programId) {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE_URL}/api/programs/${programId}/images`, {
+        method: 'GET',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        }
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || 'فشل تحميل الصور');
+      return data;
+    } catch (error) {
+      console.error('❌ Get program images error:', error);
+      return { success: false, images: [] };
+    }
+  },
+
+  // حذف صورة من البرنامج
+  async deleteProgramImage(programId, imageId) {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE_URL}/api/programs/${programId}/images/${imageId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        }
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || 'فشل حذف الصورة');
+      return data;
+    } catch (error) {
+      console.error('❌ Delete program image error:', error);
+      throw error;
+    }
+  },
+
+  // تعيين صورة كصورة رئيسية
+  async setPrimaryProgramImage(programId, imageId) {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE_URL}/api/programs/${programId}/images/${imageId}/primary`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json'
+        }
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || 'فشل تعيين الصورة الرئيسية');
+      return data;
+    } catch (error) {
+      console.error('❌ Set primary image error:', error);
+      throw error;
+    }
+  },
+
+  // ============================================
   // 🔧 GENERIC HTTP METHODS - دوال عامة
   // ============================================
 
@@ -1224,7 +1308,7 @@ export const api = {
   },
 
   // ============================================
-  // 💬 CHAT SERVICES - خدمات المحادثات
+  // 💬 CHAT SERVICES - خدمات المحادثات (مع إصلاح مشكلة integer)
   // ============================================
 
   async getUserConversations() {
@@ -1305,6 +1389,7 @@ export const api = {
     }
   },
 
+  // ✅ تم إصلاح createConversation: يقبل participantId كأي قيمة (رقم أو نص UUID)
   async createConversation(participantId, type = 'direct', bookingId = null) {
     try {
       const token = localStorage.getItem('token');
@@ -1313,13 +1398,40 @@ export const api = {
         throw new Error('No authentication token found');
       }
       
+      // التحقق من وجود participantId
+      if (!participantId) {
+        throw new Error('معرف المستخدم غير صالح');
+      }
+      
+      // لا نقوم بتحويل participantId إلى رقم، نرسله كما هو (قد يكون UUID)
+      // فقط نتحقق من وجوده
+      
+      // التأكد من أن bookingId (إن وجد) هو رقم صحيح، وإلا تجاهله
+      let validBookingId = null;
+      if (bookingId !== null && bookingId !== undefined) {
+        const numericBookingId = parseInt(bookingId, 10);
+        if (!isNaN(numericBookingId)) {
+          validBookingId = numericBookingId;
+        } else {
+          console.warn('⚠️ bookingId is not a valid integer, ignoring:', bookingId);
+        }
+      }
+
+      const payload = {
+        participantId,  // يرسل كما هو (نص UUID أو رقم)
+        type,
+        ...(validBookingId !== null && { bookingId: validBookingId })
+      };
+
+      console.log('📤 Creating conversation with payload:', payload);
+      
       const response = await fetch(`${API_BASE_URL}/api/chats`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ participantId, type, bookingId })
+        body: JSON.stringify(payload)
       });
 
       const data = await response.json();
@@ -1966,33 +2078,6 @@ export const api = {
     }
   },
 
-  async sendUserNotification(userId, title, message, type = 'info') {
-    try {
-      const token = localStorage.getItem('token');
-      const url = `${API_BASE_URL}/api/notifications/send`;
-      
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ userId, title, message, type })
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل إرسال الإشعار');
-      }
-
-      return data;
-    } catch (error) {
-      console.error('❌ Send user notification error:', error);
-      return { success: false };
-    }
-  },
-  
   // ============================================
   // 📝 UPGRADE REQUESTS - طلبات الترقية
   // ============================================
