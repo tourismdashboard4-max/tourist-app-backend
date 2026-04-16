@@ -35,21 +35,20 @@ const app = express();
 const server = createServer(app);
 const PORT = process.env.PORT || 5002;
 
-// تحديد البيئة (محلي أو Render)
-const isRender = !!process.env.RENDER;
-const localIP = isRender ? '0.0.0.0' : 'localhost';
-
-if (!isRender) {
-  console.log(`📡 Local IP Address: ${localIP}`);
-}
-
 // ===================== إعداد WebSocket =====================
 const io = new Server(server, {
   cors: {
-    origin: true,
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization']
+    origin: [
+      'http://localhost:5173', 
+      'http://localhost:5174', 
+      'http://localhost:5175', 
+      'http://localhost:5176',
+      'http://localhost:5177',
+      'http://localhost:5178',
+      'http://localhost:5180',
+      'https://tourist-app-api.onrender.com'
+    ],
+    credentials: true
   }
 });
 
@@ -114,7 +113,7 @@ poolConfig = {
   ssl: { rejectUnauthorized: false },
   max: 20,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 30000,
+  connectionTimeoutMillis: 30000, // زيادة المهلة إلى 30 ثانية
   keepAlive: true,
   keepAliveInitialDelayMillis: 10000
 };
@@ -168,30 +167,30 @@ const connectDB = async () => {
 
 // ===================== Middleware =====================
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
-
 app.use(cors({
-  origin: true,
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+  origin: [
+    'http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', 'http://localhost:5176',
+    'http://localhost:5177', 'http://localhost:5178', 'http://localhost:5180',
+    'https://tourist-app-api.onrender.com'
+  ],
+  credentials: true
 }));
-
 app.use((req, res, next) => {
-  console.log(`🕐 [${new Date().toISOString()}] ${req.method} ${req.url} from ${req.headers.origin || 'unknown'}`);
+  console.log(`🕐 Request received at: ${new Date().toISOString()}`);
   next();
 });
-
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));
 
-// ===================== إعداد رفع الصور =====================
+// ===================== إعداد رفع الصور (Multer + Sharp) =====================
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const uploadDir = path.join(__dirname, 'uploads', 'avatars');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
+// إعداد رفع الصور للبرامج (يدعم عدة ملفات)
 const programStorage = multer.diskStorage({
   destination: (req, file, cb) => {
     const dir = path.join(__dirname, 'uploads', 'programs');
@@ -207,7 +206,7 @@ const programStorage = multer.diskStorage({
 
 const uploadProgramImages = multer({
   storage: programStorage,
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB لكل صورة
   fileFilter: (req, file, cb) => {
     const allowedTypes = /jpeg|jpg|png|gif/;
     const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
@@ -217,6 +216,7 @@ const uploadProgramImages = multer({
   }
 });
 
+// رفع الصورة الشخصية (كما هو)
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => {
@@ -240,14 +240,13 @@ const upload = multer({
 
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// ===================== Routes الرئيسية =====================
+// ===================== Routes الرئيسية (قبل تحميل الـ Routers) =====================
 app.get('/', (req, res) => {
   res.json({ 
     success: true, 
     message: 'Tourist App API is running on Supabase Cloud',
     docs: '/api/test',
     health: '/health',
-    environment: isRender ? 'Render Cloud' : 'Local Development',
     endpoints: {
       auth: '/api/auth',
       guides: '/api/guides',
@@ -346,7 +345,9 @@ app.put('/api/users/:userId/profile', async (req, res) => {
   }
 });
 
-// ===================== مسارات البرامج =====================
+// ===================== مسارات البرامج (مُصلحة - تعتمد على guide_name من جدول programs) =====================
+
+// ✅ جلب برامج مرشد معين
 app.get('/api/guides/:guideId/programs', async (req, res) => {
   try {
     let guideId = req.params.guideId;
@@ -368,6 +369,8 @@ app.get('/api/guides/:guideId/programs', async (req, res) => {
     }
     
     console.log(`🔍 Fetching programs for guide UUID: ${guideId}`);
+    
+    // ✅ استخدم guide_name من جدول programs مباشرة (لا JOIN)
     const result = await pool.query(
       `SELECT p.*, p.guide_name
        FROM programs p
@@ -384,6 +387,7 @@ app.get('/api/guides/:guideId/programs', async (req, res) => {
   }
 });
 
+// ✅ جلب جميع البرامج (مع فلتر حسب المرشد)
 app.get('/api/programs', async (req, res) => {
   try {
     let { guide_id } = req.query;
@@ -413,6 +417,7 @@ app.get('/api/programs', async (req, res) => {
   }
 });
 
+// ✅ إضافة برنامج جديد
 app.post('/api/programs', async (req, res) => {
   try {
     let { guide_id, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status, guide_name } = req.body;
@@ -435,10 +440,12 @@ app.post('/api/programs', async (req, res) => {
   }
 });
 
+// ✅ تحديث برنامج (مع التحقق من الملكية)
 app.put('/api/programs/:programId', async (req, res) => {
   const { programId } = req.params;
   const { name, description, price, duration, max_participants, location, location_lat, location_lng, image } = req.body;
   
+  // الحصول على معرف المستخدم من التوكن (يفترض وجود middleware للتوكن)
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
@@ -452,6 +459,7 @@ app.put('/api/programs/:programId', async (req, res) => {
     return res.status(401).json({ success: false, message: 'توكن غير صالح' });
   }
   
+  // تحويل userId إلى UUID إذا كان رقماً
   let userUuid = userId;
   if (/^\d+$/.test(String(userId))) {
     const realId = await getUUIDFromNumericId(userId);
@@ -460,6 +468,7 @@ app.put('/api/programs/:programId', async (req, res) => {
   }
   
   try {
+    // التحقق من أن البرنامج يخص هذا المستخدم
     const checkOwner = await pool.query(
       'SELECT guide_id FROM programs WHERE id = $1',
       [programId]
@@ -472,6 +481,7 @@ app.put('/api/programs/:programId', async (req, res) => {
       return res.status(403).json({ success: false, message: 'لا يمكنك تعديل هذا البرنامج لأنه لا يخصك' });
     }
     
+    // تحديث البيانات
     const result = await pool.query(
       `UPDATE programs 
        SET name = $1, description = $2, price = $3, duration = $4, max_participants = $5,
@@ -487,6 +497,7 @@ app.put('/api/programs/:programId', async (req, res) => {
   }
 });
 
+// ✅ حذف برنامج
 app.delete('/api/programs/:programId', async (req, res) => {
   try {
     const { programId } = req.params;
@@ -499,6 +510,7 @@ app.delete('/api/programs/:programId', async (req, res) => {
   }
 });
 
+// ✅ تحديث حالة البرنامج
 app.patch('/api/programs/:programId/status', async (req, res) => {
   try {
     const { programId } = req.params;
@@ -516,6 +528,8 @@ app.patch('/api/programs/:programId/status', async (req, res) => {
 });
 
 // ===================== مسارات صور البرامج المتعددة =====================
+
+// رفع صور متعددة لبرنامج (حتى 10 صور)
 app.post('/api/programs/:programId/images', uploadProgramImages.array('images', 10), async (req, res) => {
   const { programId } = req.params;
   const files = req.files;
@@ -526,24 +540,39 @@ app.post('/api/programs/:programId/images', uploadProgramImages.array('images', 
   
   try {
     const uploadedImages = [];
+    
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
+      // تحسين الصورة وضغطها
       const optimizedFilename = `program_${programId}_${Date.now()}_${i}.jpg`;
       const optimizedPath = path.join(__dirname, 'uploads', 'programs', optimizedFilename);
+      
+      // التأكد من وجود المجلد
       const programsDir = path.join(__dirname, 'uploads', 'programs');
       if (!fs.existsSync(programsDir)) fs.mkdirSync(programsDir, { recursive: true });
       
-      await sharp(file.path).resize(800, 600, { fit: 'inside' }).jpeg({ quality: 80 }).toFile(optimizedPath);
+      await sharp(file.path)
+        .resize(800, 600, { fit: 'inside' })
+        .jpeg({ quality: 80 })
+        .toFile(optimizedPath);
+      
+      // حذف الملف المؤقت
       fs.unlinkSync(file.path);
+      
       const imageUrl = `/uploads/programs/${optimizedFilename}`;
+      
+      // تحديد إذا كانت هذه أول صورة (تصبح رئيسية تلقائياً)
       const isPrimary = i === 0;
+      
       const result = await pool.query(
         `INSERT INTO program_images (program_id, image_url, is_primary, display_order)
          VALUES ($1, $2, $3, $4) RETURNING *`,
         [programId, imageUrl, isPrimary, i]
       );
+      
       uploadedImages.push(result.rows[0]);
     }
+    
     res.json({ success: true, images: uploadedImages });
   } catch (error) {
     console.error('Error uploading program images:', error);
@@ -551,6 +580,7 @@ app.post('/api/programs/:programId/images', uploadProgramImages.array('images', 
   }
 });
 
+// جلب جميع صور برنامج معين
 app.get('/api/programs/:programId/images', async (req, res) => {
   const { programId } = req.params;
   try {
@@ -565,26 +595,37 @@ app.get('/api/programs/:programId/images', async (req, res) => {
   }
 });
 
+// حذف صورة من البرنامج
 app.delete('/api/programs/:programId/images/:imageId', async (req, res) => {
   const { programId, imageId } = req.params;
   try {
+    // جلب مسار الصورة لحذفها من الملفات
     const imageResult = await pool.query(
       'SELECT image_url FROM program_images WHERE id = $1 AND program_id = $2',
       [imageId, programId]
     );
+    
     if (imageResult.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'الصورة غير موجودة' });
     }
+    
     const imagePath = path.join(__dirname, imageResult.rows[0].image_url);
     if (fs.existsSync(imagePath)) fs.unlinkSync(imagePath);
+    
     await pool.query('DELETE FROM program_images WHERE id = $1', [imageId]);
+    
+    // إذا تم حذف الصورة الرئيسية، اجعل أول صورة متبقية هي الرئيسية
     const remaining = await pool.query(
       'SELECT id FROM program_images WHERE program_id = $1 ORDER BY display_order ASC LIMIT 1',
       [programId]
     );
     if (remaining.rows.length > 0) {
-      await pool.query('UPDATE program_images SET is_primary = true WHERE id = $1', [remaining.rows[0].id]);
+      await pool.query(
+        'UPDATE program_images SET is_primary = true WHERE id = $1',
+        [remaining.rows[0].id]
+      );
     }
+    
     res.json({ success: true, message: 'تم حذف الصورة' });
   } catch (error) {
     console.error('Error deleting program image:', error);
@@ -592,11 +633,20 @@ app.delete('/api/programs/:programId/images/:imageId', async (req, res) => {
   }
 });
 
+// تعيين صورة كصورة رئيسية
 app.put('/api/programs/:programId/images/:imageId/primary', async (req, res) => {
   const { programId, imageId } = req.params;
   try {
-    await pool.query('UPDATE program_images SET is_primary = false WHERE program_id = $1', [programId]);
-    await pool.query('UPDATE program_images SET is_primary = true WHERE id = $1 AND program_id = $2', [imageId, programId]);
+    // إزالة الخاصية الرئيسية عن جميع الصور الأخرى
+    await pool.query(
+      'UPDATE program_images SET is_primary = false WHERE program_id = $1',
+      [programId]
+    );
+    // تعيين الصورة المحددة كرئيسية
+    await pool.query(
+      'UPDATE program_images SET is_primary = true WHERE id = $1 AND program_id = $2',
+      [imageId, programId]
+    );
     res.json({ success: true, message: 'تم تعيين الصورة كرئيسية' });
   } catch (error) {
     console.error('Error setting primary image:', error);
@@ -618,7 +668,7 @@ app.get('/api/wallet/:userId', async (req, res) => {
   }
 });
 
-// ===================== تحميل الـ Routers =====================
+// ===================== تحميل الـ Routers (بعد مسارات البرامج) =====================
 app.use('/api/auth', authRoutes);
 app.use('/api/guides', guideRoutes);
 app.use('/api/programs', programRoutes);
@@ -639,8 +689,7 @@ app.get('/api/test', (req, res) => {
     timezone: 'UTC',
     database: 'Supabase Cloud',
     websocket: 'enabled',
-    onlineUsers: onlineUsers.size,
-    environment: isRender ? 'Render Cloud' : 'Local'
+    onlineUsers: onlineUsers.size
   });
 });
 
@@ -664,8 +713,7 @@ app.get('/health', async (req, res) => {
     databaseType: 'Supabase Cloud',
     databaseVersion: dbInfo.version || 'Unknown',
     websocket: 'active',
-    onlineUsers: onlineUsers.size,
-    environment: isRender ? 'Render Cloud' : 'Local'
+    onlineUsers: onlineUsers.size
   });
 });
 
@@ -822,7 +870,7 @@ const startServer = async () => {
     console.error('❌ Failed to connect to Supabase database. Exiting...');
     process.exit(1);
   }
-  
+  // التأكد من وجود جدول program_images
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS program_images (
@@ -845,26 +893,23 @@ const startServer = async () => {
   ╔══════════════════════════════════════════════╗
   ║         🚀 TOURIST APP SERVER               ║
   ╠══════════════════════════════════════════════╣
-  ║  ▶ Port:        ${PORT}                         
-  ║  ▶ Environment: ${isRender ? 'Render Cloud' : 'Local Development'}            
-  ║  ▶ Database:    ✅ Supabase Cloud            
-  ║  ▶ WebSocket:   ✅ Enabled                   
-  ║  ▶ SSL:         ✅ Enabled                   
-  ║  ▶ Timezone:    UTC                          
-  ║  ▶ Test API:    /api/test                    
-  ║  ▶ Health:      /health                      
+  ║  ▶ Port:        ${PORT}
+  ║  ▶ Database:    ✅ Supabase Cloud
+  ║  ▶ WebSocket:   ✅ Enabled
+  ║  ▶ SSL:         ✅ Enabled
+  ║  ▶ Timezone:    UTC
+  ║  ▶ Test API:    /api/test
+  ║  ▶ Health:      /health
   ╚══════════════════════════════════════════════╝
       `);
       console.log(`🕐 Server started at: ${new Date().toISOString()}`);
       console.log(`☁️ Connected to Supabase Cloud PostgreSQL`);
-      if (!isRender) {
-        console.log(`📱 Access from mobile: Use your local IP address`);
-      }
     }, 100);
   });
 };
 
 startServer();
 
+export { io, onlineUsers, pool, createExpiryDate, isOTPValid, getTimeRemaining };
 // ✅ تصدير المتغيرات المحلية فقط (بدون تكرار الدوال المستوردة)
 export { io, onlineUsers, pool };
