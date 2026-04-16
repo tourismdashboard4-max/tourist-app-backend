@@ -35,27 +35,18 @@ const app = express();
 const server = createServer(app);
 const PORT = process.env.PORT || 5002;
 
-// دالة للحصول على عنوان IP المحلي للشبكة
-function getLocalIP() {
-  const { networkInterfaces } = require('os');
-  const nets = networkInterfaces();
-  for (const name of Object.keys(nets)) {
-    for (const net of nets[name]) {
-      if (net.family === 'IPv4' && !net.internal) {
-        return net.address;
-      }
-    }
-  }
-  return 'localhost';
+// تحديد البيئة (محلي أو Render)
+const isRender = !!process.env.RENDER;
+const localIP = isRender ? '0.0.0.0' : 'localhost';
+
+if (!isRender) {
+  console.log(`📡 Local IP Address: ${localIP}`);
 }
 
-const localIP = getLocalIP();
-console.log(`📡 Local IP Address: ${localIP}`);
-
-// ===================== إعداد WebSocket (معدل للجوال) =====================
+// ===================== إعداد WebSocket (معدل للجوال و Render) =====================
 const io = new Server(server, {
   cors: {
-    origin: true,  // يسمح لأي رابط بالاتصال (للتشغيل على الجوال)
+    origin: true,  // يسمح لأي رابط بالاتصال
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']
@@ -175,42 +166,18 @@ const connectDB = async () => {
   }
 };
 
-// ===================== Middleware (معدل للجوال) =====================
+// ===================== Middleware (معدل للجوال و Render) =====================
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 
-// ✅ إعداد CORS متقدم لدعم الجوال
-const allowedOrigins = [
-  'http://localhost:5173',
-  'http://localhost:5174',
-  'http://localhost:5175',
-  'http://localhost:5176',
-  'http://localhost:5177',
-  'http://localhost:5178',
-  'http://localhost:5180',
-  `http://${localIP}:5173`,
-  `http://${localIP}:5174`,
-  `http://${localIP}:5175`,
-  'https://tourist-app-api.onrender.com'
-];
-
+// إعداد CORS متقدم لدعم الجوال و Render
 app.use(cors({
-  origin: function(origin, callback) {
-    // السماح بالطلبات بدون origin (مثل تطبيقات الجوال)
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) !== -1 || origin === true) {
-      callback(null, true);
-    } else {
-      console.log(`⚠️ CORS blocked origin: ${origin}`);
-      // للاختبار فقط - نسمح مؤقتاً بكل الأصول
-      callback(null, true);
-    }
-  },
+  origin: true,  // يسمح لأي رابط بالاتصال
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
 
-// إضافة middleware لتسجيل جميع الطلبات للمساعدة في التصحيح
+// Middleware لتسجيل الطلبات
 app.use((req, res, next) => {
   console.log(`🕐 [${new Date().toISOString()}] ${req.method} ${req.url} from ${req.headers.origin || 'unknown'}`);
   next();
@@ -277,17 +244,17 @@ const upload = multer({
 
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// ===================== Routes الرئيسية (قبل تحميل الـ Routers) =====================
+// ===================== Routes الرئيسية =====================
 app.get('/', (req, res) => {
   res.json({ 
     success: true, 
     message: 'Tourist App API is running on Supabase Cloud',
     docs: '/api/test',
     health: '/health',
+    environment: isRender ? 'Render Cloud' : 'Local Development',
     networkInfo: {
-      localIP: localIP,
       port: PORT,
-      serverUrl: `http://${localIP}:${PORT}`
+      serverUrl: isRender ? `https://${process.env.RENDER_EXTERNAL_URL || 'localhost'}` : `http://${localIP}:${PORT}`
     },
     endpoints: {
       auth: '/api/auth',
@@ -387,7 +354,7 @@ app.put('/api/users/:userId/profile', async (req, res) => {
   }
 });
 
-// ===================== مسارات البرامج (جميع المسارات الأصلية محفوظة) =====================
+// ===================== مسارات البرامج =====================
 
 // ✅ جلب برامج مرشد معين
 app.get('/api/guides/:guideId/programs', async (req, res) => {
@@ -714,11 +681,7 @@ app.get('/api/test', (req, res) => {
     database: 'Supabase Cloud',
     websocket: 'enabled',
     onlineUsers: onlineUsers.size,
-    networkAccess: {
-      localIP: localIP,
-      port: PORT,
-      serverUrl: `http://${localIP}:${PORT}`
-    }
+    environment: isRender ? 'Render Cloud' : 'Local'
   });
 });
 
@@ -743,7 +706,7 @@ app.get('/health', async (req, res) => {
     databaseVersion: dbInfo.version || 'Unknown',
     websocket: 'active',
     onlineUsers: onlineUsers.size,
-    localIP: localIP
+    environment: isRender ? 'Render Cloud' : 'Local'
   });
 });
 
@@ -925,7 +888,7 @@ const startServer = async () => {
   ║         🚀 TOURIST APP SERVER               ║
   ╠══════════════════════════════════════════════╣
   ║  ▶ Port:        ${PORT}                         
-  ║  ▶ Local IP:    http://${localIP}:${PORT}     
+  ║  ▶ Environment: ${isRender ? 'Render Cloud' : 'Local Development'}            
   ║  ▶ Database:    ✅ Supabase Cloud            
   ║  ▶ WebSocket:   ✅ Enabled                   
   ║  ▶ SSL:         ✅ Enabled                   
@@ -936,12 +899,16 @@ const startServer = async () => {
       `);
       console.log(`🕐 Server started at: ${new Date().toISOString()}`);
       console.log(`☁️ Connected to Supabase Cloud PostgreSQL`);
-      console.log(`📱 Access from mobile: http://${localIP}:${PORT}`);
-      console.log(`💻 Access from local: http://localhost:${PORT}`);
+      if (!isRender) {
+        console.log(`📱 Access from mobile: Use your local IP address`);
+      }
     }, 100);
   });
 };
 
+startServer();
+
+export { io, onlineUsers, pool, createExpiryDate, isOTPValid, getTimeRemaining };
 startServer();
 
 export { io, onlineUsers, pool, createExpiryDate, isOTPValid, getTimeRemaining };
