@@ -43,10 +43,10 @@ if (!isRender) {
   console.log(`📡 Local IP Address: ${localIP}`);
 }
 
-// ===================== إعداد WebSocket (معدل للجوال و Render) =====================
+// ===================== إعداد WebSocket =====================
 const io = new Server(server, {
   cors: {
-    origin: true,  // يسمح لأي رابط بالاتصال
+    origin: true,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']
@@ -166,18 +166,16 @@ const connectDB = async () => {
   }
 };
 
-// ===================== Middleware (معدل للجوال و Render) =====================
+// ===================== Middleware =====================
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 
-// إعداد CORS متقدم لدعم الجوال و Render
 app.use(cors({
-  origin: true,  // يسمح لأي رابط بالاتصال
+  origin: true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
 
-// Middleware لتسجيل الطلبات
 app.use((req, res, next) => {
   console.log(`🕐 [${new Date().toISOString()}] ${req.method} ${req.url} from ${req.headers.origin || 'unknown'}`);
   next();
@@ -187,14 +185,13 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(morgan('dev'));
 
-// ===================== إعداد رفع الصور (Multer + Sharp) =====================
+// ===================== إعداد رفع الصور =====================
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const uploadDir = path.join(__dirname, 'uploads', 'avatars');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
-// إعداد رفع الصور للبرامج (يدعم عدة ملفات)
 const programStorage = multer.diskStorage({
   destination: (req, file, cb) => {
     const dir = path.join(__dirname, 'uploads', 'programs');
@@ -220,7 +217,6 @@ const uploadProgramImages = multer({
   }
 });
 
-// رفع الصورة الشخصية
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => {
@@ -252,10 +248,6 @@ app.get('/', (req, res) => {
     docs: '/api/test',
     health: '/health',
     environment: isRender ? 'Render Cloud' : 'Local Development',
-    networkInfo: {
-      port: PORT,
-      serverUrl: isRender ? `https://${process.env.RENDER_EXTERNAL_URL || 'localhost'}` : `http://${localIP}:${PORT}`
-    },
     endpoints: {
       auth: '/api/auth',
       guides: '/api/guides',
@@ -355,8 +347,6 @@ app.put('/api/users/:userId/profile', async (req, res) => {
 });
 
 // ===================== مسارات البرامج =====================
-
-// ✅ جلب برامج مرشد معين
 app.get('/api/guides/:guideId/programs', async (req, res) => {
   try {
     let guideId = req.params.guideId;
@@ -378,7 +368,6 @@ app.get('/api/guides/:guideId/programs', async (req, res) => {
     }
     
     console.log(`🔍 Fetching programs for guide UUID: ${guideId}`);
-    
     const result = await pool.query(
       `SELECT p.*, p.guide_name
        FROM programs p
@@ -395,7 +384,6 @@ app.get('/api/guides/:guideId/programs', async (req, res) => {
   }
 });
 
-// ✅ جلب جميع البرامج
 app.get('/api/programs', async (req, res) => {
   try {
     let { guide_id } = req.query;
@@ -425,7 +413,6 @@ app.get('/api/programs', async (req, res) => {
   }
 });
 
-// ✅ إضافة برنامج جديد
 app.post('/api/programs', async (req, res) => {
   try {
     let { guide_id, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status, guide_name } = req.body;
@@ -448,7 +435,6 @@ app.post('/api/programs', async (req, res) => {
   }
 });
 
-// ✅ تحديث برنامج
 app.put('/api/programs/:programId', async (req, res) => {
   const { programId } = req.params;
   const { name, description, price, duration, max_participants, location, location_lat, location_lng, image } = req.body;
@@ -501,7 +487,6 @@ app.put('/api/programs/:programId', async (req, res) => {
   }
 });
 
-// ✅ حذف برنامج
 app.delete('/api/programs/:programId', async (req, res) => {
   try {
     const { programId } = req.params;
@@ -514,7 +499,6 @@ app.delete('/api/programs/:programId', async (req, res) => {
   }
 });
 
-// ✅ تحديث حالة البرنامج
 app.patch('/api/programs/:programId/status', async (req, res) => {
   try {
     const { programId } = req.params;
@@ -532,7 +516,6 @@ app.patch('/api/programs/:programId/status', async (req, res) => {
 });
 
 // ===================== مسارات صور البرامج المتعددة =====================
-
 app.post('/api/programs/:programId/images', uploadProgramImages.array('images', 10), async (req, res) => {
   const { programId } = req.params;
   const files = req.files;
@@ -543,34 +526,24 @@ app.post('/api/programs/:programId/images', uploadProgramImages.array('images', 
   
   try {
     const uploadedImages = [];
-    
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const optimizedFilename = `program_${programId}_${Date.now()}_${i}.jpg`;
       const optimizedPath = path.join(__dirname, 'uploads', 'programs', optimizedFilename);
-      
       const programsDir = path.join(__dirname, 'uploads', 'programs');
       if (!fs.existsSync(programsDir)) fs.mkdirSync(programsDir, { recursive: true });
       
-      await sharp(file.path)
-        .resize(800, 600, { fit: 'inside' })
-        .jpeg({ quality: 80 })
-        .toFile(optimizedPath);
-      
+      await sharp(file.path).resize(800, 600, { fit: 'inside' }).jpeg({ quality: 80 }).toFile(optimizedPath);
       fs.unlinkSync(file.path);
-      
       const imageUrl = `/uploads/programs/${optimizedFilename}`;
       const isPrimary = i === 0;
-      
       const result = await pool.query(
         `INSERT INTO program_images (program_id, image_url, is_primary, display_order)
          VALUES ($1, $2, $3, $4) RETURNING *`,
         [programId, imageUrl, isPrimary, i]
       );
-      
       uploadedImages.push(result.rows[0]);
     }
-    
     res.json({ success: true, images: uploadedImages });
   } catch (error) {
     console.error('Error uploading program images:', error);
@@ -599,27 +572,19 @@ app.delete('/api/programs/:programId/images/:imageId', async (req, res) => {
       'SELECT image_url FROM program_images WHERE id = $1 AND program_id = $2',
       [imageId, programId]
     );
-    
     if (imageResult.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'الصورة غير موجودة' });
     }
-    
     const imagePath = path.join(__dirname, imageResult.rows[0].image_url);
     if (fs.existsSync(imagePath)) fs.unlinkSync(imagePath);
-    
     await pool.query('DELETE FROM program_images WHERE id = $1', [imageId]);
-    
     const remaining = await pool.query(
       'SELECT id FROM program_images WHERE program_id = $1 ORDER BY display_order ASC LIMIT 1',
       [programId]
     );
     if (remaining.rows.length > 0) {
-      await pool.query(
-        'UPDATE program_images SET is_primary = true WHERE id = $1',
-        [remaining.rows[0].id]
-      );
+      await pool.query('UPDATE program_images SET is_primary = true WHERE id = $1', [remaining.rows[0].id]);
     }
-    
     res.json({ success: true, message: 'تم حذف الصورة' });
   } catch (error) {
     console.error('Error deleting program image:', error);
@@ -630,14 +595,8 @@ app.delete('/api/programs/:programId/images/:imageId', async (req, res) => {
 app.put('/api/programs/:programId/images/:imageId/primary', async (req, res) => {
   const { programId, imageId } = req.params;
   try {
-    await pool.query(
-      'UPDATE program_images SET is_primary = false WHERE program_id = $1',
-      [programId]
-    );
-    await pool.query(
-      'UPDATE program_images SET is_primary = true WHERE id = $1 AND program_id = $2',
-      [imageId, programId]
-    );
+    await pool.query('UPDATE program_images SET is_primary = false WHERE program_id = $1', [programId]);
+    await pool.query('UPDATE program_images SET is_primary = true WHERE id = $1 AND program_id = $2', [imageId, programId]);
     res.json({ success: true, message: 'تم تعيين الصورة كرئيسية' });
   } catch (error) {
     console.error('Error setting primary image:', error);
@@ -864,7 +823,6 @@ const startServer = async () => {
     process.exit(1);
   }
   
-  // التأكد من وجود جدول program_images
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS program_images (
@@ -908,7 +866,5 @@ const startServer = async () => {
 
 startServer();
 
-export { io, onlineUsers, pool, createExpiryDate, isOTPValid, getTimeRemaining };
-startServer();
-
-export { io, onlineUsers, pool, createExpiryDate, isOTPValid, getTimeRemaining };
+// ✅ تصدير المتغيرات المحلية فقط (بدون تكرار الدوال المستوردة)
+export { io, onlineUsers, pool };
