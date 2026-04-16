@@ -177,28 +177,20 @@ const connectDB = async () => {
   }
 };
 
-// ===================== Middleware (يدعم الجوال) =====================
+// ===================== Middleware (يدعم الجوال بالكامل) =====================
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 
-// CORS متقدم: يسمح بأي مصدر (للاتصال من الجوال) مع إبقاء دعم الإنتاج
+// CORS معدل بالكامل للسماح لأي origin في بيئة الإنتاج (لحل مشكلة الجوال)
 app.use(cors({
   origin: function (origin, callback) {
     // السماح بطلبات بدون origin (مثل تطبيقات الجوال)
     if (!origin) return callback(null, true);
     // في بيئة التطوير المحلي، نسمح بكل الأصول
     if (!isRender) return callback(null, true);
-    // في الإنتاج (Render)، نسمح للعناوين المعروفة
-    const allowedOrigins = [
-      'http://localhost:5173', 'http://localhost:5174',
-      'https://tourist-app-api.onrender.com',
-      `http://${localIP}:5173`, `http://${localIP}:5174`
-    ];
-    if (allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      console.log(`⚠️ CORS blocked origin: ${origin}`);
-      callback(new Error('Not allowed by CORS'));
-    }
+    // في الإنتاج (Render): نسمح مؤقتاً لجميع الأصول لتجنب حظر الجوال
+    // يمكنك لاحقاً تضييق القائمة على عناوين تطبيقك الأمامي فقط
+    console.log(`CORS allowing origin: ${origin}`);
+    return callback(null, true);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
