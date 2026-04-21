@@ -1,3 +1,4 @@
+// server.js - النسخة النهائية مع دعم safety_guidelines
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -57,14 +58,13 @@ console.log(`📡 Local IP: ${localIP}, Render: ${isRender}`);
 // ===================== إعداد WebSocket (يدعم الجوال) =====================
 const io = new Server(server, {
   cors: {
-    origin: true,  // يسمح بأي رابط (للاتصال من الجوال)
+    origin: true,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']
   }
 });
 
-// تخزين المستخدمين المتصلين
 const onlineUsers = new Map();
 
 io.on('connection', (socket) => {
@@ -177,18 +177,13 @@ const connectDB = async () => {
   }
 };
 
-// ===================== Middleware (يدعم الجوال بالكامل) =====================
+// ===================== Middleware =====================
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 
-// CORS معدل بالكامل للسماح لأي origin في بيئة الإنتاج (لحل مشكلة الجوال)
 app.use(cors({
   origin: function (origin, callback) {
-    // السماح بطلبات بدون origin (مثل تطبيقات الجوال)
     if (!origin) return callback(null, true);
-    // في بيئة التطوير المحلي، نسمح بكل الأصول
     if (!isRender) return callback(null, true);
-    // في الإنتاج (Render): نسمح مؤقتاً لجميع الأصول لتجنب حظر الجوال
-    // يمكنك لاحقاً تضييق القائمة على عناوين تطبيقك الأمامي فقط
     console.log(`CORS allowing origin: ${origin}`);
     return callback(null, true);
   },
@@ -368,7 +363,7 @@ app.put('/api/users/:userId/profile', async (req, res) => {
   }
 });
 
-// ===================== مسارات البرامج =====================
+// ===================== مسارات البرامج (مع safety_guidelines) =====================
 app.get('/api/guides/:guideId/programs', async (req, res) => {
   try {
     let guideId = req.params.guideId;
@@ -391,7 +386,7 @@ app.get('/api/guides/:guideId/programs', async (req, res) => {
     
     console.log(`🔍 Fetching programs for guide UUID: ${guideId}`);
     const result = await pool.query(
-      `SELECT p.*, p.guide_name
+      `SELECT p.*, p.guide_name, p.safety_guidelines
        FROM programs p
        WHERE p.guide_id = $1
        ORDER BY p.created_at DESC`,
@@ -410,7 +405,7 @@ app.get('/api/programs', async (req, res) => {
   try {
     let { guide_id } = req.query;
     let query = `
-      SELECT p.*, p.guide_name
+      SELECT p.*, p.guide_name, p.safety_guidelines
       FROM programs p
       WHERE 1=1
     `;
@@ -437,7 +432,7 @@ app.get('/api/programs', async (req, res) => {
 
 app.post('/api/programs', async (req, res) => {
   try {
-    let { guide_id, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status, guide_name } = req.body;
+    let { guide_id, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status, guide_name, safety_guidelines } = req.body;
     let realGuideId = guide_id;
     if (/^\d+$/.test(String(guide_id))) {
       const realId = await getUUIDFromNumericId(guide_id);
@@ -445,10 +440,10 @@ app.post('/api/programs', async (req, res) => {
       realGuideId = realId;
     }
     const result = await pool.query(
-      `INSERT INTO programs (guide_id, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status, guide_name, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
+      `INSERT INTO programs (guide_id, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status, guide_name, safety_guidelines, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
        RETURNING *`,
-      [realGuideId, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status || 'active', guide_name || 'مرشد سياحي']
+      [realGuideId, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status || 'active', guide_name || 'مرشد سياحي', safety_guidelines || null]
     );
     res.json({ success: true, program: result.rows[0], message: 'Program added successfully' });
   } catch (error) {
@@ -459,7 +454,7 @@ app.post('/api/programs', async (req, res) => {
 
 app.put('/api/programs/:programId', async (req, res) => {
   const { programId } = req.params;
-  const { name, description, price, duration, max_participants, location, location_lat, location_lng, image } = req.body;
+  const { name, description, price, duration, max_participants, location, location_lat, location_lng, image, safety_guidelines } = req.body;
   
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -497,9 +492,9 @@ app.put('/api/programs/:programId', async (req, res) => {
     const result = await pool.query(
       `UPDATE programs 
        SET name = $1, description = $2, price = $3, duration = $4, max_participants = $5,
-           location = $6, location_lat = $7, location_lng = $8, image = $9, updated_at = NOW()
-       WHERE id = $10 RETURNING *`,
-      [name, description, price, duration, max_participants, location, location_lat, location_lng, image, programId]
+           location = $6, location_lat = $7, location_lng = $8, image = $9, safety_guidelines = $10, updated_at = NOW()
+       WHERE id = $11 RETURNING *`,
+      [name, description, price, duration, max_participants, location, location_lat, location_lng, image, safety_guidelines, programId]
     );
     
     res.json({ success: true, program: result.rows[0] });
