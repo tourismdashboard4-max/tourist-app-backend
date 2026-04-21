@@ -1,4 +1,4 @@
-// server.js - النسخة النهائية مع دعم safety_guidelines
+// server.js - النسخة النهائية مع دعم safety_guidelines في جميع نقاط النهاية
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -363,7 +363,7 @@ app.put('/api/users/:userId/profile', async (req, res) => {
   }
 });
 
-// ===================== مسارات البرامج (مع safety_guidelines) =====================
+// ===================== مسارات البرامج (مع safety_guidelines في جميع نقاط النهاية) =====================
 app.get('/api/guides/:guideId/programs', async (req, res) => {
   try {
     let guideId = req.params.guideId;
@@ -427,6 +427,27 @@ app.get('/api/programs', async (req, res) => {
   } catch (error) {
     console.error('❌ Error fetching programs:', error);
     res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ✅ نقطة النهاية المحسنة لجلب برنامج محدد (بما في ذلك safety_guidelines)
+app.get('/api/programs/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const query = `
+      SELECT p.*, u.name as guide_name, u.email as guide_email, u.avatar as guide_avatar, p.safety_guidelines
+      FROM programs p
+      LEFT JOIN users u ON p.guide_id = u.id
+      WHERE p.id = $1
+    `;
+    const result = await pool.query(query, [id]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'البرنامج غير موجود' });
+    }
+    res.json({ success: true, program: result.rows[0] });
+  } catch (error) {
+    console.error('❌ Get program error:', error);
+    res.status(500).json({ success: false, message: 'حدث خطأ في جلب البرنامج: ' + error.message });
   }
 });
 
