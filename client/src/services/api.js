@@ -1,5 +1,43 @@
-// client/src/services/api.js - after fixing createConversation to accept UUID
-const API_BASE_URL = 'https://tourist-app-api.onrender.com';
+// client/src/services/api.js - after fixing createConversation to accept UUID and include current user
+// ✅ استخدام متغير البيئة لتعيين عنوان API (مع قيمة افتراضية للتطوير المحلي)
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://tourist-app-api.onrender.com';
+
+// ✅ خريطة عالمية لتحويل UUID -> old_id (تُعبأ مرة واحدة)
+let guidesIdMap = null;
+let guidesMapPromise = null;
+
+// دالة مساعدة لجلب قائمة المرشدين وبناء خريطة UUID -> old_id
+const loadGuidesMap = async () => {
+  if (guidesIdMap) return guidesIdMap;
+  if (guidesMapPromise) return guidesMapPromise;
+  guidesMapPromise = (async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/guides`);
+      const data = await response.json();
+      let guidesList = [];
+      if (data.success && Array.isArray(data.guides)) guidesList = data.guides;
+      else if (Array.isArray(data)) guidesList = data;
+      else if (data.data && Array.isArray(data.data)) guidesList = data.data;
+      const map = {};
+      guidesList.forEach(guide => {
+        const uuid = guide.id || guide.uuid;
+        const numericId = guide.old_id;
+        if (uuid && numericId && !isNaN(Number(numericId))) {
+          map[uuid] = Number(numericId);
+        }
+      });
+      guidesIdMap = map;
+      console.log('✅ Guides map loaded:', guidesIdMap);
+      return guidesIdMap;
+    } catch (err) {
+      console.error('Failed to load guides map:', err);
+      return {};
+    } finally {
+      guidesMapPromise = null;
+    }
+  })();
+  return guidesMapPromise;
+};
 
 export const api = {
   // ============================================
@@ -590,22 +628,39 @@ export const api = {
   },
 
   // ============================================
-  // 🎯 PROGRAM SERVICES - خدمات البرامج السياحية (مع Local Storage Fallback)
+  // 🎯 PROGRAM SERVICES - خدمات البرامج السياحية (مع Local Storage محدود جداً)
   // ============================================
 
-  // حفظ البرامج في localStorage
+  // حفظ البرامج في localStorage (نادراً ما يُستخدم)
   saveProgramsToLocal(programs) {
     try {
-      localStorage.setItem('local_programs', JSON.stringify(programs));
+      const dataStr = JSON.stringify(programs);
+      if (dataStr.length > 800 * 1024) {
+        console.warn('⚠️ Programs data too large, skipping localStorage save');
+        return false;
+      }
+      localStorage.setItem('local_programs', dataStr);
       console.log('✅ Programs saved to localStorage:', programs.length);
       return true;
     } catch (error) {
-      console.error('❌ Error saving programs:', error);
+      if (error.name === 'QuotaExceededError') {
+        console.error('❌ localStorage quota exceeded, clearing old data...');
+        try {
+          localStorage.removeItem('local_programs');
+          const limited = programs.slice(-30);
+          localStorage.setItem('local_programs', JSON.stringify(limited));
+          console.log('✅ Saved last 30 programs after cleanup');
+        } catch (e) {
+          console.error('Failed to save even after cleanup');
+        }
+      } else {
+        console.error('❌ Error saving programs:', error);
+      }
       return false;
     }
   },
 
-  // جلب البرامج من localStorage
+  // جلب البرامج من localStorage (آخر ملجأ)
   getProgramsFromLocal() {
     try {
       const programs = localStorage.getItem('local_programs');
@@ -620,8 +675,8 @@ export const api = {
     return [];
   },
 
-  // جلب برامج مرشد معين (مع Fallback)
-  async getGuidePrograms(guideId, token) {
+  // جلب برامج مرشد معين (بدون حفظ تلقائي في localStorage)
+  async getGuidePrograms(guideId, token, skipLocalSave = true) {
     try {
       console.log('📤 Fetching programs for guide:', guideId);
       
@@ -639,8 +694,8 @@ export const api = {
         throw new Error(data.message || 'فشل تحميل البرامج');
       }
 
-      // حفظ البرامج في localStorage عند النجاح
-      if (data.programs && data.programs.length > 0) {
+      // لا نحفظ في localStorage إلا إذا طلب ذلك صراحة (نادراً)
+      if (!skipLocalSave && data.programs && data.programs.length > 0 && data.programs.length < 50) {
         const allPrograms = this.getProgramsFromLocal();
         const otherPrograms = allPrograms.filter(p => p.guide_id !== guideId);
         this.saveProgramsToLocal([...otherPrograms, ...data.programs]);
@@ -649,23 +704,12 @@ export const api = {
       return data;
     } catch (error) {
       console.error('❌ Get programs error:', error);
-      
-      // Fallback: جلب من localStorage
-      const localPrograms = this.getProgramsFromLocal();
-      const guidePrograms = localPrograms.filter(p => p.guide_id === guideId);
-      
-      console.log('📦 Using cached programs from localStorage:', guidePrograms.length);
-      
-      return {
-        success: true,
-        programs: guidePrograms,
-        fromLocal: true,
-        message: 'تم تحميل البرامج من التخزين المحلي'
-      };
+      // لا نستخدم localStorage كـ fallback لتجنب البيانات القديمة
+      return { success: false, programs: [], error: error.message };
     }
   },
 
-  // إضافة برنامج سياحي جديد (مع Fallback)
+  // إضافة برنامج سياحي جديد (مع تخزين محلي محدود فقط في حالة فشل API)
   async addTourProgram(guideId, token, programData) {
     try {
       console.log('📤 Adding program for guide:', guideId, programData);
@@ -685,37 +729,12 @@ export const api = {
         throw new Error(data.message || 'فشل إضافة البرنامج');
       }
 
-      // حفظ في localStorage عند النجاح
-      if (data.program) {
-        const allPrograms = this.getProgramsFromLocal();
-        allPrograms.push(data.program);
-        this.saveProgramsToLocal(allPrograms);
-      }
-
+      // لا نحفظ في localStorage تلقائياً
       return data;
     } catch (error) {
       console.error('❌ Add program error:', error);
-      
-      // Fallback: حفظ في localStorage فقط
-      const newProgram = {
-        id: Date.now(),
-        guide_id: guideId,
-        ...programData,
-        status: 'active',
-        local: true,
-        created_at: new Date().toISOString()
-      };
-      
-      const allPrograms = this.getProgramsFromLocal();
-      allPrograms.push(newProgram);
-      this.saveProgramsToLocal(allPrograms);
-      
-      return {
-        success: true,
-        program: newProgram,
-        fromLocal: true,
-        message: 'تم حفظ البرنامج محلياً، سيتم المزامنة عند توفر الاتصال'
-      };
+      // لا نستخدم localStorage fallback لأن البيانات قد تكون غير متزامنة
+      return { success: false, error: error.message };
     }
   },
 
@@ -739,34 +758,15 @@ export const api = {
         throw new Error(data.message || 'فشل تحديث حالة البرنامج');
       }
 
-      // تحديث في localStorage
-      const allPrograms = this.getProgramsFromLocal();
-      const updatedPrograms = allPrograms.map(p => 
-        p.id === programId ? { ...p, status: status } : p
-      );
-      this.saveProgramsToLocal(updatedPrograms);
-
       return data;
     } catch (error) {
       console.error('❌ Toggle program error:', error);
-      
-      // Fallback: تحديث في localStorage فقط
-      const allPrograms = this.getProgramsFromLocal();
-      const updatedPrograms = allPrograms.map(p => 
-        p.id === programId ? { ...p, status: status, localUpdate: true } : p
-      );
-      this.saveProgramsToLocal(updatedPrograms);
-      
-      return {
-        success: true,
-        fromLocal: true,
-        message: 'تم تحديث حالة البرنامج محلياً'
-      };
+      return { success: false, error: error.message };
     }
   },
 
-  // جلب جميع البرامج للعرض العام (للمستخدمين)
-  async getAllPrograms() {
+  // جلب جميع البرامج للعرض العام (للمستخدمين) - بدون تخزين محلي
+  async getAllPrograms(skipLocalSave = true) {
     try {
       console.log('📤 Fetching all programs');
       
@@ -783,27 +783,11 @@ export const api = {
         throw new Error(data.message || 'فشل تحميل البرامج');
       }
 
-      // حفظ في localStorage
-      if (data.programs && data.programs.length > 0) {
-        this.saveProgramsToLocal(data.programs);
-      }
-
+      // لا نحفظ في localStorage تلقائياً
       return data;
     } catch (error) {
       console.error('❌ Get all programs error:', error);
-      
-      // Fallback: جلب من localStorage
-      const localPrograms = this.getProgramsFromLocal();
-      
-      // تصفية البرامج النشطة فقط
-      const activePrograms = localPrograms.filter(p => p.status === 'active');
-      
-      return {
-        success: true,
-        programs: activePrograms,
-        fromLocal: true,
-        message: 'تم تحميل البرامج من التخزين المحلي'
-      };
+      return { success: false, programs: [], error: error.message };
     }
   },
 
@@ -826,25 +810,10 @@ export const api = {
         throw new Error(data.message || 'فشل حذف البرنامج');
       }
 
-      // حذف من localStorage
-      const allPrograms = this.getProgramsFromLocal();
-      const updatedPrograms = allPrograms.filter(p => p.id !== programId);
-      this.saveProgramsToLocal(updatedPrograms);
-
       return data;
     } catch (error) {
       console.error('❌ Delete program error:', error);
-      
-      // Fallback: حذف من localStorage فقط
-      const allPrograms = this.getProgramsFromLocal();
-      const updatedPrograms = allPrograms.filter(p => p.id !== programId);
-      this.saveProgramsToLocal(updatedPrograms);
-      
-      return {
-        success: true,
-        fromLocal: true,
-        message: 'تم حذف البرنامج محلياً'
-      };
+      return { success: false, error: error.message };
     }
   },
 
@@ -1389,7 +1358,7 @@ export const api = {
     }
   },
 
-  // ✅ تم إصلاح createConversation: يقبل participantId كأي قيمة (رقم أو نص UUID)
+  // ✅ تم إصلاح createConversation: يقبل participantId كأي قيمة ويحول UUID إلى old_id تلقائياً، ويضيف userId الحالي
   async createConversation(participantId, type = 'direct', bookingId = null) {
     try {
       const token = localStorage.getItem('token');
@@ -1398,15 +1367,38 @@ export const api = {
         throw new Error('No authentication token found');
       }
       
-      // التحقق من وجود participantId
       if (!participantId) {
         throw new Error('معرف المستخدم غير صالح');
       }
       
-      // لا نقوم بتحويل participantId إلى رقم، نرسله كما هو (قد يكون UUID)
-      // فقط نتحقق من وجوده
+      // جلب المستخدم الحالي من localStorage
+      const userStr = localStorage.getItem('touristAppUser') || localStorage.getItem('user');
+      const currentUser = userStr ? JSON.parse(userStr) : null;
       
-      // التأكد من أن bookingId (إن وجد) هو رقم صحيح، وإلا تجاهله
+      let finalParticipantId = participantId;
+      
+      // إذا كان المشارك ليس رقماً (أي UUID)، نحاول تحويله إلى old_id باستخدام خريطة المرشدين
+      if (typeof participantId === 'string' && isNaN(Number(participantId))) {
+        try {
+          const guidesMap = await loadGuidesMap();
+          const numericId = guidesMap[participantId];
+          if (numericId) {
+            finalParticipantId = numericId;
+            console.log(`✅ Converted UUID ${participantId} to numeric ID ${numericId}`);
+          } else {
+            console.warn(`⚠️ Could not find numeric ID for UUID ${participantId}, will use as is (may fail)`);
+          }
+        } catch (err) {
+          console.error('Error converting participant ID:', err);
+        }
+      } else {
+        // إذا كان رقماً بالفعل، تأكد من أنه رقم
+        finalParticipantId = Number(participantId);
+        if (isNaN(finalParticipantId)) {
+          throw new Error('معرف المستخدم غير صالح (ليس رقماً)');
+        }
+      }
+      
       let validBookingId = null;
       if (bookingId !== null && bookingId !== undefined) {
         const numericBookingId = parseInt(bookingId, 10);
@@ -1417,9 +1409,11 @@ export const api = {
         }
       }
 
+      // ✅ إضافة userId للمستخدم الحالي
       const payload = {
-        participantId,  // يرسل كما هو (نص UUID أو رقم)
+        participantId: finalParticipantId,
         type,
+        userId: currentUser?.id,   // مفتاح الحل: إرسال معرف المستخدم الحالي
         ...(validBookingId !== null && { bookingId: validBookingId })
       };
 
