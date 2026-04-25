@@ -1,4 +1,5 @@
-// server.js - النسخة النهائية مع دعم safety_guidelines
+// server.js - النسخة النهائية مع دعم safety_guidelines وإشعارات المرشدين
+
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -91,6 +92,38 @@ io.on('connection', (socket) => {
 
   socket.on('typing', ({ chatId, isTyping }) => {
     socket.to(`chat:${chatId}`).emit('typing', { userId: socket.userId, isTyping });
+  });
+
+  // ✅ إضافة مستمع لإشعارات المرشدين
+  socket.on('notify_guide', async (data) => {
+    const { guideId, userId, userName, message, ticketId, type } = data;
+    console.log(`📢 Socket notify_guide received for guide ${guideId}`);
+    
+    const guideSocketId = onlineUsers.get(guideId);
+    if (guideSocketId) {
+      io.to(guideSocketId).emit('guide_notification', {
+        type: 'chat_message',
+        from: userId,
+        fromName: userName,
+        message: message,
+        ticketId: ticketId,
+        timestamp: new Date().toISOString()
+      });
+      console.log(`✅ Guide ${guideId} notified via socket (online)`);
+    } else {
+      // تخزين الإشعار في قاعدة البيانات للمرشد
+      await sendGuideNotification(
+        guideId,
+        'chat_message',
+        `رسالة جديدة من ${userName}`,
+        message,
+        ticketId,
+        'high',
+        `/support/tickets/${ticketId}`,
+        { from_user: userId, from_name: userName }
+      );
+      console.log(`✅ Guide notification stored for offline guide ${guideId}`);
+    }
   });
 
   socket.on('disconnect', () => {
@@ -635,57 +668,175 @@ app.get('/api/wallet/:userId', async (req, res) => {
   }
 });
 
-// ===================== تحميل الـ Routers =====================
-app.use('/api/auth', authRoutes);
-app.use('/api/guides', guideRoutes);
-app.use('/api/programs', programRoutes);
-app.use('/api/wallet', walletRoutes);
-app.use('/api/bookings', bookingRoutes);
-app.use('/api/chats', chatRoutes);
-app.use('/api/notifications', notificationRoutes);
-app.use('/api/support', supportRoutes);
-app.use('/api/upgrade', upgradeRoutes);
-
-// ===================== Test & Health =====================
-app.get('/api/test', (req, res) => {
-  res.json({ 
-    success: true, 
-    message: '✅ Server is working with Supabase PostgreSQL!',
-    timestamp: new Date().toISOString(),
-    serverTime: new Date().toLocaleString(),
-    timezone: 'UTC',
-    database: 'Supabase Cloud',
-    websocket: 'enabled',
-    onlineUsers: onlineUsers.size,
-    environment: isRender ? 'Render Cloud' : 'Local',
-    localIP: localIP
-  });
-});
-
-app.get('/health', async (req, res) => {
-  const dbConnected = await connectDB().catch(() => false);
-  let dbInfo = {};
-  if (dbConnected) {
+// ===================== إرسال إشعارات للمرشدين =====================
+async function sendGuideNotification(guideId, type, title, message, relatedId = null, priority = 'normal', actionUrl = null, metadata = {}) {
+  try {
+    // التحقق من وجود جدول notifications
     try {
-      const versionResult = await pool.query('SELECT version()');
-      dbInfo.version = versionResult.rows[0].version.split(' ')[0] + ' ' + versionResult.rows[0].version.split(' ')[1];
-    } catch (e) { dbInfo.version = 'PostgreSQL'; }
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS app.notifications (
+          id SERIAL PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          type VARCHAR(50) DEFAULT 'general',
+          title TEXT NOT NULL,
+          message TEXT NOT NULL,
+          related_id INTEGER,
+          priority VARCHAR(20) DEFAULT 'normal',
+          action_url TEXT,
+          metadata JSONB,
+          created_at TIMESTAMP DEFAULT NOW(),
+          status VARCHAR(20) DEFAULT 'unread',
+          read_at TIMESTAMP
+        )
+      `);
+    } catch (err) {
+      console.log('Notifications table creation check:', err.message);
+    }
+
+    const result = await pool.query(
+      `INSERT INTO app.notifications 
+       (user_id, type, title, message, related_id, priority, action_url, metadata, created_at, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), 'unread')
+       RETURNING *`,
+      [guideId, type, title, message, relatedId, priority, actionUrl, JSON.stringify(metadata)]
+    );
+    
+    console.log(`📨 Notification sent to guide ${guideId}: ${title}`);
+    
+    // إرسال إشعار فوري عبر Socket إذا كان المرشد متصلاً
+    const guideSocketId = onlineUsers.get(guideId);
+    if (guideSocketId && io) {
+      io.to(guideSocketId).emit('new_notification', {
+        id: result.rows[0].id,
+        type,
+        title,
+        message,
+        related_id: relatedId,
+        priority,
+        action_url: actionUrl,
+        metadata,
+        created_at: new Date().toISOString()
+      });
+      console.log(`🔔 Real-time notification sent via socket to guide ${guideId}`);
+    }
+    
+    return result.rows[0];
+  } catch (error) {
+    console.error('Error sending guide notification:', error);
+    return null;
   }
-  res.json({
-    status: 'OK',
-    timestamp: new Date().toISOString(),
-    serverTime: new Date().toLocaleString(),
-    timezone: 'UTC',
-    uptime: process.uptime(),
-    port: PORT,
-    database: dbConnected ? 'connected' : 'disconnected',
-    databaseType: 'Supabase Cloud',
-    databaseVersion: dbInfo.version || 'Unknown',
-    websocket: 'active',
-    onlineUsers: onlineUsers.size,
-    environment: isRender ? 'Render Cloud' : 'Local'
-  });
-});
+}
+
+// ===================== إرسال إشعارات للمستخدمين العاديين =====================
+async function sendUserNotification(userId, type, title, message, relatedId = null, priority = 'normal', actionUrl = null, metadata = {}) {
+  try {
+    const result = await pool.query(
+      `INSERT INTO app.notifications 
+       (user_id, type, title, message, related_id, priority, action_url, metadata, created_at, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), 'unread')
+       RETURNING *`,
+      [userId, type, title, message, relatedId, priority, actionUrl, JSON.stringify(metadata)]
+    );
+    
+    const userSocketId = onlineUsers.get(userId);
+    if (userSocketId && io) {
+      io.to(userSocketId).emit('new_notification', {
+        id: result.rows[0].id,
+        type,
+        title,
+        message,
+        related_id: relatedId,
+        priority,
+        action_url: actionUrl,
+        metadata,
+        created_at: new Date().toISOString()
+      });
+      console.log(`🔔 Real-time notification sent via socket to user ${userId}`);
+    }
+    
+    return result.rows[0];
+  } catch (error) {
+    console.error('Error sending user notification:', error);
+    return null;
+  }
+}
+
+// ===================== دوال إشعارات التذاكر =====================
+async function notifyForNewTicket(ticket) {
+  try {
+    // إرسال للمشرفين
+    await sendNotificationToAllAdmins(
+      'new_ticket',
+      `تذكرة جديدة: ${ticket.subject}`,
+      `تم إنشاء تذكرة جديدة بواسطة المستخدم ${ticket.user_name || ticket.user_id}`,
+      ticket.id,
+      'high',
+      `/admin/support/tickets/${ticket.id}`,
+      { ticket_id: ticket.id, user_id: ticket.user_id }
+    );
+    
+    // إذا كانت التذكرة من نوع guide_chat، إرسال إشعار للمرشد المحدد
+    if (ticket.type === 'guide_chat' && ticket.metadata?.guideId) {
+      const guideId = ticket.metadata.guideId;
+      await sendGuideNotification(
+        guideId,
+        'new_chat_message',
+        `رسالة جديدة من ${ticket.metadata.created_by_name || 'مستخدم'}`,
+        `لديك رسالة جديدة في محادثتك مع ${ticket.metadata.created_by_name || 'مستخدم'}`,
+        ticket.id,
+        'high',
+        `/guide/chats/${ticket.id}`,
+        { ticket_id: ticket.id, user_id: ticket.user_id, user_name: ticket.metadata.created_by_name }
+      );
+      console.log(`✅ Chat notification sent to guide: ${guideId}`);
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('Error sending ticket notifications:', error);
+    return false;
+  }
+}
+
+async function notifyForNewMessage(message, ticket, user) {
+  try {
+    // إرسال للمشرفين
+    await sendNotificationToAllAdmins(
+      'new_message',
+      `رسالة جديدة في التذكرة #${ticket.id}`,
+      `رسالة جديدة من ${user?.full_name || user?.name || 'مستخدم'}: ${message.message.substring(0, 100)}`,
+      ticket.id,
+      'normal',
+      `/admin/support/tickets/${ticket.id}`,
+      { ticket_id: ticket.id, message_id: message.id, user_id: user?.id }
+    );
+    
+    // إذا كانت التذكرة للمرشد، إرسال إشعار للمرشد
+    if (ticket.type === 'guide_chat' && ticket.metadata?.guideId) {
+      const guideId = ticket.metadata.guideId;
+      
+      // لا نرسل إشعار إذا كان المرشد هو من أرسل الرسالة
+      if (String(user?.id) !== String(guideId)) {
+        await sendGuideNotification(
+          guideId,
+          'new_chat_message',
+          `رسالة جديدة من ${user?.full_name || user?.name || 'مستخدم'}`,
+          message.message.substring(0, 100),
+          ticket.id,
+          'high',
+          `/guide/chats/${ticket.id}`,
+          { ticket_id: ticket.id, message_id: message.id, user_name: user?.full_name || user?.name }
+        );
+        console.log(`✅ New message notification sent to guide: ${guideId}`);
+      }
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('Error sending message notifications:', error);
+    return false;
+  }
+}
 
 // ===================== ADMIN NOTIFICATIONS API =====================
 async function sendAdminNotification(adminId, type, title, message, relatedId = null, priority = 'normal', actionUrl = null, metadata = {}) {
@@ -832,6 +983,169 @@ app.put('/api/admin/notifications/:id/archive', async (req, res) => {
   }
 });
 
+// ===================== مسارات الإشعارات للمستخدمين =====================
+app.get('/api/notifications', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
+    }
+    const token = authHeader.split(' ')[1];
+    let userId;
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      userId = decoded.id;
+    } catch (err) {
+      return res.status(401).json({ success: false, message: 'توكن غير صالح' });
+    }
+    
+    const { status, limit = 50, offset = 0 } = req.query;
+    let query = `SELECT * FROM app.notifications WHERE user_id = $1`;
+    const params = [userId];
+    let paramIndex = 2;
+    
+    if (status && status !== 'all') {
+      query += ` AND status = $${paramIndex}`;
+      params.push(status);
+      paramIndex++;
+    }
+    
+    query += ` ORDER BY created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+    params.push(limit, offset);
+    
+    const result = await pool.query(query, params);
+    const unreadResult = await pool.query(
+      `SELECT COUNT(*) FROM app.notifications WHERE user_id = $1 AND status = 'unread'`,
+      [userId]
+    );
+    
+    res.json({
+      success: true,
+      notifications: result.rows,
+      unreadCount: parseInt(unreadResult.rows[0].count),
+      pagination: { limit: parseInt(limit), offset: parseInt(offset) }
+    });
+  } catch (error) {
+    console.error('Error fetching notifications:', error);
+    res.status(500).json({ success: false, message: 'فشل تحميل الإشعارات' });
+  }
+});
+
+app.put('/api/notifications/:id/read', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
+    }
+    const token = authHeader.split(' ')[1];
+    let userId;
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      userId = decoded.id;
+    } catch (err) {
+      return res.status(401).json({ success: false, message: 'توكن غير صالح' });
+    }
+    
+    const { id } = req.params;
+    const result = await pool.query(
+      `UPDATE app.notifications SET status = 'read', read_at = NOW() WHERE id = $1 AND user_id = $2 RETURNING *`,
+      [id, userId]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'الإشعار غير موجود' });
+    }
+    
+    res.json({ success: true, notification: result.rows[0] });
+  } catch (error) {
+    console.error('Error marking notification as read:', error);
+    res.status(500).json({ success: false, message: 'فشل تحديث الإشعار' });
+  }
+});
+
+app.put('/api/notifications/read-all', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
+    }
+    const token = authHeader.split(' ')[1];
+    let userId;
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      userId = decoded.id;
+    } catch (err) {
+      return res.status(401).json({ success: false, message: 'توكن غير صالح' });
+    }
+    
+    await pool.query(
+      `UPDATE app.notifications SET status = 'read', read_at = NOW() WHERE user_id = $1 AND status = 'unread'`,
+      [userId]
+    );
+    
+    res.json({ success: true, message: 'تم تحديث جميع الإشعارات' });
+  } catch (error) {
+    console.error('Error marking all as read:', error);
+    res.status(500).json({ success: false, message: 'فشل تحديث الإشعارات' });
+  }
+});
+
+// ===================== تحميل الـ Routers =====================
+app.use('/api/auth', authRoutes);
+app.use('/api/guides', guideRoutes);
+app.use('/api/programs', programRoutes);
+app.use('/api/wallet', walletRoutes);
+app.use('/api/bookings', bookingRoutes);
+app.use('/api/chats', chatRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/support', supportRoutes);
+app.use('/api/upgrade', upgradeRoutes);
+
+// تمرير دوال الإشعارات إلى supportRoutes
+app.set('notifyForNewTicket', notifyForNewTicket);
+app.set('notifyForNewMessage', notifyForNewMessage);
+
+// ===================== Test & Health =====================
+app.get('/api/test', (req, res) => {
+  res.json({ 
+    success: true, 
+    message: '✅ Server is working with Supabase PostgreSQL!',
+    timestamp: new Date().toISOString(),
+    serverTime: new Date().toLocaleString(),
+    timezone: 'UTC',
+    database: 'Supabase Cloud',
+    websocket: 'enabled',
+    onlineUsers: onlineUsers.size,
+    environment: isRender ? 'Render Cloud' : 'Local',
+    localIP: localIP
+  });
+});
+
+app.get('/health', async (req, res) => {
+  const dbConnected = await connectDB().catch(() => false);
+  let dbInfo = {};
+  if (dbConnected) {
+    try {
+      const versionResult = await pool.query('SELECT version()');
+      dbInfo.version = versionResult.rows[0].version.split(' ')[0] + ' ' + versionResult.rows[0].version.split(' ')[1];
+    } catch (e) { dbInfo.version = 'PostgreSQL'; }
+  }
+  res.json({
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    serverTime: new Date().toLocaleString(),
+    timezone: 'UTC',
+    uptime: process.uptime(),
+    port: PORT,
+    database: dbConnected ? 'connected' : 'disconnected',
+    databaseType: 'Supabase Cloud',
+    databaseVersion: dbInfo.version || 'Unknown',
+    websocket: 'active',
+    onlineUsers: onlineUsers.size,
+    environment: isRender ? 'Render Cloud' : 'Local'
+  });
+});
+
 // ===================== تشغيل الخادم =====================
 const startServer = async () => {
   console.log('🚀 Starting server with Supabase Cloud connection...');
@@ -857,6 +1171,28 @@ const startServer = async () => {
     console.error('Error creating program_images table:', err);
   }
   
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS app.notifications (
+        id SERIAL PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        type VARCHAR(50) DEFAULT 'general',
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        related_id INTEGER,
+        priority VARCHAR(20) DEFAULT 'normal',
+        action_url TEXT,
+        metadata JSONB,
+        created_at TIMESTAMP DEFAULT NOW(),
+        status VARCHAR(20) DEFAULT 'unread',
+        read_at TIMESTAMP
+      )
+    `);
+    console.log('✅ notifications table ensured');
+  } catch (err) {
+    console.log('Notifications table already exists or error:', err.message);
+  }
+  
   server.listen(PORT, '0.0.0.0', () => {
     setTimeout(() => {
       console.log(`
@@ -869,6 +1205,7 @@ const startServer = async () => {
   ║  ▶ Database:    ✅ Supabase Cloud            
   ║  ▶ WebSocket:   ✅ Enabled                   
   ║  ▶ SSL:         ✅ Enabled                   
+  ║  ▶ Notifications: ✅ Guide & User           
   ║  ▶ Timezone:    UTC                          
   ║  ▶ Test API:    /api/test                    
   ║  ▶ Health:      /health                      
@@ -885,5 +1222,5 @@ const startServer = async () => {
 
 startServer();
 
-// ✅ تصدير كل ما هو مطلوب من server.js (لأجل authRoutes)
-export { io, onlineUsers, pool, createExpiryDate, isOTPValid, getTimeRemaining };
+// ✅ تصدير كل ما هو مطلوب من server.js (لأجل authRoutes و supportRoutes)
+export { io, onlineUsers, pool, createExpiryDate, isOTPValid, getTimeRemaining, sendGuideNotification, sendUserNotification, notifyForNewTicket, notifyForNewMessage };
