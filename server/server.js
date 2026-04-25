@@ -1,4 +1,4 @@
-// server.js - النسخة النهائية المصححة بالكامل
+// server.js - النسخة النهائية مع دعم safety_guidelines وإشعارات المرشدين
 
 import express from 'express';
 import cors from 'cors';
@@ -726,6 +726,317 @@ app.get('/health', async (req, res) => {
   });
 });
 
+// ===================== ADMIN NOTIFICATIONS API =====================
+async function sendAdminNotification(adminId, type, title, message, relatedId = null, priority = 'normal', actionUrl = null, metadata = {}) {
+  try {
+    const result = await pool.query(
+      `INSERT INTO app.admin_notifications 
+       (admin_id, type, title, message, related_id, priority, action_url, metadata, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+       RETURNING *`,
+      [adminId, type, title, message, relatedId, priority, actionUrl, JSON.stringify(metadata)]
+    );
+    console.log(`📨 Admin notification sent to ${adminId}: ${title}`);
+    return result.rows[0];
+  } catch (error) {
+    console.error('Error sending admin notification:', error);
+    return null;
+  }
+}
+
+async function sendNotificationToAllAdmins(type, title, message, relatedId = null, priority = 'normal', actionUrl = null, metadata = {}) {
+  try {
+    const admins = await pool.query(`SELECT id FROM app.users WHERE role IN ('admin', 'support')`);
+    console.log(`📢 Sending notification to ${admins.rows.length} admins`);
+    for (const admin of admins.rows) {
+      await sendAdminNotification(admin.id, type, title, message, relatedId, priority, actionUrl, metadata);
+    }
+    return true;
+  } catch (error) {
+    console.error('Error sending to all admins:', error);
+    return false;
+  }
+}
+
+// ===================== إشعارات المستخدمين والمرشدين =====================
+
+// إرسال إشعار لمستخدم عادي أو مرشد
+async function sendNotification(userId, type, title, message, actionUrl = null, metadata = {}) {
+  try {
+    const result = await pool.query(
+      `INSERT INTO app.notifications 
+       (user_id, type, title, message, action_url, data, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())
+       RETURNING *`,
+      [userId, type, title, message, actionUrl, JSON.stringify(metadata)]
+    );
+    console.log(`📨 Notification sent to user ${userId}: ${title}`);
+    
+    // إرسال إشعار فوري عبر Socket إذا كان المستخدم متصلاً
+    const userSocketId = onlineUsers.get(userId);
+    if (userSocketId && io) {
+      io.to(userSocketId).emit('new_notification', {
+        id: result.rows[0].id,
+        type,
+        title,
+        message,
+        action_url: actionUrl,
+        data: metadata,
+        created_at: new Date().toISOString()
+      });
+      console.log(`🔔 Real-time notification sent via socket to user ${userId}`);
+    }
+    
+    return result.rows[0];
+  } catch (error) {
+    console.error('Error sending notification:', error);
+    return null;
+  }
+}
+
+// إرسال إشعار للمرشد عند إنشاء تذكرة محادثة جديدة
+async function notifyGuideNewTicket(guideId, userName, ticketId, message) {
+  return sendNotification(
+    guideId,
+    'new_chat_ticket',
+    `محادثة جديدة من ${userName}`,
+    message || `لديك محادثة جديدة من ${userName}`,
+    `/guide/chats/${ticketId}`,
+    { ticket_id: ticketId, user_name: userName, type: 'new_ticket' }
+  );
+}
+
+// إرسال إشعار للمرشد عند وصول رسالة جديدة
+async function notifyGuideNewMessage(guideId, userName, message, ticketId) {
+  return sendNotification(
+    guideId,
+    'new_chat_message',
+    `رسالة جديدة من ${userName}`,
+    message.length > 100 ? message.substring(0, 100) + '...' : message,
+    `/guide/chats/${ticketId}`,
+    { ticket_id: ticketId, user_name: userName, type: 'new_message' }
+  );
+}
+
+// ===================== مسارات إشعارات المستخدمين API =====================
+app.get('/api/notifications', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
+    }
+    const token = authHeader.split(' ')[1];
+    let userId;
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      userId = decoded.id;
+    } catch (err) {
+      return res.status(401).json({ success: false, message: 'توكن غير صالح' });
+    }
+    
+    const { limit = 50, offset = 0 } = req.query;
+    const result = await pool.query(
+      `SELECT * FROM app.notifications 
+       WHERE user_id = $1 
+       ORDER BY created_at DESC 
+       LIMIT $2 OFFSET $3`,
+      [userId, limit, offset]
+    );
+    
+    const unreadResult = await pool.query(
+      `SELECT COUNT(*) FROM app.notifications WHERE user_id = $1 AND is_read = false`,
+      [userId]
+    );
+    
+    res.json({
+      success: true,
+      notifications: result.rows,
+      unreadCount: parseInt(unreadResult.rows[0].count),
+      pagination: { limit: parseInt(limit), offset: parseInt(offset) }
+    });
+  } catch (error) {
+    console.error('Error fetching notifications:', error);
+    res.status(500).json({ success: false, message: 'فشل تحميل الإشعارات' });
+  }
+});
+
+app.put('/api/notifications/:id/read', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
+    }
+    const token = authHeader.split(' ')[1];
+    let userId;
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      userId = decoded.id;
+    } catch (err) {
+      return res.status(401).json({ success: false, message: 'توكن غير صالح' });
+    }
+    
+    const { id } = req.params;
+    const result = await pool.query(
+      `UPDATE app.notifications SET is_read = true, read_at = NOW() 
+       WHERE id = $1 AND user_id = $2 RETURNING *`,
+      [id, userId]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'الإشعار غير موجود' });
+    }
+    
+    res.json({ success: true, notification: result.rows[0] });
+  } catch (error) {
+    console.error('Error marking notification as read:', error);
+    res.status(500).json({ success: false, message: 'فشل تحديث الإشعار' });
+  }
+});
+
+app.put('/api/notifications/read-all', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
+    }
+    const token = authHeader.split(' ')[1];
+    let userId;
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      userId = decoded.id;
+    } catch (err) {
+      return res.status(401).json({ success: false, message: 'توكن غير صالح' });
+    }
+    
+    await pool.query(
+      `UPDATE app.notifications SET is_read = true, read_at = NOW() 
+       WHERE user_id = $1 AND is_read = false`,
+      [userId]
+    );
+    
+    res.json({ success: true, message: 'تم تحديث جميع الإشعارات' });
+  } catch (error) {
+    console.error('Error marking all as read:', error);
+    res.status(500).json({ success: false, message: 'فشل تحديث الإشعارات' });
+  }
+});
+
+// ===================== مسارات الإشعارات للمشرفين API =====================
+app.get('/api/admin/notifications', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
+    const token = authHeader.split(' ')[1];
+    let adminId;
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      adminId = decoded.id;
+    } catch (err) { return res.status(401).json({ success: false, message: 'توكن غير صالح' }); }
+    const { status, limit = 50, offset = 0 } = req.query;
+    let query = `SELECT * FROM app.admin_notifications WHERE admin_id = $1`;
+    const params = [adminId];
+    let paramIndex = 2;
+    if (status && status !== 'all') { query += ` AND status = $${paramIndex}`; params.push(status); paramIndex++; }
+    query += ` ORDER BY created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+    params.push(limit, offset);
+    const result = await pool.query(query, params);
+    const unreadResult = await pool.query(`SELECT COUNT(*) FROM app.admin_notifications WHERE admin_id = $1 AND status = 'unread'`, [adminId]);
+    res.json({
+      success: true,
+      notifications: result.rows,
+      unreadCount: parseInt(unreadResult.rows[0].count),
+      pagination: { limit: parseInt(limit), offset: parseInt(offset) }
+    });
+  } catch (error) {
+    console.error('Error fetching admin notifications:', error);
+    res.status(500).json({ success: false, message: 'فشل تحميل الإشعارات' });
+  }
+});
+
+app.put('/api/admin/notifications/:id/read', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
+    const token = authHeader.split(' ')[1];
+    let adminId;
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      adminId = decoded.id;
+    } catch (err) { return res.status(401).json({ success: false, message: 'توكن غير صالح' }); }
+    const { id } = req.params;
+    const result = await pool.query(
+      `UPDATE app.admin_notifications SET status = 'read', read_at = NOW() WHERE id = $1 AND admin_id = $2 RETURNING *`,
+      [id, adminId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'الإشعار غير موجود' });
+    res.json({ success: true, notification: result.rows[0] });
+  } catch (error) {
+    console.error('Error marking notification as read:', error);
+    res.status(500).json({ success: false, message: 'فشل تحديث الإشعار' });
+  }
+});
+
+app.put('/api/admin/notifications/read-all', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
+    const token = authHeader.split(' ')[1];
+    let adminId;
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      adminId = decoded.id;
+    } catch (err) { return res.status(401).json({ success: false, message: 'توكن غير صالح' }); }
+    await pool.query(`UPDATE app.admin_notifications SET status = 'read', read_at = NOW() WHERE admin_id = $1 AND status = 'unread'`, [adminId]);
+    res.json({ success: true, message: 'تم تحديث جميع الإشعارات' });
+  } catch (error) {
+    console.error('Error marking all as read:', error);
+    res.status(500).json({ success: false, message: 'فشل تحديث الإشعارات' });
+  }
+});
+
+app.delete('/api/admin/notifications/:id', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
+    const token = authHeader.split(' ')[1];
+    let adminId;
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      adminId = decoded.id;
+    } catch (err) { return res.status(401).json({ success: false, message: 'توكن غير صالح' }); }
+    const { id } = req.params;
+    const result = await pool.query(`DELETE FROM app.admin_notifications WHERE id = $1 AND admin_id = $2 RETURNING id`, [id, adminId]);
+    if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'الإشعار غير موجود' });
+    res.json({ success: true, message: 'تم حذف الإشعار' });
+  } catch (error) {
+    console.error('Error deleting notification:', error);
+    res.status(500).json({ success: false, message: 'فشل حذف الإشعار' });
+  }
+});
+
+app.put('/api/admin/notifications/:id/archive', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
+    const token = authHeader.split(' ')[1];
+    let adminId;
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      adminId = decoded.id;
+    } catch (err) { return res.status(401).json({ success: false, message: 'توكن غير صالح' }); }
+    const { id } = req.params;
+    const result = await pool.query(
+      `UPDATE app.admin_notifications SET status = 'archived', archived_at = NOW() WHERE id = $1 AND admin_id = $2 RETURNING *`,
+      [id, adminId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'الإشعار غير موجود' });
+    res.json({ success: true, notification: result.rows[0] });
+  } catch (error) {
+    console.error('Error archiving notification:', error);
+    res.status(500).json({ success: false, message: 'فشل أرشفة الإشعار' });
+  }
+});
+
 // ===================== تشغيل الخادم =====================
 const startServer = async () => {
   console.log('🚀 Starting server with Supabase Cloud connection...');
@@ -763,6 +1074,7 @@ const startServer = async () => {
   ║  ▶ Database:    ✅ Supabase Cloud            
   ║  ▶ WebSocket:   ✅ Enabled                   
   ║  ▶ SSL:         ✅ Enabled                   
+  ║  ▶ Notifications: ✅ Guide & User           
   ║  ▶ Timezone:    UTC                          
   ║  ▶ Test API:    /api/test                    
   ║  ▶ Health:      /health                      
@@ -780,4 +1092,15 @@ const startServer = async () => {
 startServer();
 
 // ✅ تصدير كل ما هو مطلوب
-export { io, onlineUsers, pool, createExpiryDate, isOTPValid, getTimeRemaining };
+export { 
+  io, 
+  onlineUsers, 
+  pool, 
+  createExpiryDate, 
+  isOTPValid, 
+  getTimeRemaining,
+  sendNotification,
+  notifyGuideNewTicket,
+  notifyGuideNewMessage,
+  sendNotificationToAllAdmins
+};
