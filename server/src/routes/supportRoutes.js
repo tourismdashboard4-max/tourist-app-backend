@@ -1,25 +1,44 @@
-// server/src/routes/supportRoutes.js
+// server/src/routes/supportRoutes.js - النسخة المصححة بالكامل
 import express from 'express';
 import { pool } from '../../server.js';
 import { protect } from '../middleware/authMiddleware.js';
-import notificationService from '../services/notificationService.js'; // ✅ أضف هذا
+import notificationService from '../services/notificationService.js';
 
 const router = express.Router();
 
 // ============================================
-// ✅ الحصول على تذاكر المستخدم
+// ✅ الحصول على تذاكر المستخدم (مع دعم metadata.guideId)
 // ============================================
 router.get('/tickets', protect, async (req, res) => {
   try {
     const userId = req.user.id;
     const targetUserId = req.query.user_id || userId;
+    const { status, type } = req.query;
     
-    const result = await pool.query(
-      `SELECT * FROM app.support_tickets 
-       WHERE user_id = $1 
-       ORDER BY created_at DESC`,
-      [targetUserId]
-    );
+    let query = `
+      SELECT t.*, u.email, u.full_name as user_name
+      FROM app.support_tickets t
+      LEFT JOIN app.users u ON t.user_id = u.id
+      WHERE t.user_id = $1
+    `;
+    const params = [targetUserId];
+    let paramIndex = 2;
+    
+    if (status && status !== 'all') {
+      query += ` AND t.status = $${paramIndex}`;
+      params.push(status);
+      paramIndex++;
+    }
+    
+    if (type && type !== 'all') {
+      query += ` AND t.type = $${paramIndex}`;
+      params.push(type);
+      paramIndex++;
+    }
+    
+    query += ` ORDER BY t.created_at DESC`;
+    
+    const result = await pool.query(query, params);
     
     res.json({
       success: true,
@@ -32,30 +51,32 @@ router.get('/tickets', protect, async (req, res) => {
 });
 
 // ============================================
-// ✅ إنشاء تذكرة جديدة
+// ✅ إنشاء تذكرة جديدة (مع دعم guide_chat و metadata)
 // ============================================
 router.post('/tickets', protect, async (req, res) => {
   try {
-    const { subject, message, priority = 'normal', type = 'general', user_id } = req.body;
+    const { subject, message, priority = 'normal', type = 'general', user_id, metadata } = req.body;
     const userId = user_id || req.user.id;
     
     console.log('📝 [Support] Creating ticket for user_id:', userId);
     console.log('📝 [Support] From token user_id:', req.user.id);
     console.log('📝 [Support] From body user_id:', user_id);
+    console.log('📝 [Support] Type:', type, 'Metadata:', metadata);
 
     if (!subject) {
       return res.status(400).json({ success: false, message: 'الموضوع مطلوب' });
     }
 
+    // إدراج التذكرة مع دعم metadata
     const ticketResult = await pool.query(
-      `INSERT INTO app.support_tickets (user_id, subject, type, priority, status, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, 'open', NOW(), NOW())
+      `INSERT INTO app.support_tickets (user_id, subject, type, priority, status, metadata, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, 'open', $5, NOW(), NOW())
        RETURNING *`,
-      [userId, subject, type, priority]
+      [userId, subject, type, priority, metadata || {}]
     );
 
     const ticket = ticketResult.rows[0];
-    console.log('✅ [Support] Ticket created:', { id: ticket.id, user_id: ticket.user_id });
+    console.log('✅ [Support] Ticket created:', { id: ticket.id, user_id: ticket.user_id, type: ticket.type });
 
     if (message) {
       await pool.query(
@@ -65,26 +86,44 @@ router.post('/tickets', protect, async (req, res) => {
       );
     }
 
-    // ✅ إنشاء إشعار للمسؤولين عند إنشاء تذكرة جديدة
+    // جلب اسم المستخدم
     const userResult = await pool.query(
       `SELECT full_name, email FROM app.users WHERE id = $1`,
       [userId]
     );
     const userName = userResult.rows[0]?.full_name || userResult.rows[0]?.email || `مستخدم ${userId}`;
     
-    // الحصول على جميع المسؤولين
+    // ✅ إذا كانت التذكرة من نوع guide_chat، أرسل إشعار للمرشد
+    if (type === 'guide_chat' && metadata?.guideId) {
+      const guideId = metadata.guideId;
+      const guideName = metadata.guideName || 'المرشد';
+      
+      console.log(`📢 Sending notification to guide ${guideId} for new chat ticket`);
+      
+      await notificationService.create(guideId, {
+        title: 'محادثة جديدة من مسافر',
+        message: `${userName} بدأ محادثة معك: ${message?.substring(0, 100) || 'يريد التواصل معك'}`,
+        type: 'guide_chat',
+        priority: 'high',
+        action_url: `/support?ticket=${ticket.id}`,
+        data: JSON.stringify({ ticketId: ticket.id, userId, type: 'new_chat', guideId })
+      });
+      console.log(`✅ Notification sent to guide ${guideId}`);
+    }
+    
+    // ✅ إرسال إشعار للمسؤولين (لجميع أنواع التذاكر)
     const adminsResult = await pool.query(
       `SELECT id FROM app.users WHERE role IN ('admin', 'support')`
     );
     
     for (const admin of adminsResult.rows) {
       await notificationService.create(admin.id, {
-        title: 'تذكرة دعم جديدة',
-        message: `${userName} فتح تذكرة دعم جديدة`,
+        title: type === 'guide_chat' ? 'محادثة جديدة مع مرشد' : 'تذكرة دعم جديدة',
+        message: `${userName} ${type === 'guide_chat' ? 'بدأ محادثة مع مرشد' : 'فتح تذكرة دعم جديدة'}: ${subject.substring(0, 50)}`,
         type: 'support_ticket',
         priority: 'high',
         action_url: `/admin/support?ticket=${ticket.id}`,
-        data: JSON.stringify({ ticketId: ticket.id, userId, type: 'new_ticket' })
+        data: JSON.stringify({ ticketId: ticket.id, userId, type: 'new_ticket', chatType: type })
       });
     }
     console.log('✅ [Support] Notifications sent to admins for new ticket');
@@ -102,7 +141,7 @@ router.post('/tickets', protect, async (req, res) => {
 });
 
 // ============================================
-// ✅ الحصول على رسائل التذكرة (معدل)
+// ✅ الحصول على رسائل التذكرة
 // ============================================
 router.get('/tickets/:ticketId/messages', protect, async (req, res) => {
   try {
@@ -124,23 +163,29 @@ router.get('/tickets/:ticketId/messages', protect, async (req, res) => {
     const ticket = ticketResult.rows[0];
     const isAdmin = req.user.role === 'admin' || req.user.role === 'support';
     const isOwner = ticket.user_id === userId;
+    
+    // ✅ السماح للمرشد بالوصول إذا كانت التذكرة من نوع guide_chat وهو المرشد المحدد
+    const isGuide = ticket.type === 'guide_chat' && ticket.metadata?.guideId === userId;
 
-    console.log('🔍 [Support] Ticket owner:', ticket.user_id, 'Current user:', userId, 'isAdmin:', isAdmin, 'isOwner:', isOwner);
+    console.log('🔍 [Support] Ticket owner:', ticket.user_id, 'Current user:', userId, 'isAdmin:', isAdmin, 'isOwner:', isOwner, 'isGuide:', isGuide);
 
-    if (!isOwner && !isAdmin) {
+    if (!isOwner && !isAdmin && !isGuide) {
       return res.status(403).json({ success: false, message: 'غير مصرح لك برؤية هذه التذكرة' });
     }
 
     const messagesResult = await pool.query(
-      `SELECT * FROM app.support_messages 
-       WHERE ticket_id = $1 
-       ORDER BY created_at ASC`,
+      `SELECT m.*, u.full_name as sender_name, u.avatar_url as sender_avatar
+       FROM app.support_messages m
+       LEFT JOIN app.users u ON m.user_id = u.id
+       WHERE m.ticket_id = $1 
+       ORDER BY m.created_at ASC`,
       [ticketId]
     );
 
     res.json({
       success: true,
-      messages: messagesResult.rows
+      messages: messagesResult.rows,
+      ticket: ticket
     });
 
   } catch (error) {
@@ -150,7 +195,7 @@ router.get('/tickets/:ticketId/messages', protect, async (req, res) => {
 });
 
 // ============================================
-// ✅ إرسال رسالة (معدل مع إشعارات)
+// ✅ إرسال رسالة (مع إشعارات للمرشدين)
 // ============================================
 router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
   try {
@@ -158,7 +203,7 @@ router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
     const { ticketId } = req.params;
     const { message } = req.body;
 
-    if (!message) {
+    if (!message || !message.trim()) {
       return res.status(400).json({ success: false, message: 'الرسالة مطلوبة' });
     }
 
@@ -166,7 +211,10 @@ router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
 
     // التحقق من أن التذكرة موجودة
     const ticketResult = await pool.query(
-      `SELECT * FROM app.support_tickets WHERE id = $1`,
+      `SELECT t.*, u.full_name as user_name, u.email as user_email
+       FROM app.support_tickets t
+       LEFT JOIN app.users u ON t.user_id = u.id
+       WHERE t.id = $1`,
       [ticketId]
     );
 
@@ -177,11 +225,14 @@ router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
     const ticket = ticketResult.rows[0];
     const isAdmin = req.user.role === 'admin' || req.user.role === 'support';
     const isOwner = ticket.user_id === userId;
+    
+    // ✅ السماح للمرشد بالرد إذا كانت التذكرة من نوع guide_chat وهو المرشد المحدد
+    const isGuide = ticket.type === 'guide_chat' && ticket.metadata?.guideId === userId;
 
-    console.log('📤 [Support] Ticket owner:', ticket.user_id, 'Current user:', userId, 'isAdmin:', isAdmin, 'isOwner:', isOwner);
+    console.log('📤 [Support] Ticket owner:', ticket.user_id, 'Current user:', userId, 'isAdmin:', isAdmin, 'isOwner:', isOwner, 'isGuide:', isGuide);
 
-    // ✅ السماح للمالك والمسؤولين بإرسال الرسائل
-    if (!isOwner && !isAdmin) {
+    // ✅ السماح للمالك والمسؤولين والمرشدين بإرسال الرسائل
+    if (!isOwner && !isAdmin && !isGuide) {
       return res.status(403).json({ success: false, message: 'غير مصرح لك بإرسال رسائل لهذه التذكرة' });
     }
 
@@ -194,7 +245,7 @@ router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
       `INSERT INTO app.support_messages (ticket_id, user_id, message, is_from_user, created_at)
        VALUES ($1, $2, $3, $4, NOW())
        RETURNING *`,
-      [ticketId, userId, message, isOwner || !isAdmin]
+      [ticketId, userId, message, !isAdmin && !isGuide]
     );
 
     await pool.query(
@@ -202,47 +253,63 @@ router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
       [ticketId]
     );
 
-    console.log('✅ [Support] Message sent:', { ticketId, userId, isFromUser: isOwner || !isAdmin });
+    console.log('✅ [Support] Message sent:', { ticketId, userId, isFromUser: !isAdmin && !isGuide });
 
-    // ✅ إنشاء إشعار للمسؤولين إذا كانت الرسالة من مستخدم عادي (وليس مسؤول)
-    // ✅ التعديل: أي مستخدم ليس مسؤولاً (حتى لو كان مالكاً)
-    if (!isAdmin) {
-      // جلب اسم المستخدم
-      const userResult = await pool.query(
-        `SELECT full_name, email FROM app.users WHERE id = $1`,
-        [userId]
-      );
-      const userName = userResult.rows[0]?.full_name || userResult.rows[0]?.email || `مستخدم ${userId}`;
+    // جلب اسم المرسل
+    const senderResult = await pool.query(
+      `SELECT full_name, email FROM app.users WHERE id = $1`,
+      [userId]
+    );
+    const senderName = senderResult.rows[0]?.full_name || senderResult.rows[0]?.email || `مستخدم ${userId}`;
+
+    // ✅ إرسال إشعار للمرشد إذا كانت التذكرة من نوع guide_chat والمرسل ليس المرشد
+    if (ticket.type === 'guide_chat' && ticket.metadata?.guideId && userId !== ticket.metadata.guideId) {
+      const guideId = ticket.metadata.guideId;
+      console.log(`📢 Sending notification to guide ${guideId} for new message`);
       
-      // الحصول على جميع المسؤولين
+      await notificationService.create(guideId, {
+        title: 'رسالة جديدة من مسافر',
+        message: `${senderName}: ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`,
+        type: 'guide_chat_message',
+        priority: 'high',
+        action_url: `/support?ticket=${ticketId}`,
+        data: JSON.stringify({ ticketId, userId, message: message.substring(0, 200), type: 'new_message' })
+      });
+      console.log(`✅ Notification sent to guide ${guideId}`);
+    }
+    
+    // ✅ إرسال إشعار للمستخدم (المسافر) إذا رد المرشد أو المسؤول
+    if ((isGuide || isAdmin) && !isOwner) {
+      console.log(`📢 Sending notification to user ${ticket.user_id} for reply`);
+      
+      await notificationService.create(ticket.user_id, {
+        title: isGuide ? 'رد من المرشد' : 'رد على تذكرة الدعم',
+        message: `${senderName}: ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`,
+        type: isGuide ? 'guide_reply' : 'support_reply',
+        priority: 'high',
+        action_url: `/support?ticket=${ticketId}`,
+        data: JSON.stringify({ ticketId, message: message.substring(0, 200), type: 'reply' })
+      });
+      console.log(`✅ Notification sent to user ${ticket.user_id}`);
+    }
+    
+    // ✅ إرسال إشعار للمسؤولين إذا كانت الرسالة من مستخدم عادي (وليس مسؤول وليس مرشد)
+    if (!isAdmin && !isGuide) {
       const adminsResult = await pool.query(
         `SELECT id FROM app.users WHERE role IN ('admin', 'support')`
       );
       
       for (const admin of adminsResult.rows) {
         await notificationService.create(admin.id, {
-          title: 'رسالة دعم جديدة',
-          message: `رسالة جديدة من ${userName}: ${message.substring(0, 50)}${message.length > 50 ? '...' : ''}`,
+          title: ticket.type === 'guide_chat' ? 'رسالة جديدة في محادثة مرشد' : 'رسالة دعم جديدة',
+          message: `رسالة جديدة من ${senderName}: ${message.substring(0, 50)}${message.length > 50 ? '...' : ''}`,
           type: 'support_message',
           priority: 'high',
           action_url: `/admin/support?ticket=${ticketId}`,
-          data: JSON.stringify({ ticketId, userId, message: message.substring(0, 200) })
+          data: JSON.stringify({ ticketId, userId, message: message.substring(0, 200), chatType: ticket.type })
         });
       }
-      console.log('✅ [Support] Notification sent to admins for new message from user');
-    }
-    
-    // ✅ إذا كانت الرسالة من مسؤول، أرسل إشعار للمستخدم صاحب التذكرة
-    if (isAdmin && !isOwner) {
-      await notificationService.create(ticket.user_id, {
-        title: 'رد على تذكرة الدعم',
-        message: `تم الرد على تذكرتك: ${message.substring(0, 50)}${message.length > 50 ? '...' : ''}`,
-        type: 'support_reply',
-        priority: 'high',
-        action_url: `/support?ticket=${ticketId}`,
-        data: JSON.stringify({ ticketId, message: message.substring(0, 200) })
-      });
-      console.log('✅ [Support] Notification sent to user for admin reply');
+      console.log('✅ [Support] Notifications sent to admins for new message from user');
     }
 
     res.json({
@@ -264,12 +331,31 @@ router.put('/tickets/:ticketId/close', protect, async (req, res) => {
     const userId = req.user.id;
     const { ticketId } = req.params;
 
+    // التحقق من التذكرة
+    const ticketResult = await pool.query(
+      `SELECT * FROM app.support_tickets WHERE id = $1`,
+      [ticketId]
+    );
+    
+    if (ticketResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'التذكرة غير موجودة' });
+    }
+    
+    const ticket = ticketResult.rows[0];
+    const isAdmin = req.user.role === 'admin' || req.user.role === 'support';
+    const isOwner = ticket.user_id === userId;
+    const isGuide = ticket.type === 'guide_chat' && ticket.metadata?.guideId === userId;
+    
+    if (!isOwner && !isAdmin && !isGuide) {
+      return res.status(403).json({ success: false, message: 'غير مصرح لك بإغلاق هذه التذكرة' });
+    }
+
     const result = await pool.query(
       `UPDATE app.support_tickets 
        SET status = 'closed', updated_at = NOW()
-       WHERE id = $1 AND user_id = $2 AND status != 'closed'
+       WHERE id = $1 AND status != 'closed'
        RETURNING *`,
-      [ticketId, userId]
+      [ticketId]
     );
 
     if (result.rows.length === 0) {
@@ -348,6 +434,38 @@ router.get('/admin/tickets', protect, async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Admin tickets error:', error);
+    res.status(500).json({ success: false, message: 'حدث خطأ' });
+  }
+});
+
+// ============================================
+// ✅ الحصول على تذكرة محددة للمرشد (للوحة التحكم)
+// ============================================
+router.get('/guide/tickets', protect, async (req, res) => {
+  try {
+    const guideId = req.user.id;
+    const isGuide = req.user.role === 'guide';
+    
+    if (!isGuide) {
+      return res.status(403).json({ success: false, message: 'غير مصرح' });
+    }
+    
+    const result = await pool.query(
+      `SELECT t.*, u.full_name as user_name, u.email as user_email
+       FROM app.support_tickets t
+       LEFT JOIN app.users u ON t.user_id = u.id
+       WHERE t.type = 'guide_chat' 
+       AND t.metadata->>'guideId' = $1
+       ORDER BY t.created_at DESC`,
+      [guideId]
+    );
+    
+    res.json({
+      success: true,
+      tickets: result.rows
+    });
+  } catch (error) {
+    console.error('❌ Guide tickets error:', error);
     res.status(500).json({ success: false, message: 'حدث خطأ' });
   }
 });
