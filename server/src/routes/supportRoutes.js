@@ -1,4 +1,4 @@
-// server/src/routes/supportRoutes.js - النسخة النهائية المصححة (تعرض التذاكر للمشاركين عبر metadata)
+// server/src/routes/supportRoutes.js - النسخة النهائية المصححة (تعرض التذاكر للمشاركين عبر metadata بشكل آمن)
 import express from 'express';
 import { pool } from '../../server.js';
 import { protect } from '../middleware/authMiddleware.js';
@@ -7,25 +7,26 @@ import notificationService from '../services/notificationService.js';
 const router = express.Router();
 
 // ============================================
-// ✅ الحصول على تذاكر المستخدم (مع دعم metadata.guideId, touristId, participants, ...)
+// ✅ الحصول على تذاكر المستخدم (مع دعم metadata.guideId, touristId, participants، ...)
+//    مع تحسين الأداء وتجنب أخطاء JSONB
 // ============================================
 router.get('/tickets', protect, async (req, res) => {
   try {
     const userId = req.user.id;
     const { status, type } = req.query;
 
-    // ✅ استعلام شامل: يبحث في user_id وجميع حقول metadata التي تحدد المشاركين
+    // ✅ استعلام آمن: يتحقق من وجود المفاتيح قبل استخدامها، ويقارن النصوص بطريقة آمنة
     let query = `
       SELECT t.*, u.email, u.full_name as user_name
       FROM app.support_tickets t
       LEFT JOIN app.users u ON t.user_id = u.id
       WHERE (
         t.user_id = $1
-        OR t.metadata->>'guideId' = $1
-        OR t.metadata->>'touristId' = $1
-        OR t.metadata->>'created_by_id' = $1
-        OR t.metadata->'participants' ? $1
-        OR t.assigned_to = $1
+        OR (t.metadata ? 'guideId' AND t.metadata->>'guideId' = $1::text)
+        OR (t.metadata ? 'touristId' AND t.metadata->>'touristId' = $1::text)
+        OR (t.metadata ? 'created_by_id' AND t.metadata->>'created_by_id' = $1::text)
+        OR (t.metadata ? 'participants' AND t.metadata->'participants' ? $1::text)
+        OR (t.assigned_to IS NOT NULL AND t.assigned_to = $1)
       )
     `;
     const params = [userId];
@@ -47,7 +48,8 @@ router.get('/tickets', protect, async (req, res) => {
     res.json({ success: true, tickets: result.rows });
   } catch (error) {
     console.error('❌ Get tickets error:', error);
-    res.status(500).json({ success: false, message: 'حدث خطأ' });
+    // إرسال تفاصيل الخطأ للمطور (في بيئة الإنتاج يمكن إخفاءها)
+    res.status(500).json({ success: false, message: 'حدث خطأ', error: error.message });
   }
 });
 
