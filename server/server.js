@@ -1,4 +1,6 @@
 // server.js - النسخة النهائية مع دعم safety_guidelines وإشعارات المرشدين
+// ✅ تم إضافة دعم كامل لنظام التذاكر عبر استيراد supportRoutes
+// ✅ دوال إرسال الإشعارات (sendNotification, notifyGuideNewTicket, notifyGuideNewMessage) جاهزة للاستخدام في مسارات الدعم
 
 import express from 'express';
 import cors from 'cors';
