@@ -1,4 +1,4 @@
-// server/src/routes/supportRoutes.js - النسخة المصححة بالكامل
+// server/src/routes/supportRoutes.js - النسخة النهائية المصححة (تعرض التذاكر للمشاركين عبر metadata)
 import express from 'express';
 import { pool } from '../../server.js';
 import { protect } from '../middleware/authMiddleware.js';
@@ -7,43 +7,44 @@ import notificationService from '../services/notificationService.js';
 const router = express.Router();
 
 // ============================================
-// ✅ الحصول على تذاكر المستخدم (مع دعم metadata.guideId)
+// ✅ الحصول على تذاكر المستخدم (مع دعم metadata.guideId, touristId, participants, ...)
 // ============================================
 router.get('/tickets', protect, async (req, res) => {
   try {
     const userId = req.user.id;
-    const targetUserId = req.query.user_id || userId;
     const { status, type } = req.query;
-    
+
+    // ✅ استعلام شامل: يبحث في user_id وجميع حقول metadata التي تحدد المشاركين
     let query = `
       SELECT t.*, u.email, u.full_name as user_name
       FROM app.support_tickets t
       LEFT JOIN app.users u ON t.user_id = u.id
-      WHERE t.user_id = $1
+      WHERE (
+        t.user_id = $1
+        OR t.metadata->>'guideId' = $1
+        OR t.metadata->>'touristId' = $1
+        OR t.metadata->>'created_by_id' = $1
+        OR t.metadata->'participants' ? $1
+        OR t.assigned_to = $1
+      )
     `;
-    const params = [targetUserId];
+    const params = [userId];
     let paramIndex = 2;
-    
+
     if (status && status !== 'all') {
       query += ` AND t.status = $${paramIndex}`;
       params.push(status);
       paramIndex++;
     }
-    
     if (type && type !== 'all') {
       query += ` AND t.type = $${paramIndex}`;
       params.push(type);
       paramIndex++;
     }
-    
     query += ` ORDER BY t.created_at DESC`;
-    
+
     const result = await pool.query(query, params);
-    
-    res.json({
-      success: true,
-      tickets: result.rows
-    });
+    res.json({ success: true, tickets: result.rows });
   } catch (error) {
     console.error('❌ Get tickets error:', error);
     res.status(500).json({ success: false, message: 'حدث خطأ' });
