@@ -1,327 +1,298 @@
 // client/src/pages/SupportChatPage.jsx
-import React, { useState, useEffect, useRef } from 'react';
+// ✅ الإصدار المطور – محادثة دعم مباشرة (بدون قائمة تذاكر)
+// عند النقر على أيقونة الدعم، يتم فتح المحادثة مباشرة (إنشاء تذكرة جديدة إذا لم توجد تذكرة مفتوحة)
+// يدعم فتح تذكرة محددة عبر localStorage (selectedSupportTicketId)
+
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { MessageCircle, Send, Loader2, Phone, Mail, ArrowLeft } from 'lucide-react';
+import { 
+  MessageCircle, Send, Loader2, ArrowLeft, 
+  Headphones, Trash2, RefreshCw, CheckCircle2, Bell
+} from 'lucide-react';
 import api from '../services/api';
 import toast from 'react-hot-toast';
 
+const API_BASE = 'https://tourist-app-api.onrender.com';
+const DELETED_SUPPORT_TICKETS_KEY = 'deleted_support_tickets';
+
 const SupportChatPage = ({ setPage, lang = 'ar' }) => {
   const { user } = useAuth();
+
+  const [activeTicket, setActiveTicket] = useState(null);
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(true);
+  const [loadingMessages, setLoadingMessages] = useState(false);
   const [sending, setSending] = useState(false);
-  const [conversationId, setConversationId] = useState(null);
+  const [deleting, setDeleting] = useState(false);
   const [supportStatus, setSupportStatus] = useState('online');
-  const [typing, setTyping] = useState(false);
-  
+  const [initialTicketId, setInitialTicketId] = useState(null);
+
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
+  const pollingRef = useRef(null);
 
   const scrollToBottom = () => {
     setTimeout(() => {
-      if (messagesContainerRef.current) {
+      if (messagesContainerRef.current)
         messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
-      }
-      if (messagesEndRef.current) {
-        messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
-      }
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
     }, 100);
   };
 
-  useEffect(() => {
-    if (messages.length > 0) {
-      scrollToBottom();
-    }
-  }, [messages]);
+  useEffect(() => { if (messages.length > 0) scrollToBottom(); }, [messages]);
 
-  // ✅ دالة الرجوع إلى صفحة الإشعارات
-  const handleBack = () => {
-    console.log('🔙 [SupportChat] Returning to notifications page');
+  const handleBack = () => setPage('notifications');
+
+  // دوال الحذف المحلي لتذكرة الدعم
+  const getDeletedTickets = useCallback(() => {
+    const stored = localStorage.getItem(DELETED_SUPPORT_TICKETS_KEY);
+    if (!stored) return new Set();
+    try { return new Set(JSON.parse(stored)); } catch { return new Set(); }
+  }, []);
+
+  const addDeletedTicket = useCallback((ticketId) => {
+    const current = getDeletedTickets();
+    current.add(String(ticketId));
+    localStorage.setItem(DELETED_SUPPORT_TICKETS_KEY, JSON.stringify([...current]));
+    setActiveTicket(null);
+    setMessages([]);
+    toast.success(lang === 'ar' ? 'تم حذف محادثة الدعم' : 'Support conversation deleted');
+    // 🔄 إرسال حدث لتحديث قائمة المحادثات المباشرة
+    window.dispatchEvent(new CustomEvent('refreshDirectChats'));
     setPage('notifications');
-  };
+  }, [getDeletedTickets, lang, setPage]);
 
-  // دالة للتحقق من صحة التذكرة
-  const validateTicketOwnership = async (ticketId) => {
+  // جلب أو إنشاء تذكرة دعم نشطة للمستخدم الحالي
+  // إذا تم توفير preferredTicketId، نحاول فتح تلك التذكرة أولاً
+  const fetchOrCreateActiveTicket = useCallback(async (preferredTicketId = null) => {
+    if (!user?.id) return null;
     try {
-      console.log('🔍 [SupportChat] Validating ticket:', ticketId, 'for user:', user.id);
-      
-      const response = await api.getSupportTickets({ id: ticketId });
-      console.log('🔍 [SupportChat] Ticket details:', response);
-      
-      if (response.success && response.tickets && response.tickets.length > 0) {
-        const ticket = response.tickets[0];
-        const ticketUserId = ticket.user_id;
-        
-        if (ticketUserId !== user.id) {
-          console.error('❌❌❌ TICKET MISMATCH DETECTED!');
-          return false;
-        }
-        
-        console.log('✅ [SupportChat] Ticket ownership verified');
-        return true;
-      }
-      return false;
-    } catch (error) {
-      console.error('❌ [SupportChat] Error validating ticket:', error);
-      return true;
-    }
-  };
+      const token = localStorage.getItem('token');
+      if (!token) throw new Error('No token');
 
-  // تحميل التذكرة أو إنشاؤها
-  useEffect(() => {
-    const loadOrCreateTicket = async () => {
-      setLoading(true);
-      try {
-        // ✅ قراءة ticketId من localStorage إذا كان موجوداً
-        const savedTicketId = localStorage.getItem('selectedTicketId');
-        if (savedTicketId) {
-          console.log('📤 Loading specific ticket from localStorage:', savedTicketId);
-          localStorage.removeItem('selectedTicketId');
-          
-          // التحقق من صحة التذكرة
-          const ticketResponse = await api.getSupportTicket(savedTicketId);
-          if (ticketResponse.success && ticketResponse.ticket) {
-            setConversationId(savedTicketId);
-            await loadMessages(savedTicketId);
-            setLoading(false);
-            return;
-          }
-        }
-        
-        console.log('🔍 [SupportChat] Loading ticket for user:', user?.id);
-        
-        const ticketsResponse = await api.getSupportTickets({ 
-          user_id: user.id,
-          status: 'open'
+      // 1) إذا كان هناك معرف مفضل، حاول جلب تلك التذكرة مباشرة
+      if (preferredTicketId) {
+        const ticketRes = await fetch(`${API_BASE}/api/support/tickets/${preferredTicketId}`, {
+          headers: { Authorization: `Bearer ${token}` }
         });
-        
-        console.log('📥 [SupportChat] Tickets response:', ticketsResponse);
-        
-        if (ticketsResponse.success && ticketsResponse.tickets && ticketsResponse.tickets.length > 0) {
-          const ticket = ticketsResponse.tickets[0];
-          
-          if (ticket.user_id !== user.id) {
-            console.error('❌ Ticket belongs to different user, creating new...');
-            await createNewTicket();
-            return;
+        const ticketData = await ticketRes.json();
+        if (ticketData.success && ticketData.ticket) {
+          const ticket = ticketData.ticket;
+          // التأكد أن التذكرة تخص المستخدم ومن نوع عام/دعم ومفتوحة وغير محذوفة محلياً
+          const deletedSet = getDeletedTickets();
+          if ((ticket.type === 'general' || ticket.type === 'support') &&
+              ticket.user_id === user.id &&
+              ticket.status !== 'closed' &&
+              !deletedSet.has(String(ticket.id))) {
+            setActiveTicket(ticket);
+            return ticket;
           }
-          
-          console.log('✅ [SupportChat] Using existing ticket ID:', ticket.id);
-          setConversationId(ticket.id);
-          await loadMessages(ticket.id);
-        } else {
-          console.log('🆕 [SupportChat] No open ticket found, creating new one...');
-          await createNewTicket();
         }
-      } catch (error) {
-        console.error('❌ [SupportChat] Error loading ticket:', error);
-        setMessages([
-          {
-            id: 1,
-            message: lang === 'ar' 
-              ? 'مرحباً بك في الدعم الفني! كيف يمكنني مساعدتك اليوم؟'
-              : 'Welcome to support! How can I help you today?',
-            is_from_user: false,
-            created_at: new Date().toISOString(),
-            sender_name: lang === 'ar' ? 'فريق الدعم' : 'Support Team'
-          }
-        ]);
-      } finally {
-        setLoading(false);
+        // إذا فشل جلب التذكرة المفضلة (مثلاً محذوفة أو لا تخص المستخدم)، نواصل للخطوة العادية
       }
-    };
 
-    if (user) {
-      loadOrCreateTicket();
+      // 2) جلب جميع تذاكر الدعم المفتوحة للمستخدم
+      const response = await fetch(`${API_BASE}/api/support/tickets?status=open`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await response.json();
+      if (!data.success) throw new Error(data.message || 'API error');
+
+      const deletedSet = getDeletedTickets();
+      // تصفية تذاكر الدعم (general/support) التي تخص المستخدم وغير المحذوفة
+      const userSupportTickets = data.tickets.filter(ticket => 
+        (ticket.type === 'general' || ticket.type === 'support') &&
+        ticket.user_id === user.id &&
+        !deletedSet.has(String(ticket.id))
+      );
+      // ترتيب تنازلي حسب التاريخ، نأخذ أحدث تذكرة مفتوحة
+      userSupportTickets.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      let ticket = userSupportTickets[0];
+
+      if (!ticket) {
+        // إنشاء تذكرة دعم جديدة
+        const createResponse = await api.createSupportTicket({
+          user_id: user.id,
+          subject: lang === 'ar' ? 'محادثة دعم فوري' : 'Instant Support Chat',
+          type: 'general',
+          priority: 'normal'
+        });
+        if (createResponse.success && createResponse.ticket) {
+          ticket = createResponse.ticket;
+          toast.success(lang === 'ar' ? 'تم فتح محادثة الدعم' : 'Support chat opened');
+          // 🔄 إرسال حدث لتحديث قائمة المحادثات المباشرة (عند إنشاء تذكرة جديدة)
+          window.dispatchEvent(new CustomEvent('refreshDirectChats'));
+        } else {
+          throw new Error(createResponse.message || 'Failed to create ticket');
+        }
+      }
+      setActiveTicket(ticket);
+      return ticket;
+    } catch (error) {
+      console.error('Error fetching/creating support ticket:', error);
+      toast.error(lang === 'ar' ? 'فشل في فتح محادثة الدعم' : 'Failed to open support chat');
+      return null;
     }
-  }, [user]);
+  }, [user?.id, lang, getDeletedTickets]);
 
-  // تحميل الرسائل
-  const loadMessages = async (ticketId) => {
+  // تحميل رسائل التذكرة
+  const loadMessages = useCallback(async (ticketId) => {
+    if (!ticketId) return;
+    setLoadingMessages(true);
     try {
-      console.log('📥 [SupportChat] Loading messages for ticket:', ticketId);
-      
-      const response = await api.getSupportMessages(ticketId);
-      console.log('📥 [SupportChat] Messages response:', response);
-      
-      if (response.success && response.messages) {
-        const formattedMessages = response.messages.map(msg => ({
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_BASE}/api/support/tickets/${ticketId}/messages`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.messages)) {
+        setMessages(data.messages.map(msg => ({
           id: msg.id,
           message: msg.message,
           is_from_user: msg.is_from_user,
           created_at: msg.created_at,
           sender_name: msg.sender_name
-        }));
-        console.log('✅ [SupportChat] Loaded', formattedMessages.length, 'messages');
-        setMessages(formattedMessages);
+        })));
       } else {
         setMessages([]);
       }
     } catch (error) {
-      console.error('❌ [SupportChat] Error loading messages:', error);
+      console.error('Error loading messages:', error);
+    } finally {
+      setLoadingMessages(false);
     }
-  };
+  }, []);
 
-  // إنشاء تذكرة جديدة
-  const createNewTicket = async () => {
-    try {
-      console.log('🆕 [SupportChat] Creating new ticket for user:', user.id);
-      
-      const response = await api.createSupportTicket({
-        subject: lang === 'ar' ? 'طلب دعم جديد' : 'New Support Request',
-        type: 'general',
-        priority: 'normal',
-        user_id: user.id,
-        email: user.email,
-        fullName: user.fullName || user.name
-      });
-      
-      console.log('📥 [SupportChat] Create ticket response:', response);
-      
-      if (response.success && response.ticket) {
-        console.log('✅ [SupportChat] Created ticket ID:', response.ticket.id);
-        setConversationId(response.ticket.id);
-        
-        setMessages([
-          {
-            id: Date.now(),
-            message: lang === 'ar' 
-              ? 'مرحباً بك في الدعم الفني! كيف يمكنني مساعدتك اليوم؟'
-              : 'Welcome to support! How can I help you today?',
-            is_from_user: false,
-            created_at: new Date().toISOString(),
-            sender_name: lang === 'ar' ? 'فريق الدعم' : 'Support Team'
-          }
-        ]);
-      }
-    } catch (error) {
-      console.error('❌ [SupportChat] Error creating ticket:', error);
-      throw error;
-    }
-  };
-
-  // ✅ إرسال رسالة مع إشعار للمسؤولين (إشعار واحد لكل محادثة)
+  // إرسال رسالة
   const sendMessage = async () => {
-    if (!newMessage.trim() || sending) return;
-
-    const messageText = newMessage.trim();
-    console.log('📤 [SupportChat] Sending message:', messageText);
-    
+    if (!newMessage.trim() || sending || !activeTicket) return;
+    const text = newMessage.trim();
     setNewMessage('');
     setSending(true);
-    
-    const tempMessage = {
-      id: Date.now(),
-      message: messageText,
+
+    const tempId = Date.now();
+    setMessages(prev => [...prev, {
+      id: tempId,
+      message: text,
       is_from_user: true,
       created_at: new Date().toISOString(),
-      sender_name: user?.fullName || user?.name || 'أنت',
+      sender_name: user?.fullName || user?.name || (lang === 'ar' ? 'أنت' : 'You'),
       status: 'sending'
-    };
-    setMessages(prev => [...prev, tempMessage]);
+    }]);
     scrollToBottom();
 
     try {
-      let response;
-      let currentTicketId = conversationId;
-      
-      if (conversationId) {
-        response = await api.sendSupportMessage(conversationId, messageText);
-      } else {
-        const ticketResponse = await api.createSupportTicket({
-          subject: lang === 'ar' ? 'طلب دعم جديد' : 'New Support Request',
-          type: 'general',
-          priority: 'normal',
-          user_id: user.id,
-          email: user.email
-        });
-        
-        if (ticketResponse.success && ticketResponse.ticket) {
-          currentTicketId = ticketResponse.ticket.id;
-          setConversationId(currentTicketId);
-          response = await api.sendSupportMessage(currentTicketId, messageText);
-        } else {
-          throw new Error('Failed to create ticket');
-        }
-      }
-      
+      const response = await api.sendSupportMessage(activeTicket.id, text);
       if (response && response.success) {
-        setMessages(prev => 
-          prev.map(m => m.id === tempMessage.id 
-            ? { ...m, status: 'sent' } 
-            : m
-          )
-        );
-        
-        // ✅ إرسال إشعار للمسؤولين (يتم إنشاء إشعار واحد فقط لكل محادثة)
-        try {
-          const token = localStorage.getItem('token');
-          if (!token) {
-            console.log('⚠️ No token found, skipping admin notification');
-            return;
-          }
-          
-          // إرسال إشعار للمسؤولين
-          const adminIds = [3, 4, 5]; // معرفات المسؤولين
-          for (const adminId of adminIds) {
-            await fetch('https://tourist-app-api.onrender.com/api/notifications/admin-message', {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({
-                userId: user.id,
-                ticketId: currentTicketId,
-                message: messageText,
-                userName: user?.fullName || user?.name
-              })
-            });
-          }
-          console.log('📤 Sent notification to admins');
-        } catch (notifError) {
-          console.error('Error sending admin notification:', notifError);
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, status: 'sent' } : m));
+        // إشعار للمسؤولين
+        const token = localStorage.getItem('token');
+        if (token) {
+          await fetch(`${API_BASE}/api/notifications/admin-message`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userId: user.id,
+              ticketId: activeTicket.id,
+              message: text,
+              userName: user?.fullName || user?.name
+            })
+          }).catch(err => console.error);
         }
-        
+        // 🔄 إرسال حدث لتحديث قائمة المحادثات المباشرة (بعد إرسال رسالة ناجحة)
+        window.dispatchEvent(new CustomEvent('refreshDirectChats'));
       } else {
-        setMessages(prev => prev.filter(m => m.id !== tempMessage.id));
-        toast.error(lang === 'ar' ? 'فشل إرسال الرسالة' : 'Failed to send message');
+        setMessages(prev => prev.filter(m => m.id !== tempId));
+        toast.error(lang === 'ar' ? 'فشل إرسال الرسالة' : 'Failed to send');
       }
     } catch (error) {
-      console.error('❌ [SupportChat] Error sending message:', error);
-      setMessages(prev => prev.filter(m => m.id !== tempMessage.id));
-      toast.error(lang === 'ar' ? 'فشل إرسال الرسالة' : 'Failed to send message');
+      console.error(error);
+      setMessages(prev => prev.filter(m => m.id !== tempId));
+      toast.error(lang === 'ar' ? 'فشل إرسال الرسالة' : 'Send failed');
     } finally {
       setSending(false);
     }
   };
 
-  // محاكاة كتابة الدعم
-  useEffect(() => {
-    if (messages.length > 0 && messages[messages.length - 1]?.is_from_user && !sending) {
-      setTyping(true);
-      const timer = setTimeout(() => {
-        setTyping(false);
-      }, 2000);
-      return () => clearTimeout(timer);
+  // حذف المحادثة (تذكرة الدعم)
+  const deleteConversation = async () => {
+    if (!activeTicket) return;
+    if (!window.confirm(lang === 'ar' ? 'حذف محادثة الدعم نهائياً؟' : 'Delete support conversation permanently?')) return;
+    setDeleting(true);
+    try {
+      const token = localStorage.getItem('token');
+      let serverDeleted = false;
+      try {
+        const delRes = await fetch(`${API_BASE}/api/support/tickets/${activeTicket.id}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (delRes.ok) serverDeleted = true;
+      } catch (e) { console.warn('DELETE failed', e); }
+      if (!serverDeleted) {
+        try {
+          const patchRes = await fetch(`${API_BASE}/api/support/tickets/${activeTicket.id}/status`, {
+            method: 'PATCH',
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'closed' })
+          });
+          if (patchRes.ok) serverDeleted = true;
+        } catch (e) { console.warn('PATCH failed', e); }
+      }
+      addDeletedTicket(activeTicket.id);
+      toast.success(serverDeleted
+        ? (lang === 'ar' ? 'تم حذف محادثة الدعم' : 'Support chat deleted')
+        : (lang === 'ar' ? 'تم إخفاء المحادثة محلياً' : 'Chat hidden locally'));
+    } catch (err) {
+      toast.error(lang === 'ar' ? 'فشل الحذف' : 'Delete failed');
+    } finally {
+      setDeleting(false);
     }
-  }, [messages, sending]);
+  };
+
+  const refreshMessages = () => {
+    if (activeTicket) loadMessages(activeTicket.id);
+  };
+
+  // قراءة المعرف المحفوظ من localStorage عند تحميل المكون
+  useEffect(() => {
+    const savedTicketId = localStorage.getItem('selectedSupportTicketId');
+    if (savedTicketId) {
+      localStorage.removeItem('selectedSupportTicketId'); // تنظيف بعد القراءة
+      setInitialTicketId(savedTicketId);
+    }
+  }, []);
+
+  // التهيئة الأولية: جلب أو إنشاء التذكرة (مع مراعاة المعرف المفضل) ثم تحميل الرسائل
+  useEffect(() => {
+    const init = async () => {
+      setLoading(true);
+      const ticket = await fetchOrCreateActiveTicket(initialTicketId);
+      if (ticket) {
+        await loadMessages(ticket.id);
+      }
+      setLoading(false);
+    };
+    if (user) init();
+  }, [user, initialTicketId, fetchOrCreateActiveTicket, loadMessages]);
+
+  // تحديث دوري للرسائل (Polling)
+  useEffect(() => {
+    if (activeTicket && !loading) {
+      pollingRef.current = setInterval(() => {
+        if (!sending) loadMessages(activeTicket.id);
+      }, 5000);
+      return () => clearInterval(pollingRef.current);
+    }
+  }, [activeTicket, loading, sending, loadMessages]);
 
   const formatTime = (dateString) => {
     if (!dateString) return '';
-    const date = new Date(dateString);
-    const now = new Date();
-    const diff = now - date;
-    const minutes = Math.floor(diff / 60000);
-    const hours = Math.floor(diff / 3600000);
-    const days = Math.floor(diff / 86400000);
-
-    if (minutes < 1) return lang === 'ar' ? 'الآن' : 'Just now';
-    if (minutes < 60) return `${minutes} ${lang === 'ar' ? 'دقيقة' : 'min'}`;
-    if (hours < 24) return `${hours} ${lang === 'ar' ? 'ساعة' : 'hr'}`;
-    if (days < 7) return `${days} ${lang === 'ar' ? 'يوم' : 'day'}`;
-    return date.toLocaleDateString(lang === 'ar' ? 'ar-EG' : 'en-US');
+    const diff = Math.floor((Date.now() - new Date(dateString)) / 60000);
+    if (diff < 1) return lang === 'ar' ? 'الآن' : 'Now';
+    if (diff < 60) return `${diff} ${lang === 'ar' ? 'د' : 'm'}`;
+    return new Date(dateString).toLocaleTimeString(lang === 'ar' ? 'ar-EG' : 'en-US', { hour: '2-digit', minute: '2-digit' });
   };
 
   if (!user) {
@@ -331,166 +302,107 @@ const SupportChatPage = ({ setPage, lang = 'ar' }) => {
           <div className="w-20 h-20 bg-gradient-to-r from-teal-500 to-cyan-500 rounded-full flex items-center justify-center mx-auto mb-4">
             <MessageCircle className="w-10 h-10 text-white" />
           </div>
-          <p className="text-gray-300 mb-4">يرجى تسجيل الدخول أولاً</p>
-          <button 
-            onClick={() => setPage('profile')} 
-            className="px-6 py-3 bg-gradient-to-r from-teal-500 to-cyan-500 text-white rounded-xl font-semibold hover:from-teal-600 hover:to-cyan-600 transition shadow-lg"
-          >
-            تسجيل الدخول
+          <p className="text-gray-300 mb-4">{lang === 'ar' ? 'يرجى تسجيل الدخول أولاً' : 'Please login first'}</p>
+          <button onClick={() => setPage('profile')} className="px-6 py-3 bg-gradient-to-r from-teal-500 to-cyan-500 text-white rounded-xl font-semibold shadow-lg">
+            {lang === 'ar' ? 'تسجيل الدخول' : 'Login'}
           </button>
         </div>
       </div>
     );
   }
 
+  if (loading && !activeTicket) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-gradient-to-br from-teal-900 via-cyan-900 to-emerald-900">
+        <Loader2 className="animate-spin text-teal-400" size={32} />
+      </div>
+    );
+  }
+
   return (
     <div className="h-screen flex flex-col bg-gradient-to-br from-teal-900 via-cyan-900 to-emerald-900 overflow-hidden">
-      {/* Header - تم تعديل زر الرجوع */}
+      {/* Header */}
       <div className="bg-gradient-to-r from-teal-600 to-cyan-600 shadow-lg flex-shrink-0">
         <div className="px-4 py-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <button
-                onClick={handleBack}
-                className="p-2 hover:bg-white/20 rounded-xl transition"
-              >
+              <button onClick={handleBack} className="p-2 hover:bg-white/20 rounded-xl transition">
                 <ArrowLeft size={22} className="text-white" />
               </button>
               <div className="relative">
                 <div className="w-10 h-10 bg-gradient-to-r from-teal-400 to-cyan-500 rounded-full flex items-center justify-center shadow-lg">
-                  <MessageCircle className="w-5 h-5 text-white" />
+                  <Headphones className="w-5 h-5 text-white" />
                 </div>
                 <span className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-white ${
-                  supportStatus === 'online' ? 'bg-green-500' : 
-                  supportStatus === 'away' ? 'bg-yellow-500' : 'bg-gray-500'
+                  supportStatus === 'online' ? 'bg-green-500' : 'bg-gray-500'
                 }`}></span>
               </div>
               <div>
-                <h1 className="text-base font-bold text-white">
-                  {lang === 'ar' ? 'الدعم الفني' : 'Support'}
-                </h1>
-                <p className="text-xs text-white/80">
-                  {supportStatus === 'online' 
-                    ? (lang === 'ar' ? 'متصل الآن' : 'Online now')
-                    : supportStatus === 'away'
-                      ? (lang === 'ar' ? 'غائب حالياً' : 'Away')
-                      : (lang === 'ar' ? 'غير متصل' : 'Offline')}
-                </p>
+                <h1 className="text-base font-bold text-white">{lang === 'ar' ? 'الدعم الفني' : 'Technical Support'}</h1>
+                <p className="text-xs text-white/80">{supportStatus === 'online' ? (lang === 'ar' ? 'متصل الآن' : 'Online') : (lang === 'ar' ? 'غير متصل' : 'Offline')}</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <button className="p-1.5 hover:bg-white/20 rounded-xl transition">
-                <Phone size={18} className="text-white" />
-              </button>
-              <button className="p-1.5 hover:bg-white/20 rounded-xl transition">
-                <Mail size={18} className="text-white" />
+              <button onClick={refreshMessages} className="p-2 hover:bg-white/20 rounded-full transition"><RefreshCw size={18} className="text-white" /></button>
+              <button onClick={deleteConversation} disabled={deleting} className="p-2 hover:bg-red-500/20 rounded-full transition disabled:opacity-50">
+                {deleting ? <Loader2 size={18} className="animate-spin" /> : <Trash2 size={18} className="text-white/80" />}
               </button>
             </div>
           </div>
         </div>
       </div>
 
-      {/* منطقة الرسائل */}
-      <div 
-        ref={messagesContainerRef}
-        className="flex-1 overflow-y-auto px-4 py-3 space-y-3"
-      >
-        {loading ? (
-          <div className="flex justify-center items-center h-full">
-            <Loader2 className="animate-spin text-teal-400 text-2xl" />
-          </div>
-        ) : messages.length === 0 ? (
-          <div className="text-center py-8">
-            <MessageCircle className="w-12 h-12 text-white/50 mx-auto mb-2" />
-            <p className="text-white/70 text-base">
-              {lang === 'ar' ? 'لا توجد رسائل بعد' : 'No messages yet'}
-            </p>
-            <p className="text-white/50 text-sm mt-1">
-              {lang === 'ar' 
-                ? 'اكتب رسالتك لتبدأ المحادثة'
-                : 'Type your message to start the conversation'}
-            </p>
-          </div>
-        ) : (
-          messages.map((msg, idx) => (
-            <div 
-              key={msg.id || idx} 
-              className={`flex ${msg.is_from_user ? 'justify-end' : 'justify-start'}`}
-            >
-              <div className={`max-w-[80%] ${msg.is_from_user ? 'order-2' : 'order-1'}`}>
-                <div className={`rounded-2xl px-3 py-2 ${
-                  msg.is_from_user
-                    ? 'bg-gradient-to-r from-teal-500 to-cyan-500 text-white shadow-md'
-                    : 'bg-white/20 text-white shadow-sm'
-                }`}>
-                  {!msg.is_from_user && msg.sender_name && (
-                    <div className="text-xs opacity-80 mb-1">
-                      {msg.sender_name}
-                    </div>
-                  )}
-                  <p className="text-base whitespace-pre-wrap break-words">{msg.message}</p>
-                </div>
-                <div className={`text-xs text-white/50 mt-1 ${msg.is_from_user ? 'text-left' : 'text-right'}`}>
-                  {formatTime(msg.created_at)}
-                  {msg.is_from_user && msg.status === 'sending' && (
-                    <span className="ml-1">⏳</span>
-                  )}
-                  {msg.is_from_user && msg.status === 'sent' && (
-                    <span className="ml-1">✓</span>
-                  )}
+      {/* منطقة المحادثة – بدون قائمة تذاكر */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* منطقة عرض الرسائل */}
+        <div ref={messagesContainerRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+          {loadingMessages && messages.length === 0 ? (
+            <div className="flex justify-center p-8"><Loader2 className="animate-spin text-teal-400" /></div>
+          ) : messages.length === 0 ? (
+            <div className="text-center p-8 text-white/50">
+              <MessageCircle size={48} className="mx-auto mb-2 opacity-40" />
+              <p>{lang === 'ar' ? 'لا توجد رسائل بعد' : 'No messages yet'}</p>
+              <p className="text-sm mt-2">{lang === 'ar' ? 'اكتب رسالتك أدناه للتواصل مع فريق الدعم' : 'Type your message below to contact support'}</p>
+            </div>
+          ) : (
+            messages.map(msg => (
+              <div key={msg.id} className={`flex ${msg.is_from_user ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-[80%] rounded-2xl px-4 py-2 ${msg.is_from_user ? 'bg-teal-500 text-white rounded-br-sm' : 'bg-white/20 text-white rounded-bl-sm'}`}>
+                  {!msg.is_from_user && msg.sender_name && <div className="text-xs opacity-80 mb-1">{msg.sender_name}</div>}
+                  <p className="text-sm whitespace-pre-wrap">{msg.message}</p>
+                  <div className={`text-[10px] mt-1 ${msg.is_from_user ? 'text-right text-teal-100' : 'text-left text-white/50'}`}>
+                    {formatTime(msg.created_at)}
+                    {msg.status === 'sending' && <Loader2 size={10} className="inline ml-1 animate-spin" />}
+                    {msg.status === 'sent' && <CheckCircle2 size={10} className="inline ml-1" />}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))
-        )}
-        
-        {/* مؤشر كتابة الدعم */}
-        {typing && (
-          <div className="flex justify-start">
-            <div className="bg-white/20 rounded-2xl px-3 py-2">
-              <div className="flex gap-1">
-                <span className="w-1.5 h-1.5 bg-white/70 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
-                <span className="w-1.5 h-1.5 bg-white/70 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
-                <span className="w-1.5 h-1.5 bg-white/70 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
-              </div>
-            </div>
-          </div>
-        )}
-        
-        <div ref={messagesEndRef} />
-      </div>
+            ))
+          )}
+          <div ref={messagesEndRef} />
+        </div>
 
-      {/* ✅ إدخال الرسالة - ثابت في أسفل الصفحة (تم إزالة التحويل) */}
-      <div className="flex-shrink-0 bg-white/10 backdrop-blur-sm border-t border-white/20">
-        <div className="px-4 py-4">
-          <div className="flex gap-3">
-            <input
-              type="text"
+        {/* منطقة الإدخال */}
+        <div className="flex-shrink-0 bg-white/10 backdrop-blur-sm border-t border-white/20 p-4">
+          <div className="flex gap-2">
+            <textarea
               value={newMessage}
               onChange={(e) => setNewMessage(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+              onKeyPress={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
               placeholder={lang === 'ar' ? 'اكتب رسالتك...' : 'Type your message...'}
-              className="flex-1 px-5 py-3 border border-white/30 rounded-xl bg-white/20 text-white placeholder-white/60 focus:ring-2 focus:ring-teal-400 focus:border-transparent outline-none transition-all text-base"
+              rows={1}
+              className="flex-1 px-4 py-2 bg-white/20 border border-white/30 rounded-xl text-white placeholder-white/50 focus:ring-2 focus:ring-teal-400 resize-none text-sm"
               disabled={sending}
-              autoFocus
+              style={{ height: '44px' }}
             />
-            <button
-              onClick={sendMessage}
-              disabled={!newMessage.trim() || sending}
-              className="px-5 py-3 bg-gradient-to-r from-teal-500 to-cyan-500 text-white rounded-xl transition-all disabled:opacity-50 hover:from-teal-600 hover:to-cyan-600 hover:scale-105 active:scale-95 shadow-md flex items-center justify-center"
-            >
-              {sending ? (
-                <Loader2 className="animate-spin" size={22} />
-              ) : (
-                <Send size={22} />
-              )}
+            <button onClick={sendMessage} disabled={!newMessage.trim() || sending} className="p-2 bg-teal-600 text-white rounded-xl hover:bg-teal-700 transition disabled:opacity-50">
+              {sending ? <Loader2 size={20} className="animate-spin" /> : <Send size={20} />}
             </button>
           </div>
-          <p className="text-sm text-center text-white/60 mt-2">
-            {lang === 'ar' 
-              ? 'فريق الدعم يرد عادةً خلال دقائق'
-              : 'Support team usually responds within minutes'}
-          </p>
+          <div className="flex justify-between items-center mt-2 px-2">
+            <p className="text-xs text-white/40">{lang === 'ar' ? '↵ للإرسال • Shift+↵ لسطر جديد' : 'Enter to send • Shift+Enter for new line'}</p>
+            <p className="text-xs text-teal-300 flex items-center gap-1"><Bell size={10} /> {lang === 'ar' ? 'سيتم إشعار فريق الدعم' : 'Support team will be notified'}</p>
+          </div>
         </div>
       </div>
     </div>
