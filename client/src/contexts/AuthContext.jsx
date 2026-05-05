@@ -1,5 +1,7 @@
 // client/src/contexts/AuthContext.jsx
-import React, { createContext, useContext, useState, useEffect } from 'react';
+// ✅ النسخة النهائية - مع الحفاظ على إعدادات الثيم عند تسجيل الخروج ومنع إعادة التحميل بعد الخروج
+
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import api from '../services/api';
 import toast from 'react-hot-toast';
 
@@ -15,15 +17,70 @@ export const useAuth = () => {
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
-  const [token, setToken] = useState(localStorage.getItem('token'));
+  const [token, setToken] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [initialized, setInitialized] = useState(false);
+  
+  // ✅ إضافة ref لمنع إعادة تحميل المستخدم أثناء تسجيل الخروج
+  const isLoggingOutRef = useRef(false);
+
+  // ✅ دالة مساعدة لمسح كافة بيانات الجلسة مع الحفاظ على إعدادات الثيم
+  const clearAllStorage = useCallback(() => {
+    // ✅ حفظ إعدادات الثيم قبل المسح
+    const savedDarkMode = localStorage.getItem('darkMode');
+    const savedAutoTheme = localStorage.getItem('autoTheme');
+    
+    const keysToRemove = [
+      'token',
+      'user',
+      'userType',
+      'touristAppUser',
+      'touristAppToken',
+      'selectedTicketId',
+      'selectedChatType',
+      'directChatParams',
+      'chatType',
+      'supportParams',
+      'forceTicketId',
+      'forceChatType'
+    ];
+    keysToRemove.forEach(key => localStorage.removeItem(key));
+    
+    // مسح أي مفاتيح مؤقتة أو خاصة بالمحادثات
+    Object.keys(localStorage).forEach(key => {
+      if (key.startsWith('temp_') || key.startsWith('chat_') || key.startsWith('notif_')) {
+        localStorage.removeItem(key);
+      }
+    });
+    
+    // ✅ استعادة إعدادات الثيم
+    if (savedDarkMode !== null) {
+      localStorage.setItem('darkMode', savedDarkMode);
+      console.log('🎨 Dark mode preserved:', savedDarkMode);
+    }
+    if (savedAutoTheme !== null) {
+      localStorage.setItem('autoTheme', savedAutoTheme);
+      console.log('🎨 Auto theme preserved:', savedAutoTheme);
+    }
+  }, []);
 
   // تحميل المستخدم من localStorage عند بدء التشغيل
   useEffect(() => {
     const loadUserFromStorage = () => {
+      // ✅ إذا كنا في عملية تسجيل خروج، لا نعيد تحميل أي شيء
+      if (isLoggingOutRef.current) {
+        console.log('⏸️ Skipping loadUserFromStorage because logout in progress');
+        setLoading(false);
+        setInitialized(true);
+        return;
+      }
+      
       try {
+        // ✅ حفظ الثيم قبل تحميل المستخدم
+        const savedDarkMode = localStorage.getItem('darkMode');
+        const savedAutoTheme = localStorage.getItem('autoTheme');
+        
         const storedUser = localStorage.getItem('user');
         const storedToken = localStorage.getItem('token');
         const storedUserType = localStorage.getItem('userType');
@@ -31,7 +88,9 @@ export const AuthProvider = ({ children }) => {
         console.log('🔍 Loading from localStorage:', { 
           hasUser: !!storedUser, 
           hasToken: !!storedToken,
-          userType: storedUserType
+          userType: storedUserType,
+          darkMode: savedDarkMode,
+          autoTheme: savedAutoTheme
         });
         
         if (storedUser && storedToken) {
@@ -61,12 +120,14 @@ export const AuthProvider = ({ children }) => {
           setToken(storedToken);
         } else {
           console.log('ℹ️ No user data in localStorage');
+          setUser(null);
+          setToken(null);
         }
       } catch (e) {
         console.error('❌ Error parsing stored user:', e);
-        localStorage.removeItem('user');
-        localStorage.removeItem('token');
-        localStorage.removeItem('userType');
+        clearAllStorage();
+        setUser(null);
+        setToken(null);
       } finally {
         setLoading(false);
         setInitialized(true);
@@ -74,11 +135,31 @@ export const AuthProvider = ({ children }) => {
     };
 
     loadUserFromStorage();
+  }, [clearAllStorage]); // clearAllStorage مستقرة، لا مشكلة
+
+  // الاستماع إلى أحداث التخزين من النوافذ الأخرى (لتسجيل الخروج المتزامن)
+  useEffect(() => {
+    const handleStorageChange = (event) => {
+      // ✅ تجاهل الأحداث إذا كنا في عملية تسجيل خروج
+      if (isLoggingOutRef.current) return;
+      
+      if (event.key === 'token' && !event.newValue) {
+        // تم حذف التوكن من نافذة أخرى -> تسجيل خروج
+        console.log('🔄 Token removed in another tab, logging out');
+        setUser(null);
+        setToken(null);
+        toast.success('تم تسجيل الخروج من نافذة أخرى');
+      } else if (event.key === 'user' && !event.newValue) {
+        setUser(null);
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
 
-  // التحقق من صحة التوكن مع السيرفر
+  // التحقق من صحة التوكن مع السيرفر (مرة واحدة بعد التحميل)
   useEffect(() => {
-    if (token && user && !loading) {
+    if (token && user && !loading && !isLoggingOutRef.current) {
       verifyTokenWithServer();
     }
   }, [token, user, loading]);
@@ -124,8 +205,20 @@ export const AuthProvider = ({ children }) => {
         // التحقق من نوع المستخدم
         if (isGuide) {
           toast.error('هذا الحساب خاص بالمرشدين. يرجى استخدام بوابة دخول المرشدين');
+          setLoading(false);
           return { success: false, message: 'هذا الحساب خاص بالمرشدين' };
         }
+        
+        // ✅ حفظ الثيم قبل مسح البيانات
+        const savedDarkMode = localStorage.getItem('darkMode');
+        const savedAutoTheme = localStorage.getItem('autoTheme');
+        
+        // تنظيف أي بيانات قديمة
+        clearAllStorage();
+        
+        // ✅ استعادة الثيم
+        if (savedDarkMode !== null) localStorage.setItem('darkMode', savedDarkMode);
+        if (savedAutoTheme !== null) localStorage.setItem('autoTheme', savedAutoTheme);
         
         // حفظ بيانات المستخدم العادي
         localStorage.setItem('token', token);
@@ -178,6 +271,17 @@ export const AuthProvider = ({ children }) => {
           type: 'guide'
         };
         
+        // ✅ حفظ الثيم قبل مسح البيانات
+        const savedDarkMode = localStorage.getItem('darkMode');
+        const savedAutoTheme = localStorage.getItem('autoTheme');
+        
+        // تنظيف أي بيانات قديمة
+        clearAllStorage();
+        
+        // ✅ استعادة الثيم
+        if (savedDarkMode !== null) localStorage.setItem('darkMode', savedDarkMode);
+        if (savedAutoTheme !== null) localStorage.setItem('autoTheme', savedAutoTheme);
+        
         // حفظ بيانات المرشد
         localStorage.setItem('token', token);
         localStorage.setItem('user', JSON.stringify(updatedUser));
@@ -205,22 +309,61 @@ export const AuthProvider = ({ children }) => {
   };
 
   // ============================================
-  // تسجيل الخروج
+  // تسجيل الخروج المُحسَّن - مع الحفاظ على الثيم ومنع إعادة التحميل
   // ============================================
-  const logout = () => {
-    console.log('👋 Logging out user:', user?.email);
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    localStorage.removeItem('userType');
+  const logout = useCallback(() => {
+    console.log('👋 Logging out user:', user?.email || 'unknown');
+    
+    // ✅ تعيين علامة لمنع أي محاولة لإعادة تحميل المستخدم أثناء الخروج
+    isLoggingOutRef.current = true;
+    
+    // ✅ حفظ إعدادات الثيم
+    const savedDarkMode = localStorage.getItem('darkMode');
+    const savedAutoTheme = localStorage.getItem('autoTheme');
+    
+    console.log('🎨 Saving theme before logout:', { savedDarkMode, savedAutoTheme });
+    
+    // 1. مسح جميع التخزينات المحلية (مع الحفاظ على الثيم)
+    clearAllStorage();
+    
+    // 2. استعادة إعدادات الثيم
+    if (savedDarkMode !== null) {
+      localStorage.setItem('darkMode', savedDarkMode);
+    }
+    if (savedAutoTheme !== null) {
+      localStorage.setItem('autoTheme', savedAutoTheme);
+    }
+    
+    // 3. إعادة تعيين حالة React
     setToken(null);
     setUser(null);
+    
+    // 4. إغلاق أي اتصالات WebSocket نشطة
+    if (window.socket && typeof window.socket.disconnect === 'function') {
+      window.socket.disconnect();
+      window.socket = null;
+    }
+    
+    // 5. عرض رسالة للمستخدم
     toast.success('تم تسجيل الخروج بنجاح');
-  };
+    
+    console.log('🎨 Theme after logout:', {
+      darkMode: localStorage.getItem('darkMode'),
+      autoTheme: localStorage.getItem('autoTheme')
+    });
+    
+    // 6. بعد فترة قصيرة، نسمح بإعادة التحميل (في حال حدث أي شيء آخر)
+    setTimeout(() => {
+      isLoggingOutRef.current = false;
+      console.log('🔓 Logout flag reset, re-initialization allowed');
+    }, 500);
+    
+  }, [clearAllStorage, user]);
 
   // ============================================
   // تحديث بيانات المستخدم
   // ============================================
-  const updateUser = (userData) => {
+  const updateUser = useCallback((userData) => {
     const updatedUser = { ...user, ...userData };
     
     // ✅ تحديث isGuide بناءً على role
@@ -242,7 +385,7 @@ export const AuthProvider = ({ children }) => {
       type: updatedUser.type,
       isGuide: updatedUser.isGuide 
     });
-  };
+  }, [user]);
 
   const value = {
     user,
