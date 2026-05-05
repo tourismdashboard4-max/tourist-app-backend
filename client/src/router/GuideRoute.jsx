@@ -19,7 +19,9 @@ import LoginPage from '../pages/LoginPage';
 import RegisterPage from '../pages/RegisterPage';
 import NotFoundPage from '../pages/NotFoundPage';
 import EmergencyPage from '../pages/EmergencyPage';
-import DirectChatPage from '../pages/DirectChatPage'; // ✅ استيراد صفحة المحادثة المباشرة
+import DirectChatPage from '../pages/DirectChatPage';
+// ✅ استيراد صفحة الدعم والمحادثات
+import SupportChatPage from '../pages/SupportChatPage';
 
 // مكون حماية المسارات
 const ProtectedRoute = ({ children, allowedRoles = [] }) => {
@@ -166,7 +168,7 @@ const router = createBrowserRouter([
       </PublicOnlyRoute>
     )
   },
-  // ✅ مسار الطوارئ - متاح لجميع المستخدمين المسجلين
+  // مسار الطوارئ - متاح لجميع المستخدمين المسجلين
   {
     path: '/emergency',
     element: (
@@ -181,6 +183,15 @@ const router = createBrowserRouter([
     element: (
       <ProtectedRoute allowedRoles={['user', 'guide', 'admin']}>
         <DirectChatPage />
+      </ProtectedRoute>
+    )
+  },
+  // ✅ ✅ ✅ مسار الدعم الفني والمحادثات عبر التذاكر (هذا هو المهم للإشعارات)
+  {
+    path: '/support/:ticketId?',
+    element: (
+      <ProtectedRoute allowedRoles={['user', 'guide', 'admin']}>
+        <SupportChatPage />
       </ProtectedRoute>
     )
   },
