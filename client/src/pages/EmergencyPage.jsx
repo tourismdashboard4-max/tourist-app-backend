@@ -1,639 +1,409 @@
-// client/src/pages/DirectChatPage.jsx
-// ✅ النسخة النهائية - تفتح كل محادثة بشكل مستقل بناءً على ثنائية (المستخدم الحالي، الطرف الآخر)
-
+// client/src/pages/ExplorePage.jsx - النسخة النهائية المبسطة (بدون guidesMap)
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, Loader2, ArrowLeft, User, MessageCircle, RefreshCw, Smile, Image, Paperclip, Mic, Bell, CheckCircle2, Trash2 } from 'lucide-react';
+import mapboxgl from 'mapbox-gl';
+import { Home, Bell, User, MapPin, Search, MessageCircle, CalendarCheck, RefreshCw, AlertTriangle } from 'lucide-react';
+import api from '../services/api';
 import toast from 'react-hot-toast';
-import io from 'socket.io-client';
+
+mapboxgl.accessToken = "pk.eyJ1IjoibW9vaG1kMTUiLCJhIjoiY21obWJwN3EwMHF1czJvc2lyaWR5em0xciJ9.sl39WFOhm4m-kOOYtGqONw";
 
 const API_BASE = 'https://tourist-app-api.onrender.com';
-const SOCKET_URL = 'https://tourist-app-api.onrender.com';
-const DELETED_TICKETS_KEY = 'guide_deleted_tickets';
+const FALLBACK_IMAGE = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='300' viewBox='0 0 400 300'%3E%3Crect width='400' height='300' fill='%23f3f4f6'/%3E%3Ctext x='50%25' y='50%25' font-size='20' fill='%239ca3af' text-anchor='middle' dy='.3em'%3E🖼️ لا توجد صورة%3C/text%3E%3C/svg%3E";
 
-const getToken = () => localStorage.getItem('token') || localStorage.getItem('touristAppToken') || '';
-
-const authFetch = async (url, options = {}) => {
-  const token = getToken();
-  const res = await fetch(`${API_BASE}${url}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options.headers || {}),
-    },
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
-  return data;
+const LOCALES = {
+  ar: {
+    search: "ابحث عن وجهة...",
+    driving: "سيارة",
+    walking: "مشي",
+    cycling: "دراجة",
+    startTrip: "ابدأ الرحلة",
+    chatWithGuide: "دردشة مع المرشد",
+    bookNow: "احجز الآن",
+    requestSent: "تم إرسال الطلب بنجاح",
+    loginRequired: "يجب تسجيل الدخول أولاً",
+    bookingFailed: "فشل إرسال الطلب",
+    refreshMap: "تحديث الخريطة",
+    cannotBookOwn: "لا يمكنك حجز برنامجك",
+    cannotRequestOwn: "لا يمكنك طلب برنامجك",
+    safetyGuidelines: "إرشادات السلامة",
+  },
+  en: {
+    search: "Search...",
+    driving: "Driving",
+    walking: "Walking",
+    cycling: "Cycling",
+    startTrip: "Start Trip",
+    chatWithGuide: "Chat With Guide",
+    bookNow: "Book Now",
+    requestSent: "Request sent successfully",
+    loginRequired: "Please login first",
+    bookingFailed: "Booking failed",
+    refreshMap: "Refresh Map",
+    cannotBookOwn: "You cannot book your own program",
+    cannotRequestOwn: "You cannot request your own program",
+    safetyGuidelines: "Safety Guidelines",
+  },
 };
 
-const addDeletedTicket = (ticketId) => {
-  const stored = localStorage.getItem(DELETED_TICKETS_KEY);
-  let deletedSet = stored ? new Set(JSON.parse(stored)) : new Set();
-  deletedSet.add(String(ticketId));
-  localStorage.setItem(DELETED_TICKETS_KEY, JSON.stringify([...deletedSet]));
-};
-
-const isTicketDeleted = (ticketId) => {
-  const stored = localStorage.getItem(DELETED_TICKETS_KEY);
-  if (!stored) return false;
-  const deletedSet = new Set(JSON.parse(stored));
-  return deletedSet.has(String(ticketId));
-};
-
-const convertToNumericId = async (userId, token) => {
-  if (!userId) return null;
-  if (!isNaN(Number(userId))) return Number(userId);
-  try {
-    const res = await fetch(`${API_BASE}/api/users/${userId}`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    const data = await res.json();
-    if (data.success && data.user) {
-      if (data.user.old_id) return Number(data.user.old_id);
-      if (data.user.id && !isNaN(Number(data.user.id))) return Number(data.user.id);
-    }
-  } catch (err) {
-    console.warn('Failed to convert user ID:', err);
-  }
-  return null;
-};
-
-const DirectChatPage = ({ setPage, lang = 'ar', user: propUser }) => {
-  const [recipientName, setRecipientName] = useState(lang === 'ar' ? 'المرشد' : 'Guide');
-  const [recipientId, setRecipientId] = useState(null);
-  const [recipientNumericId, setRecipientNumericId] = useState(null);
-  const [messages, setMessages] = useState([]);
-  const [newMessage, setNewMessage] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [loadingMessages, setLoadingMessages] = useState(false);
-  const [sending, setSending] = useState(false);
-  const [ticketId, setTicketId] = useState(null);
-  const [initError, setInitError] = useState(false);
-  const [errorMessage, setErrorMessage] = useState('');
-  const [user, setUser] = useState(propUser);
-  const [notificationSent, setNotificationSent] = useState(false);
-  const [guideOnline, setGuideOnline] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [isGuide, setIsGuide] = useState(false);
+function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, user, programs: externalPrograms, setPrograms: setExternalPrograms, unreadCount, dark }) {
+  const t = (k) => LOCALES[lang][k] || k;
+  const [selectedProgram, setSelectedProgram] = useState(null);
+  const [programImages, setProgramImages] = useState([]);
+  const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const [showGallery, setShowGallery] = useState(false);
+  const [loadingImages, setLoadingImages] = useState(false);
+  const [bookingLoading, setBookingLoading] = useState(false);
+  const [showMyProgramsOnly, setShowMyProgramsOnly] = useState(false);
+  const [programs, setPrograms] = useState([]);
   
-  const socketRef = useRef(null);
-  const messagesEndRef = useRef(null);
-  const messagesContainerRef = useRef(null);
-  const pollingRef = useRef(null);
-  const textareaRef = useRef(null);
-  const joinedRoomRef = useRef(false);
+  const markersRef = useRef([]);
+  const isMapLoadedRef = useRef(false);
+  const mapInstanceRef = useRef(null);
 
-  const scrollToBottom = useCallback(() => {
-    setTimeout(() => {
-      messagesContainerRef.current?.scrollTo({ top: messagesContainerRef.current.scrollHeight, behavior: 'smooth' });
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-    }, 100);
-  }, []);
+  const isGuide = user?.role === 'guide' || user?.type === 'guide' || user?.isGuide === true;
 
-  useEffect(() => { scrollToBottom(); }, [messages, scrollToBottom]);
-
-  useEffect(() => {
-    if (propUser) { setUser(propUser); return; }
-    const raw = localStorage.getItem('touristAppUser') || localStorage.getItem('user');
-    if (raw) { 
-      try { 
-        const parsed = JSON.parse(raw);
-        setUser(parsed);
-        if (parsed.role === 'guide' || parsed.type === 'guide') setIsGuide(true);
-      } catch (e) { console.error(e); } 
-    }
-  }, [propUser]);
-
-  const markTicketAsRead = useCallback(async () => {
-    if (!ticketId || isTicketDeleted(ticketId)) return;
+  // جلب البرامج
+  const fetchProgramsFromAPI = useCallback(async () => {
     try {
-      const token = getToken();
-      await fetch(`${API_BASE}/api/support/tickets/${ticketId}/read`, {
-        method: 'PUT',
-        headers: { Authorization: `Bearer ${token}` }
-      }).catch(() => {});
-    } catch (err) {}
-  }, [ticketId]);
-
-  const loadMessages = useCallback(async (tId) => {
-    if (!tId || isTicketDeleted(tId)) return;
-    setLoadingMessages(true);
-    try {
-      const data = await authFetch(`/api/support/tickets/${tId}/messages`);
-      if (data.success && Array.isArray(data.messages)) {
-        setMessages(data.messages.map((m) => ({
-          id: m.id,
-          message: m.message,
-          is_from_user: m.is_from_user,
-          created_at: m.created_at,
-          sender_name: m.sender_name,
-          sender_id: m.sender_id,
-          read: m.read || false,
-        })));
-      } else setMessages([]);
-    } catch (e) { 
-      console.error('loadMessages error:', e);
-      setMessages([]);
-    } finally {
-      setLoadingMessages(false);
-    }
-  }, []);
-
-  const notifyViaSocket = useCallback((message, isFromUser = true) => {
-    if (socketRef.current?.connected && ticketId && !isTicketDeleted(ticketId)) {
-      socketRef.current.emit('new_message', {
-        ticketId: ticketId,
-        message: message,
-        senderId: user?.id,
-        senderName: user?.fullName || user?.name,
-        senderRole: isGuide ? 'guide' : 'tourist',
-        createdAt: new Date().toISOString()
-      });
-      return true;
-    }
-    return false;
-  }, [ticketId, user?.id, user?.fullName, user?.name, isGuide]);
-
-  const deleteCurrentConversation = async () => {
-    if (!ticketId) return toast.error(lang === 'ar' ? 'لا توجد محادثة' : 'No conversation');
-    if (deleting) return;
-    if (!window.confirm(lang === 'ar' ? 'حذف المحادثة؟' : 'Delete conversation?')) return;
-    setDeleting(true);
-    try {
-      const token = getToken();
-      await fetch(`${API_BASE}/api/support/tickets/${ticketId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
-      addDeletedTicket(ticketId);
-      socketRef.current?.emit('leave_ticket_room', { ticketId: String(ticketId) });
-      localStorage.removeItem('directChatParams');
-      window.dispatchEvent(new CustomEvent('refreshDirectChats'));
-      toast.success(lang === 'ar' ? 'تم الحذف' : 'Deleted');
-      setPage('notifications');
-    } catch (error) {
-      toast.error(lang === 'ar' ? 'فشل الحذف' : 'Delete failed');
-    } finally { setDeleting(false); }
-  };
-
-  // استعادة معاملات المحادثة من localStorage
-  useEffect(() => {
-    if (!user) return;
-    const paramsStr = localStorage.getItem('directChatParams');
-    if (!paramsStr) {
-      setPage('notifications');
-      return;
-    }
-    try {
-      const params = JSON.parse(paramsStr);
-      if (!params.recipientId && params.recipientId !== 0) throw new Error('No recipientId');
-      if (String(params.recipientId) === String(user.id)) {
-        toast.error(lang === 'ar' ? 'لا يمكن فتح محادثة مع نفسك' : 'Cannot chat with yourself');
-        setPage('notifications');
-        return;
+      const response = await fetch(`${API_BASE}/api/programs`);
+      const data = await response.json();
+      if (response.ok && data.success && Array.isArray(data.programs)) {
+        const progs = data.programs
+          .filter(p => p.status === 'active')
+          .map(p => ({
+            id: p.id,
+            name_ar: p.name,
+            name_en: p.name,
+            guide_name: p.guide_name,
+            guide_id: p.guide_id,
+            coords: [p.location_lng, p.location_lat],
+            price: p.price,
+            duration: p.duration,
+            rating: p.rating || 4.5,
+            description: p.description,
+            image: p.image ? (p.image.startsWith('http') ? p.image : `${API_BASE}${p.image}`) : null,
+            images: p.images || [],
+            safetyGuidelines: p.safetyGuidelines || "",
+          }));
+        setPrograms(progs);
+        setExternalPrograms(progs);
+      } else {
+        setPrograms([]);
+        setExternalPrograms([]);
       }
-      if (params.ticketId && isTicketDeleted(params.ticketId)) {
-        toast.error(lang === 'ar' ? 'المحادثة محذوفة' : 'Deleted conversation');
-        setPage('notifications');
-        return;
-      }
-      setRecipientId(params.recipientId);
-      setRecipientName(params.recipientName || (lang === 'ar' ? (isGuide ? 'السائح' : 'المرشد') : (isGuide ? 'Tourist' : 'Guide')));
-      if (params.ticketId) {
-        setTicketId(params.ticketId);
-        loadMessages(params.ticketId);
-        markTicketAsRead();
-        setLoading(false);
-      }
-      const token = getToken();
-      convertToNumericId(params.recipientId, token).then(numId => numId && setRecipientNumericId(numId));
     } catch (err) {
       console.error(err);
-      setPage('notifications');
+      setPrograms([]);
+      setExternalPrograms([]);
     }
-  }, [user, lang, setPage, loadMessages, markTicketAsRead, isGuide]);
+  }, [setExternalPrograms]);
 
-  // تهيئة التذكرة إذا لم تكن موجودة (للمستخدم الذي يبدأ المحادثة)
   useEffect(() => {
-    if (!user || !recipientId || ticketId) return;
-    const init = async () => {
-      setLoading(true);
-      let numericRecipientId = recipientNumericId;
-      if (!numericRecipientId) {
-        const token = getToken();
-        numericRecipientId = await convertToNumericId(recipientId, token);
-        if (!numericRecipientId) {
-          setErrorMessage(lang === 'ar' ? 'معرف المستخدم غير صالح' : 'Invalid user ID');
-          setInitError(true);
-          setLoading(false);
-          return;
-        }
-        setRecipientNumericId(numericRecipientId);
-      }
-      
-      try {
-        const actualUserId = String(user.id);
-        const recipientUserId = String(numericRecipientId); // قد يكون رقميًا أو نصيًا، نحوله لنص
-        // البحث عن تذكرة موجودة تجمع بين المستخدم الحالي والطرف الآخر
-        const ticketsData = await authFetch(`/api/support/tickets?status=open`);
-        let existing = null;
-        if (ticketsData.success && Array.isArray(ticketsData.tickets)) {
-          existing = ticketsData.tickets.find((t) => {
-            if (t.type !== 'guide_chat') return false;
-            if (isTicketDeleted(t.id)) return false;
+    fetchProgramsFromAPI();
+    const interval = setInterval(fetchProgramsFromAPI, 30000);
+    return () => clearInterval(interval);
+  }, [fetchProgramsFromAPI]);
 
-            // دالة مساعدة للتحقق من وجود مستخدم في التذكرة (بأي من الحقول)
-            const isUserInTicket = (userId, ticket) => {
-              if (ticket.user_id && String(ticket.user_id) === userId) return true;
-              if (ticket.metadata?.guideId && String(ticket.metadata.guideId) === userId) return true;
-              if (ticket.metadata?.touristId && String(ticket.metadata.touristId) === userId) return true;
-              if (ticket.metadata?.created_by_id && String(ticket.metadata.created_by_id) === userId) return true;
-              if (ticket.metadata?.participants && Array.isArray(ticket.metadata.participants) && 
-                  ticket.metadata.participants.some(p => String(p) === userId)) return true;
-              if (ticket.assigned_to && String(ticket.assigned_to) === userId) return true;
-              return false;
-            };
-
-            const currentUserInTicket = isUserInTicket(actualUserId, t);
-            const recipientInTicket = isUserInTicket(recipientUserId, t);
-
-            // يجب أن يكون كلا المستخدمين موجودين في التذكرة
-            return currentUserInTicket && recipientInTicket;
-          });
-        }
-        if (existing) {
-          setTicketId(existing.id);
-          await loadMessages(existing.id);
-          await markTicketAsRead();
-          const currentParams = JSON.parse(localStorage.getItem('directChatParams') || '{}');
-          currentParams.ticketId = existing.id;
-          localStorage.setItem('directChatParams', JSON.stringify(currentParams));
-          // انضمام إلى الغرفة فوراً
-          if (socketRef.current?.connected) {
-            socketRef.current.emit('join_ticket_room', { ticketId: String(existing.id) });
-            joinedRoomRef.current = true;
-          }
-        } else {
-          // إنشاء تذكرة جديدة
-          const subject = isGuide 
-            ? `${lang === 'ar' ? 'محادثة مع السائح' : 'Chat with tourist'}: ${recipientName}`
-            : `${lang === 'ar' ? 'محادثة مع المرشد' : 'Chat with guide'}: ${recipientName}`;
-          const initialMessage = isGuide
-            ? (lang === 'ar' ? `بدأ المرشد ${user.fullName || user.name} محادثة جديدة معك` : `Guide ${user.fullName || user.name} started a new chat with you`)
-            : (lang === 'ar' ? `بدأ المستخدم ${user.fullName || user.name} محادثة جديدة معك` : `User ${user.fullName || user.name} started a new chat with you`);
-          
-          const createPayload = {
-            user_id: isGuide ? numericRecipientId : actualUserId,
-            subject: subject,
-            type: 'guide_chat',
-            priority: 'high',
-            message: initialMessage,
-            metadata: {
-              guideId: isGuide ? actualUserId : numericRecipientId,
-              touristId: isGuide ? numericRecipientId : actualUserId,
-              guideName: isGuide ? user.fullName || user.name : recipientName,
-              touristName: isGuide ? recipientName : user.fullName || user.name,
-              created_by: actualUserId,
-              created_by_name: user.fullName || user.name,
-              participants: [actualUserId, String(numericRecipientId)], // لتسهيل البحث مستقبلاً
-              status: 'waiting_for_response'
-            },
-          };
-          const createData = await authFetch('/api/support/tickets', {
-            method: 'POST',
-            body: JSON.stringify(createPayload),
-          });
-          if (createData.success && createData.ticket) {
-            const newTicketId = createData.ticket.id;
-            setTicketId(newTicketId);
-            setMessages([{
-              id: Date.now(),
-              message: lang === 'ar' ? `مرحباً! بدء المحادثة مع ${recipientName}. سيتم إعلامه.` : `Hello! Starting conversation with ${recipientName}.`,
-              is_from_user: false,
-              created_at: new Date().toISOString(),
-              sender_name: 'System',
-              sender_id: 'system',
-            }]);
-            const currentParams = JSON.parse(localStorage.getItem('directChatParams') || '{}');
-            currentParams.ticketId = newTicketId;
-            localStorage.setItem('directChatParams', JSON.stringify(currentParams));
-            // إعلام الطرف الآخر عبر WebSocket
-            setTimeout(() => notifyViaSocket(initialMessage), 500);
-            // انضمام إلى الغرفة
-            if (socketRef.current?.connected) {
-              socketRef.current.emit('join_ticket_room', { ticketId: String(newTicketId) });
-              joinedRoomRef.current = true;
-            }
-          } else {
-            throw new Error(createData.message || 'Failed to create ticket');
-          }
-        }
-      } catch (err) {
-        console.error('Init error:', err);
-        setErrorMessage(err.message);
-        setInitError(true);
-        toast.error(err.message);
-      } finally {
-        setLoading(false);
-      }
-    };
-    init();
-  }, [user, recipientId, recipientNumericId, recipientName, lang, ticketId, loadMessages, markTicketAsRead, notifyViaSocket, isGuide]);
-
-  // باقي الكود (Socket.IO, sendMessage, UI) كما هو دون تغيير
-  // Socket.IO – التسجيل والاستماع للرسائل الجديدة (مع دعم التحديث الفوري لجميع المشاركين)
-  useEffect(() => {
-    if (!user?.id || !recipientId) return;
-    const socket = io(SOCKET_URL, {
-      auth: { token: getToken() },
-      transports: ['websocket', 'polling'],
-      reconnection: true,
-    });
-    socketRef.current = socket;
-    joinedRoomRef.current = false;
-
-    socket.on('connect', () => {
-      console.log('✅ Socket connected');
-      socket.emit('register', { userId: user.id, role: isGuide ? 'guide' : 'user' });
-      if (ticketId && !isTicketDeleted(ticketId) && !joinedRoomRef.current) {
-        socket.emit('join_ticket_room', { ticketId: String(ticketId) });
-        joinedRoomRef.current = true;
-      }
-    });
-
-    socket.on('user_online', ({ userId }) => {
-      if (String(userId) === String(recipientId) || (recipientNumericId && String(userId) === String(recipientNumericId))) {
-        setGuideOnline(true);
-        toast.success(lang === 'ar' ? 'الطرف الآخر متصل الآن!' : 'Other party is online!');
-      }
-    });
-
-    socket.on('user_offline', ({ userId }) => {
-      if (String(userId) === String(recipientId) || (recipientNumericId && String(userId) === String(recipientNumericId))) {
-        setGuideOnline(false);
-      }
-    });
-
-    // استقبال رسالة جديدة من أي طرف مشارك
-    socket.on('new_message', (data) => {
-      const incomingTicketId = String(data.ticketId);
-      const currentTicketId = ticketId ? String(ticketId) : null;
-
-      if (incomingTicketId === currentTicketId && String(data.senderId) !== String(user?.id)) {
-        // رسالة لهذه المحادثة المفتوحة
-        const newMsg = {
-          id: data.messageId || Date.now(),
-          message: data.message,
-          is_from_user: false,
-          created_at: data.created_at || new Date().toISOString(),
-          sender_name: data.senderName || (lang === 'ar' ? (isGuide ? 'السائح' : 'المرشد') : (isGuide ? 'Tourist' : 'Guide')),
-          sender_id: data.senderId,
-          read: false,
-        };
-        setMessages(prev => prev.some(m => m.id === newMsg.id) ? prev : [...prev, newMsg]);
-        scrollToBottom();
-        window.dispatchEvent(new CustomEvent('refreshDirectChats'));
-        window.dispatchEvent(new CustomEvent('update_last_message', {
-          detail: { ticketId: data.ticketId, lastMessage: data.message, lastMessageTime: data.created_at }
-        }));
-      } 
-      else if (incomingTicketId !== currentTicketId) {
-        // رسالة لمحادثة أخرى: تحديث القائمة وإشعار للمستخدم
-        console.log(`📬 New message for ticket ${incomingTicketId}. Refreshing chat list.`);
-        window.dispatchEvent(new CustomEvent('refreshDirectChats'));
-        if (currentTicketId !== incomingTicketId) {
-          toast.success(lang === 'ar' ? `رسالة جديدة من ${data.senderName || (isGuide ? 'السائح' : 'المرشد')}` : `New message from ${data.senderName || (isGuide ? 'Tourist' : 'Guide')}`, { duration: 4000 });
-        }
-      }
-    });
-
-    // تحديث آخر رسالة للمحادثة (مفيد لتحديث القوائم)
-    socket.on('update_last_message', (data) => {
-      if (data.ticketId === ticketId) {
-        // تحديث آخر رسالة في الواجهة الحالية
-        setMessages(prev => {
-          if (prev.length === 0) return prev;
-          const lastMsg = { ...prev[prev.length-1], message: data.lastMessage, created_at: data.lastMessageTime };
-          return [...prev.slice(0, -1), lastMsg];
-        });
-      }
-      window.dispatchEvent(new CustomEvent('refreshDirectChats'));
-    });
-
-    // انضمام إلى غرفة التذكرة عند إنشائها من الطرف الآخر
-    socket.on('ticket_created', ({ ticketId: newTicketId, participants }) => {
-      if (participants && participants.includes(user?.id)) {
-        if (!ticketId || String(ticketId) !== String(newTicketId)) {
-          console.log(`🆕 New ticket ${newTicketId} created for this user, joining room.`);
-          socket.emit('join_ticket_room', { ticketId: String(newTicketId) });
-          // تحديث المعاملات المحلية إذا كانت هذه الصفحة مفتوحة
-          const currentParams = JSON.parse(localStorage.getItem('directChatParams') || '{}');
-          if (currentParams.recipientId && !currentParams.ticketId) {
-            currentParams.ticketId = newTicketId;
-            localStorage.setItem('directChatParams', JSON.stringify(currentParams));
-            setTicketId(newTicketId);
-            loadMessages(newTicketId);
-          }
-          window.dispatchEvent(new CustomEvent('refreshDirectChats'));
-        }
-      }
-    });
-
-    // محاولة الانضمام للغرفة إذا تأخر ticketId
-    if (ticketId && socket.connected && !joinedRoomRef.current && !isTicketDeleted(ticketId)) {
-      socket.emit('join_ticket_room', { ticketId: String(ticketId) });
-      joinedRoomRef.current = true;
-    }
-
-    return () => {
-      if (socket) {
-        if (ticketId) socket.emit('leave_ticket_room', { ticketId: String(ticketId) });
-        socket.disconnect();
-      }
-    };
-  }, [user?.id, recipientId, recipientNumericId, lang, ticketId, scrollToBottom, isGuide, loadMessages]);
-
-  // Polling احتياطي للمحادثات غير المحذوفة (كل 5 ثوانٍ)
-  useEffect(() => {
-    if (!ticketId || isTicketDeleted(ticketId)) return;
-    const fetchMessages = async () => {
-      if (!sending && !loadingMessages) await loadMessages(ticketId);
-    };
-    pollingRef.current = setInterval(fetchMessages, 5000);
-    return () => clearInterval(pollingRef.current);
-  }, [ticketId, sending, loadingMessages, loadMessages]);
-
-  const sendMessage = async () => {
-    if (!newMessage.trim() || sending || !ticketId || isTicketDeleted(ticketId)) return;
-    const text = newMessage.trim();
-    setNewMessage('');
-    setSending(true);
-    if (textareaRef.current) textareaRef.current.style.height = 'auto';
-    const tempId = `temp_${Date.now()}`;
-    setMessages(prev => [...prev, {
-      id: tempId, message: text, is_from_user: true,
-      created_at: new Date().toISOString(),
-      sender_name: user?.fullName || user?.name,
-      sender_id: user?.id,
-      status: 'sending',
-    }]);
-    scrollToBottom();
+  // تحميل الصور
+  const fetchProgramImages = useCallback(async (program) => {
+    if (!program) return;
+    setLoadingImages(true);
     try {
-      await authFetch(`/api/support/tickets/${ticketId}/messages`, {
-        method: 'POST',
-        body: JSON.stringify({ message: text }),
-      });
-      setMessages(prev => prev.map(m => m.id === tempId ? { ...m, status: 'sent' } : m));
-      notifyViaSocket(text);
-      window.dispatchEvent(new CustomEvent('refreshDirectChats', {
-        detail: { ticketId, lastMessage: text, updatedAt: new Date().toISOString() }
-      }));
+      if (program.images && program.images.length > 0) {
+        const images = program.images.map(img => img.url?.startsWith('http') ? img.url : `${API_BASE}${img.url}`);
+        setProgramImages(images);
+        setCurrentImageIndex(0);
+        return;
+      }
+      if (program.image) {
+        setProgramImages([program.image]);
+        return;
+      }
+      setProgramImages([FALLBACK_IMAGE]);
     } catch (err) {
-      console.error('Send error:', err);
-      setMessages(prev => prev.filter(m => m.id !== tempId));
-      toast.error(lang === 'ar' ? 'فشل إرسال الرسالة' : 'Send failed');
+      console.error(err);
+      setProgramImages([FALLBACK_IMAGE]);
     } finally {
-      setSending(false);
+      setLoadingImages(false);
+    }
+  }, []);
+
+  // ✅ دالة فتح المحادثة (مبسطة بدون تحويل)
+  const handleChatWithGuide = (guideId, guideName) => {
+    console.log('🔍 Opening chat with guide:', { guideId, guideName, userId: user?.id });
+    
+    if (!user) {
+      toast.error(t('loginRequired'));
+      setPage('profile');
+      return;
+    }
+
+    if (!guideId) {
+      toast.error(lang === 'ar' ? 'معرف المرشد غير موجود' : 'Guide ID missing');
+      return;
+    }
+
+    if (String(guideId) === String(user.id)) {
+      toast.error(lang === 'ar' ? 'لا يمكنك فتح محادثة مع نفسك' : 'Cannot start chat with yourself');
+      return;
+    }
+
+    const chatParams = {
+      recipientId: guideId,
+      recipientName: guideName || 'Guide',
+      timestamp: Date.now(),
+      from: 'explore'
+    };
+    localStorage.setItem('directChatParams', JSON.stringify(chatParams));
+    console.log('✅ Saved chat params:', chatParams);
+    toast.success(`تم فتح المحادثة مع ${guideName}`);
+
+    setSelectedProgram(null);
+    setProgramImages([]);
+    setPage('directChat');
+  };
+
+  // الحجز
+  const handleBooking = async (program) => {
+    if (!user) {
+      toast.error(t('loginRequired'));
+      return;
+    }
+    setBookingLoading(true);
+    try {
+      const ticketData = {
+        user_id: user.id,
+        subject: `طلب حجز برنامج: ${program.name_ar || program.name}`,
+        type: 'booking',
+        priority: 'normal',
+        message: `أود حجز البرنامج "${program.name_ar || program.name}" الذي يقدمه المرشد ${program.guide_name}.`
+      };
+      const response = await api.createSupportTicket(ticketData);
+      if (response.success) {
+        toast.success(t('requestSent'));
+      } else {
+        toast.error(t('bookingFailed'));
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error(t('bookingFailed'));
+    } finally {
+      setBookingLoading(false);
     }
   };
 
-  const handleTextareaChange = (e) => {
-    setNewMessage(e.target.value);
-    e.target.style.height = 'auto';
-    e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
-  };
-
-  const handleKeyPress = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
+  // طلب مشاركة
+  const requestProgram = (program) => {
+    if (!user) {
+      toast.error(t('loginRequired'));
+      return;
     }
+    if (String(program.guide_id) === String(user.id)) {
+      toast.error(t('cannotRequestOwn'));
+      return;
+    }
+    handleChatWithGuide(program.guide_id, program.guide_name);
   };
 
-  const formatTime = (dateString) => {
-    if (!dateString) return '';
-    const date = new Date(dateString);
-    const mins = Math.floor((Date.now() - date) / 60000);
-    if (mins < 1) return lang === 'ar' ? 'الآن' : 'Now';
-    if (mins < 60) return lang === 'ar' ? `${mins} د` : `${mins}m`;
-    return date.toLocaleTimeString(lang === 'ar' ? 'ar-EG' : 'en-US', { hour: '2-digit', minute: '2-digit' });
-  };
+  // إضافة العلامات
+  const addMarkersToMap = useCallback((map, programsList) => {
+    if (!map || !isMapLoadedRef.current) return;
+    markersRef.current.forEach(m => { try { m.remove(); } catch(e) {} });
+    markersRef.current = [];
+    programsList.forEach(program => {
+      if (!program.coords) return;
+      const marker = new mapboxgl.Marker({ color: "#10b981" })
+        .setLngLat(program.coords)
+        .addTo(map);
+      marker.getElement().addEventListener('click', () => {
+        setSelectedProgram(program);
+        fetchProgramImages(program);
+        map.flyTo({ center: program.coords, zoom: 14 });
+      });
+      markersRef.current.push(marker);
+    });
+  }, [fetchProgramImages]);
 
-  if (!user) return <div className="flex items-center justify-center h-screen"><Loader2 className="animate-spin text-green-600" size={32} /></div>;
-  if (initError) return (
-    <div className="flex flex-col items-center justify-center h-screen bg-gray-100 p-4">
-      <div className="text-center p-6 bg-white rounded-2xl shadow-xl max-w-sm w-full">
-        <MessageCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
-        <h3 className="text-xl font-bold mb-2">{lang === 'ar' ? 'فشل فتح المحادثة' : 'Failed to open chat'}</h3>
-        <p className="text-gray-600 mb-6 text-sm">{errorMessage}</p>
-        <button onClick={() => setPage('notifications')} className="w-full px-6 py-3 bg-green-600 text-white rounded-xl font-medium hover:bg-green-700">{lang === 'ar' ? 'العودة إلى الإشعارات' : 'Back to Notifications'}</button>
+  // تهيئة الخريطة
+  useEffect(() => {
+    if (!mapContainerRef?.current || mapInstanceRef.current) return;
+
+    const initMap = (center) => {
+      const map = new mapboxgl.Map({
+        container: mapContainerRef.current,
+        style: dark ? "mapbox://styles/mapbox/dark-v11" : "mapbox://styles/mapbox/streets-v12",
+        center,
+        zoom: 12,
+      });
+      map.addControl(new mapboxgl.NavigationControl(), "top-right");
+      map.on('load', () => {
+        isMapLoadedRef.current = true;
+        mapInstanceRef.current = map;
+        if (map.setLanguage) map.setLanguage(lang);
+        addMarkersToMap(map, programs);
+      });
+      return map;
+    };
+
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const coords = [pos.coords.longitude, pos.coords.latitude];
+          initMap(coords);
+          // إضافة علامة موقع المستخدم
+          new mapboxgl.Marker({ color: "#3b82f6" })
+            .setLngLat(coords)
+            .setPopup(new mapboxgl.Popup().setText(lang === "ar" ? "📍 موقعك" : "📍 Your location"))
+            .addTo(mapInstanceRef.current);
+        },
+        () => initMap([46.713, 24.774])
+      );
+    } else {
+      initMap([46.713, 24.774]);
+    }
+  }, [mapContainerRef, dark, lang, programs, addMarkersToMap]);
+
+  // تحديث العلامات عند تغيير البرامج
+  useEffect(() => {
+    if (mapInstanceRef.current && isMapLoadedRef.current) {
+      addMarkersToMap(mapInstanceRef.current, programs);
+    }
+  }, [programs, addMarkersToMap]);
+
+  const displayedPrograms = showMyProgramsOnly ? programs.filter(p => String(p.guide_id) === String(user?.id)) : programs;
+
+  if (!user) {
+    return (
+      <div className="h-full flex items-center justify-center bg-gray-50 dark:bg-gray-900">
+        <div className="text-center p-8 max-w-md">
+          <MapPin className="w-12 h-12 text-green-600 mx-auto mb-4" />
+          <h2 className="text-2xl font-bold mb-2">الخريطة للأعضاء فقط</h2>
+          <button onClick={() => setPage('profile')} className="bg-green-600 text-white px-6 py-2 rounded-lg">تسجيل الدخول</button>
+        </div>
       </div>
-    </div>
-  );
-
-  const isInputDisabled = loading || sending || loadingMessages || initError;
-  const showLoading = loading || (loadingMessages && messages.length === 0);
+    );
+  }
 
   return (
-    <div className="h-screen flex flex-col bg-gray-100 dark:bg-gray-900 pt-20" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
-      <div className="bg-gradient-to-r from-green-600 to-emerald-600 text-white px-4 py-3 shadow-md flex items-center gap-3 flex-shrink-0">
-        <button onClick={() => setPage('notifications')} className="p-2 hover:bg-white/20 rounded-full transition"><ArrowLeft size={22} /></button>
-        <div className="w-10 h-10 rounded-full bg-white/20 border-2 border-white/30 flex items-center justify-center flex-shrink-0"><User size={20} /></div>
-        <div className="flex-1 min-w-0">
-          <h2 className="font-bold truncate text-lg">{recipientName}</h2>
-          <div className="flex items-center gap-2 text-xs">
-            {guideOnline ? (
-              <span className="text-green-200 flex items-center gap-1"><div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>{lang === 'ar' ? 'متصل الآن' : 'Online'}</span>
-            ) : (
-              <span className="text-white/70 flex items-center gap-1"><Bell size={10} />{notificationSent ? (lang === 'ar' ? '✓ تم إشعار الطرف الآخر' : '✓ Notified') : (lang === 'ar' ? 'سيتم إشعار الطرف الآخر' : 'Will notify')}</span>
-            )}
+    <div className="h-full relative flex flex-col">
+      {/* Header */}
+      <div className="bg-gradient-to-r from-green-500 to-emerald-600 p-4 text-white flex-shrink-0">
+        <div className="flex justify-between items-center mb-3">
+          <div className="flex items-center">
+            <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center ml-2">
+              {user.avatar ? <img src={user.avatar} className="w-full h-full rounded-full" alt="avatar" /> : <User size={20} />}
+            </div>
+            <div>
+              <h1 className="font-bold">{user.name}</h1>
+              <p className="text-xs"><MapPin size={12} className="inline ml-1" /> استكشف البرامج</p>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => setPage('home')} className="p-2 bg-white/20 rounded-full"><Home size={18} /></button>
+            <button onClick={() => setPage('notifications')} className="relative p-2 bg-white/20 rounded-full">
+              <Bell size={18} />
+              {unreadCount > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">{unreadCount}</span>}
+            </button>
           </div>
         </div>
-        <div className="flex items-center gap-1">
-          {ticketId && !isTicketDeleted(ticketId) && (
-            <button onClick={deleteCurrentConversation} disabled={deleting} className="p-2 hover:bg-white/20 rounded-full transition disabled:opacity-50">
-              {deleting ? <Loader2 size={18} className="animate-spin" /> : <Trash2 size={18} />}
+        <div className="relative">
+          <Search className="absolute right-3 top-2.5 text-gray-400" size={16} />
+          <input type="text" placeholder={t('search')} className="w-full p-2 pr-9 rounded-lg bg-white/20 text-white" />
+        </div>
+        <div className="flex justify-between mt-3 text-xs">
+          <span>📌 {displayedPrograms.length} برنامج</span>
+          {isGuide && (
+            <button onClick={() => setShowMyProgramsOnly(!showMyProgramsOnly)} className={`px-2 py-1 rounded ${showMyProgramsOnly ? 'bg-yellow-500' : 'bg-white/20'}`}>
+              {showMyProgramsOnly ? '📌 برامجي فقط' : '🌍 كل البرامج'}
             </button>
           )}
-          <button onClick={() => ticketId && !isTicketDeleted(ticketId) && loadMessages(ticketId)} className="p-2 hover:bg-white/20 rounded-full transition"><RefreshCw size={18} /></button>
         </div>
       </div>
 
-      <div ref={messagesContainerRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
-        {showLoading ? (
-          <div className="flex flex-col items-center justify-center h-full gap-3 text-gray-400">
-            <Loader2 className="animate-spin text-green-600" size={36} />
-            <p className="text-sm">{lang === 'ar' ? 'جاري تحميل المحادثة...' : 'Loading...'}</p>
-          </div>
-        ) : messages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-gray-400 gap-3">
-            <MessageCircle size={56} className="opacity-40" />
-            <p className="font-medium">{lang === 'ar' ? 'لا توجد رسائل بعد' : 'No messages yet'}</p>
-            <p className="text-sm text-center opacity-70 max-w-xs">{lang === 'ar' ? 'اكتب رسالتك أدناه لبدء المحادثة' : 'Write below to start'}</p>
-          </div>
-        ) : (
-          messages.map((msg) => (
-            <div key={msg.id} className={`flex ${msg.is_from_user ? 'justify-end' : 'justify-start'} animate-fade-in`}>
-              {!msg.is_from_user && msg.sender_name !== 'System' && (
-                <div className="w-8 h-8 rounded-full bg-green-100 dark:bg-green-900 flex items-center justify-center ml-2 self-end flex-shrink-0">
-                  <User size={16} className="text-green-700" />
-                </div>
-              )}
-              <div className={`max-w-[78%] rounded-2xl px-4 py-2.5 shadow-sm ${
-                msg.is_from_user
-                  ? 'bg-green-600 text-white rounded-br-sm'
-                  : msg.sender_name === 'System'
-                    ? 'bg-gray-300 dark:bg-gray-600 text-gray-600 dark:text-gray-300 rounded-bl-sm'
-                    : 'bg-white dark:bg-gray-800 text-gray-800 dark:text-white rounded-bl-sm'
-              }`}>
-                {!msg.is_from_user && msg.sender_name && msg.sender_name !== 'System' && (
-                  <p className="text-xs font-semibold mb-1 text-green-600 dark:text-green-400">{msg.sender_name}</p>
+      {/* Map */}
+      <div ref={mapContainerRef} className="flex-1 w-full min-h-0" />
+
+      {/* Program Details Modal */}
+      {selectedProgram && (
+        <div className="absolute bottom-20 left-4 right-4 z-20 bg-white dark:bg-gray-800 rounded-xl p-4 shadow-lg border-2 border-green-500 max-h-[70vh] overflow-y-auto">
+          {/* Image Gallery */}
+          {loadingImages ? (
+            <div className="mb-3 flex justify-center items-center h-48"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div></div>
+          ) : programImages.length > 0 ? (
+            <div className="mb-3">
+              <div className="relative">
+                <img src={programImages[currentImageIndex]} alt={selectedProgram.name_ar || selectedProgram.name} className="w-full h-48 object-cover rounded-lg cursor-pointer" onClick={() => setShowGallery(true)} onError={(e) => e.target.src = FALLBACK_IMAGE} />
+                {programImages.length > 1 && (
+                  <>
+                    <button onClick={(e) => { e.stopPropagation(); setCurrentImageIndex((prev) => (prev - 1 + programImages.length) % programImages.length); }} className="absolute left-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full">❮</button>
+                    <button onClick={(e) => { e.stopPropagation(); setCurrentImageIndex((prev) => (prev + 1) % programImages.length); }} className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full">❯</button>
+                    <div className="absolute bottom-2 right-2 bg-black/50 text-white text-xs px-2 py-1 rounded-full">{currentImageIndex + 1} / {programImages.length}</div>
+                  </>
                 )}
-                <p className="text-sm leading-relaxed break-words whitespace-pre-wrap">{msg.message}</p>
-                <div className={`flex items-center gap-1 mt-1 justify-end text-xs ${msg.is_from_user ? 'text-green-100' : 'text-gray-400'}`}>
-                  <span>{formatTime(msg.created_at)}</span>
-                  {msg.status === 'sending' && <Loader2 size={10} className="animate-spin" />}
-                  {msg.status === 'sent' && <CheckCircle2 size={10} className="text-green-300" />}
-                </div>
               </div>
             </div>
-          ))
-        )}
-        <div ref={messagesEndRef} />
-      </div>
+          ) : null}
 
-      <div className="bg-white dark:bg-gray-800 border-t dark:border-gray-700 px-4 pt-3 pb-8 flex-shrink-0 shadow-lg">
-        <div className="flex items-center gap-4 mb-2 px-2">
-          <button className="p-1.5 text-gray-500 hover:text-yellow-500 hover:bg-yellow-50 dark:hover:bg-yellow-900/20 rounded-full transition-colors"><Smile size={24} /></button>
-          <button className="p-1.5 text-gray-500 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-full transition-colors"><Image size={24} /></button>
-          <button className="p-1.5 text-gray-500 hover:text-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded-full transition-colors"><Paperclip size={24} /></button>
-          <button className="p-1.5 text-gray-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-full transition-colors"><Mic size={24} /></button>
+          {/* Info */}
+          <div className="flex justify-between items-start">
+            <div>
+              <h3 className="font-bold text-lg">{selectedProgram.name_ar || selectedProgram.name}</h3>
+              <p className="text-sm text-gray-600">المرشد: {selectedProgram.guide_name}</p>
+              <div className="flex gap-3 mt-2 text-sm">
+                <span className="text-green-600 font-bold">{selectedProgram.price} ريال</span>
+                <span>{selectedProgram.duration}</span>
+                <span>⭐ {selectedProgram.rating || 4.5}</span>
+              </div>
+              {selectedProgram.description && <p className="text-sm text-gray-500 mt-2">{selectedProgram.description}</p>}
+              {selectedProgram.safetyGuidelines && (
+                <div className="mt-3 p-3 bg-orange-50 dark:bg-orange-900/20 rounded-lg border-r-4 border-orange-500">
+                  <div className="flex items-center gap-2 mb-1">
+                    <AlertTriangle className="w-4 h-4 text-orange-600" />
+                    <span className="text-sm font-semibold text-orange-700 dark:text-orange-400">إرشادات السلامة</span>
+                  </div>
+                  <p className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-line">{selectedProgram.safetyGuidelines}</p>
+                </div>
+              )}
+            </div>
+            <button onClick={() => { setSelectedProgram(null); setProgramImages([]); }} className="text-gray-500">✕</button>
+          </div>
+
+          {/* Actions */}
+          <div className="flex flex-wrap gap-2 mt-3">
+            <select value={transport} onChange={(e) => setTransport(e.target.value)} className="border rounded p-1 text-sm">
+              <option value="driving">🚗 {t('driving')}</option>
+              <option value="walking">🚶 {t('walking')}</option>
+              <option value="cycling">🚲 {t('cycling')}</option>
+            </select>
+            <button onClick={() => { if (selectedProgram) window.open(`https://www.google.com/maps/dir/${userLocation?.[1] || '24.774'},${userLocation?.[0] || '46.713'}/${selectedProgram.coords[1]},${selectedProgram.coords[0]}`); }} className="bg-green-600 text-white px-3 py-1 rounded-lg text-sm">🗺️ {t('startTrip')}</button>
+            <button onClick={() => handleChatWithGuide(selectedProgram.guide_id, selectedProgram.guide_name)} className="bg-blue-600 text-white px-3 py-1 rounded-lg text-sm flex items-center gap-1">
+              <MessageCircle size={16} /> {t('chatWithGuide')}
+            </button>
+            <button onClick={() => handleBooking(selectedProgram)} disabled={bookingLoading} className="bg-purple-600 text-white px-3 py-1 rounded-lg text-sm disabled:opacity-50">
+              <CalendarCheck size={16} /> {t('bookNow')}
+            </button>
+            <button onClick={() => requestProgram(selectedProgram)} className="bg-cyan-600 text-white px-3 py-1 rounded-lg text-sm">✉️ {t('requestToJoin') || (lang === 'ar' ? 'طلب مشاركة' : 'Request to Join')}</button>
+          </div>
         </div>
-        <div className="flex items-end gap-2">
-          <textarea
-            ref={textareaRef}
-            value={newMessage}
-            onChange={handleTextareaChange}
-            onKeyPress={handleKeyPress}
-            placeholder={lang === 'ar' ? 'اكتب رسالتك...' : 'Write your message...'}
-            rows={1}
-            className="flex-1 px-4 py-3 border dark:border-gray-600 rounded-2xl resize-none focus:outline-none focus:ring-2 focus:ring-green-500 dark:bg-gray-700 dark:text-white text-base leading-relaxed min-h-[52px] max-h-[120px] overflow-y-auto"
-            disabled={isInputDisabled}
-            style={{ height: '52px' }}
-          />
-          <button
-            onClick={sendMessage}
-            disabled={!newMessage.trim() || sending || loading || loadingMessages || initError || (ticketId && isTicketDeleted(ticketId))}
-            className="p-3 bg-green-600 text-white rounded-full hover:bg-green-700 transition disabled:opacity-40 flex-shrink-0 shadow-md min-w-[52px] min-h-[52px] flex items-center justify-center"
-          >
-            {sending ? <Loader2 className="animate-spin" size={24} /> : <Send size={24} />}
-          </button>
+      )}
+
+      {/* Fullscreen Gallery Modal */}
+      {showGallery && (
+        <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center" onClick={() => setShowGallery(false)}>
+          <div className="relative max-w-4xl max-h-screen p-4">
+            <img src={programImages[currentImageIndex]} className="max-w-full max-h-screen object-contain" alt="Gallery" onError={(e) => e.target.src = FALLBACK_IMAGE} />
+            {programImages.length > 1 && (
+              <>
+                <button onClick={(e) => { e.stopPropagation(); setCurrentImageIndex((prev) => (prev - 1 + programImages.length) % programImages.length); }} className="absolute left-4 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-3 rounded-full">❮</button>
+                <button onClick={(e) => { e.stopPropagation(); setCurrentImageIndex((prev) => (prev + 1) % programImages.length); }} className="absolute right-4 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-3 rounded-full">❯</button>
+              </>
+            )}
+            <button onClick={() => setShowGallery(false)} className="absolute top-4 right-4 bg-black/50 text-white p-2 rounded-full">✕</button>
+          </div>
         </div>
-        <div className="flex justify-between items-center mt-2 px-2">
-          <p className="text-[11px] text-gray-400">{lang === 'ar' ? '↵ للإرسال • Shift + ↵ لسطر جديد' : '↵ to send • Shift + ↵ for new line'}</p>
-          <p className="text-[11px] text-green-500 flex items-center gap-1"><Bell size={10} />{guideOnline ? (lang === 'ar' ? 'الطرف الآخر متصل - إشعار فوري' : 'Other party online - instant delivery') : (lang === 'ar' ? 'سيصل إشعار عند اتصال الطرف الآخر' : 'Notification when other party connects')}</p>
-        </div>
-      </div>
+      )}
     </div>
   );
-};
+}
 
-export default DirectChatPage;
+export default ExplorePage;
