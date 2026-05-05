@@ -1,4 +1,6 @@
-// router/index.js
+// router/index.js - النسخة النهائية (تم إرسالها سابقاً)
+// تحتوي على جميع المسارات بما في ذلك /support/:ticketId? المطلوب لفتح المحادثة من الإشعارات
+
 import React from 'react';
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -19,7 +21,9 @@ import SettingsPage from '../pages/SettingsPage';
 import LoginPage from '../pages/LoginPage';
 import RegisterPage from '../pages/RegisterPage';
 import NotFoundPage from '../pages/NotFoundPage';
-import EmergencyPage from '../pages/EmergencyPage'; // ✅ استيراد صفحة الطوارئ
+import EmergencyPage from '../pages/EmergencyPage';
+import DirectChatPage from '../pages/DirectChatPage';
+import SupportChatPage from '../pages/SupportChatPage'; // ✅ إضافة صفحة الدعم والمحادثات
 
 // مكون حماية المسارات
 const ProtectedRoute = ({ children, allowedRoles = [] }) => {
@@ -166,7 +170,6 @@ const router = createBrowserRouter([
       </PublicOnlyRoute>
     )
   },
-  // ✅ مسار الطوارئ - متاح لجميع المستخدمين المسجلين
   {
     path: '/emergency',
     element: (
@@ -175,7 +178,25 @@ const router = createBrowserRouter([
       </ProtectedRoute>
     )
   },
-  // مسار 404 - يجب أن يكون في النهاية
+  // ✅ مسار المحادثة المباشرة (للمرشد)
+  {
+    path: '/direct-chat/:guideId',
+    element: (
+      <ProtectedRoute allowedRoles={['user', 'guide', 'admin']}>
+        <DirectChatPage />
+      </ProtectedRoute>
+    )
+  },
+  // ✅ مسار الدعم والمحادثات (للتذاكر) - هام جداً للإشعارات
+  // ملاحظة: يجب أن يتطابق هذا المسار مع ما تستخدمه صفحة الإشعارات عند التنقل
+  {
+    path: '/support/:ticketId?',
+    element: (
+      <ProtectedRoute allowedRoles={['user', 'guide', 'admin']}>
+        <SupportChatPage />
+      </ProtectedRoute>
+    )
+  },
   {
     path: '*',
     element: <NotFoundPage />
