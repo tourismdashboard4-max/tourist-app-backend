@@ -1,5 +1,7 @@
-// App.jsx - الملف الرئيسي بعد إضافة CalendarCheck إلى الاستيرادات
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+// client/src/App.jsx
+// ✅ النسخة النهائية - إصلاح فتح المحادثات المباشرة من الإشعارات لجميع المستخدمين
+
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from "framer-motion";
 import './index.css';
 import mapboxgl from "mapbox-gl";
@@ -11,17 +13,9 @@ import {
   Archive, Shield, Package, Target, MapPinned, Mail,     
   Edit2, LogOut, Camera, Save, X, ArrowLeft, 
   DollarSign, Clock, Eye, EyeOff, Trash2,
-  RefreshCw,      // ✅ لتحديث الخريطة
-  Compass,        // ✅ للوحة تحكم المرشد
-  Globe,          // ✅ للغة
-  ArrowRight,     // ✅ للتنقل
-  AlertCircle,    // ✅ للتنبيهات
-  ChevronDown,    // ✅ للقوائم المنسدلة
-  ChevronUp,      // ✅ للقوائم المنسدلة
-  Info,           // ✅ للمعلومات
-  Loader2,        // ✅ لمؤشر التحميل
-  PlusCircle,     // ✅ للإضافة (بديل لـ Plus)
-  CalendarCheck   // ✅ ✅ ✅ الأيقونة المفقودة (لصفحة الحجز)
+  RefreshCw, Compass, Globe, ArrowRight,
+  AlertCircle, ChevronDown, ChevronUp, Info,
+  Loader2, PlusCircle, CalendarCheck, AlertTriangle
 } from "lucide-react";
 
 import api from './services/api';
@@ -29,7 +23,7 @@ import LoginPage from './components/Auth/LoginPage';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 import NotificationsPage from './pages/NotificationsPage'; 
-import { AuthProvider } from './contexts/AuthContext';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 import UpgradeToGuidePage from './pages/UpgradeToGuidePage';
 import UpgradeStatusPage from './pages/UpgradeStatusPage';
 import SupportUpgradeRequestsPage from './pages/SupportUpgradeRequestsPage';
@@ -40,13 +34,12 @@ import GuideDashboard from './pages/GuideDashboard';
 import SupportChatPage from './pages/SupportChatPage';
 import DirectChatPage from './pages/DirectChatPage';
 import toast from 'react-hot-toast';
+import { WalletProvider, useWallet } from './contexts/WalletContext';
 
 const API_BASE_URL = 'https://tourist-app-api.onrender.com';
-
-
-// Mapbox token
 mapboxgl.accessToken = "pk.eyJ1IjoibW9vaG1kMTUiLCJhIjoiY21obWJwN3EwMHF1czJvc2lyaWRyem0xciJ9.sl39WFOhm4m-kOOYtGqONw";
 
+// ===================== LOCALES =====================
 const LOCALES = {
   en: {
     appName: "Al-Sa'eh",
@@ -183,106 +176,38 @@ const LOCALES = {
     userTrips: "رحلاتي",
     upgradeToGuide: "ترقية إلى مرشد",
     upgradeStatus: "حالة الترقية"
-  },
+  }
 };
 
-// ===================== 📱 Bottom Navigation Bar =====================
+// ===================== 📱 Bottom Navigation Bar (بدون شريط المسؤول) =====================
 function BottomNav({ current, setCurrent, lang, user, unreadCount = 0 }) {
-  // ✅ التحقق من أن المستخدم مرشد
-  const isGuideUser = user?.type === "guide" || 
-                      user?.role === 'guide' || 
-                      user?.isGuide === true || 
-                      user?.guide_status === 'approved';
-  
-  // ✅ شريط التنقل حسب نوع المستخدم
+  const isGuideUser = user?.type === "guide" || user?.role === 'guide' || user?.isGuide === true || user?.guide_status === 'approved';
   const navItems = isGuideUser ? [
     { key: "home", icon: Home, label: lang === "ar" ? "الرئيسية" : "Home" },
     { key: "explore", icon: Navigation, label: lang === "ar" ? "استكشف" : "Explore" },
-    { key: "favorites", icon: Heart, label: lang === "ar" ? "المفضلة" : "Favorites" },     // ❤️ المفضلة
-    { key: "guideDashboard", icon: Shield, label: lang === "ar" ? "لوحتي" : "My Dashboard" }, // 🛡️ لوحتي
-    { key: "profile", icon: User, label: lang === "ar" ? "صفحتي" : "Profile" },
+    { key: "favorites", icon: Heart, label: lang === "ar" ? "المفضلة" : "Favorites" },
+    { key: "guideDashboard", icon: Shield, label: lang === "ar" ? "لوحتي" : "My Dashboard" },
+    { key: "profile", icon: User, label: lang === "ar" ? "صفحتي" : "Profile" }
   ] : [
     { key: "home", icon: Home, label: lang === "ar" ? "الرئيسية" : "Home" },
     { key: "explore", icon: Navigation, label: lang === "ar" ? "استكشف" : "Explore" },
-    { key: "favorites", icon: Heart, label: lang === "ar" ? "المفضلة" : "Favorites" },     // ❤️ المفضلة
-    { key: "guides", icon: Users, label: lang === "ar" ? "المرشدين" : "Guides" },           // 👥 المرشدين
-    { key: "profile", icon: User, label: lang === "ar" ? "صفحتي" : "Profile" },
+    { key: "favorites", icon: Heart, label: lang === "ar" ? "المفضلة" : "Favorites" },
+    { key: "guides", icon: Users, label: lang === "ar" ? "المرشدين" : "Guides" },
+    { key: "profile", icon: User, label: lang === "ar" ? "صفحتي" : "Profile" }
   ];
-
-  const getProfileIcon = () => {
-  // ✅ دائماً نعرض أيقونة المستخدم (مثل بقية الأزرار)
-  return <User size={24} className="mb-1" />;
-};
-
-  // التحقق من صلاحيات المسؤول والدعم
-  const isAdmin = user?.role === 'admin';
-  const isSupport = user?.role === 'support';
-  const showAdminBar = isAdmin || isSupport;
-
+  const getProfileIcon = () => <User size={24} className="mb-1" />;
+  
   return (
     <div className="fixed bottom-0 left-0 right-0 z-50">
-      {/* ✅ شريط أزرار المسؤول - يظهر للمسؤول والدعم */}
-      {showAdminBar && (
-        <div className="bg-gradient-to-r from-teal-600 to-cyan-600 py-2 px-4 flex justify-center gap-3 shadow-lg">
-          <button
-            onClick={() => setCurrent('adminNotifications')}
-            className="relative flex items-center justify-center w-10 h-10 bg-white/20 rounded-full hover:bg-white/30 transition"
-            title={lang === 'ar' ? 'الإشعارات' : 'Notifications'}
-          >
-            <Bell size={18} className="text-white" />
-            {unreadCount > 0 && (
-              <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-                {unreadCount > 9 ? '9+' : unreadCount}
-              </span>
-            )}
-          </button>
-          
-          <button
-            onClick={() => setCurrent('adminSupport')}
-            className="px-4 py-2 bg-white text-teal-700 rounded-full text-sm font-bold shadow-md hover:bg-gray-100 transition flex items-center gap-2"
-          >
-            📧 {lang === 'ar' ? 'تذاكر الدعم' : 'Support Tickets'}
-          </button>
-          
-          {isAdmin && (
-            <button
-              onClick={() => setCurrent('upgrade-requests')}
-              className="px-4 py-2 bg-white text-teal-700 rounded-full text-sm font-bold shadow-md hover:bg-gray-100 transition flex items-center gap-2"
-            >
-              ⭐ {lang === 'ar' ? 'طلبات الترقية' : 'Upgrade Requests'}
-            </button>
-          )}
-        </div>
-      )}
-      
-      {/* شريط التنقل الأصلي */}
+      {/* تم إزالة شريط المسؤول من هنا - أصبح في الأعلى */}
       <div className="bg-white border-t border-gray-200 flex justify-around py-3 shadow-lg dark:bg-gray-800 dark:border-gray-700">
         {navItems.map((item) => {
           const Icon = item.icon;
           return (
-            <button
-              key={item.key}
-              onClick={() => {
-                if (!user && item.key === 'explore') {
-                  alert(lang === 'ar' 
-                    ? 'الرجاء تسجيل الدخول أولاً للوصول للخريطة' 
-                    : 'Please login first to access the map'
-                  );
-                  return;
-                }
-                setCurrent(item.key);
-              }}
-              className={`flex flex-col items-center justify-center w-16 ${
-                current === item.key 
-                  ? "text-green-600 dark:text-green-400" 
-                  : "text-gray-500 dark:text-gray-400"
-              }`}
-            >
+            <button key={item.key} onClick={() => { if (!user && item.key === 'explore') { alert(lang === 'ar' ? 'الرجاء تسجيل الدخول أولاً للوصول للخريطة' : 'Please login first to access the map'); return; } setCurrent(item.key); }} className={`flex flex-col items-center justify-center w-16 ${current === item.key ? "text-green-600 dark:text-green-400" : "text-gray-500 dark:text-gray-400"}`}>
               {item.key === 'profile' ? getProfileIcon() : <Icon size={24} className="mb-1" />}
               <span className="text-xs font-medium">{item.label}</span>
-              {current === item.key && (
-                <div className="w-1 h-1 bg-green-600 dark:bg-green-400 rounded-full mt-1"></div>
-              )}
+              {current === item.key && <div className="w-1 h-1 bg-green-600 dark:bg-green-400 rounded-full mt-1"></div>}
             </button>
           );
         })}
@@ -291,203 +216,65 @@ function BottomNav({ current, setCurrent, lang, user, unreadCount = 0 }) {
   );
 }
 
-// ===================== 📍 Home Page (مع صورة المستخدم بدلاً من النص الترحيبي) =====================
+// ===================== 📍 Home Page (معدل زر الوضع الليلي) =====================
 function HomePage({ lang, user, setPage, dark, setDark, locationEnabled, setLocationEnabled }) {
   const t = (k) => LOCALES[lang][k] || k;
   const [unreadCount, setUnreadCount] = useState(0);
-
-  // جلب عدد الإشعارات غير المقروءة للمستخدم المسجل
   useEffect(() => {
     if (user?.id) {
       const fetchUnreadCount = async () => {
         try {
           const response = await api.getUserNotifications({ status: 'unread', limit: 1 });
           let count = 0;
-          if (response.success && response.pagination) {
-            count = response.pagination.total || 0;
-          } else if (response.unreadCount !== undefined) {
-            count = response.unreadCount;
-          } else if (response.data?.unreadCount !== undefined) {
-            count = response.data.unreadCount;
-          } else if (Array.isArray(response.notifications)) {
-            count = response.notifications.filter(n => n.status === 'unread').length;
-          }
+          if (response.success && response.pagination) count = response.pagination.total || 0;
+          else if (response.unreadCount !== undefined) count = response.unreadCount;
+          else if (response.data?.unreadCount !== undefined) count = response.data.unreadCount;
+          else if (Array.isArray(response.notifications)) count = response.notifications.filter(n => n.status === 'unread').length;
           setUnreadCount(count);
-        } catch (error) {
-          console.error('Error fetching unread count:', error);
-        }
+        } catch (error) { console.error(error); }
       };
       fetchUnreadCount();
-    } else {
-      setUnreadCount(0);
-    }
+    } else setUnreadCount(0);
   }, [user]);
-
   return (
     <div className="h-full overflow-y-auto pb-20 bg-gray-50 dark:bg-gray-900">
-      {/* Header with user avatar and info */}
       <div className="bg-gradient-to-r from-green-500 to-emerald-600 p-6 text-white">
         <div className="flex items-center justify-between mb-4">
-          {/* ✅ الجزء الأيسر: صورة المستخدم واسمه بدلاً من النص الترحيبي */}
           <div className="flex items-center gap-3">
             {user ? (
               <>
                 <div className="w-12 h-12 rounded-full bg-white/20 border-2 border-white/30 overflow-hidden flex-shrink-0">
-                  {user.avatar ? (
-                    <img 
-                      src={user.avatar} 
-                      alt={user.fullName || user.name} 
-                      className="w-full h-full object-cover"
-                      onError={(e) => {
-                        e.target.onerror = null;
-                        e.target.style.display = 'none';
-                        const parent = e.target.parentElement;
-                        if (parent) {
-                          parent.innerHTML = '<div class="w-full h-full flex items-center justify-center text-white text-xl">👤</div>';
-                        }
-                      }}
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-white text-xl">
-                      {user.fullName?.charAt(0) || user.name?.charAt(0) || '👤'}
-                    </div>
-                  )}
+                  {user.avatar ? <img src={user.avatar} alt={user.fullName || user.name} className="w-full h-full object-cover" onError={(e) => { e.target.onerror = null; e.target.style.display = 'none'; const parent = e.target.parentElement; if (parent) parent.innerHTML = '<div class="w-full h-full flex items-center justify-center text-white text-xl">👤</div>'; }} /> : <div className="w-full h-full flex items-center justify-center text-white text-xl">{user.fullName?.charAt(0) || user.name?.charAt(0) || '👤'}</div>}
                 </div>
-                <div>
-                  <h1 className="text-xl font-bold">{user.fullName || user.name}</h1>
-                  {user.type === "guide" && (
-                    <div className="flex items-center mt-0.5">
-                      <Shield className="w-3 h-3 ml-1" />
-                      <span className="text-xs opacity-90">مرشد سياحي موثق</span>
-                    </div>
-                  )}
-                </div>
+                <div><h1 className="text-xl font-bold">{user.fullName || user.name}</h1>{user.type === "guide" && <div className="flex items-center mt-0.5"><Shield className="w-3 h-3 ml-1" /><span className="text-xs opacity-90">مرشد سياحي موثق</span></div>}</div>
               </>
             ) : (
-              <div>
-                <h1 className="text-2xl font-bold">{t("welcome")}</h1>
-                <p className="text-white/90">{t("appName")}</p>
-              </div>
+              <div><h1 className="text-2xl font-bold">{t("welcome")}</h1><p className="text-white/90">{t("appName")}</p></div>
             )}
           </div>
-          
-          {/* الأزرار (الوضع الليلي والإشعارات) */}
           <div className="flex items-center gap-2">
-            <button 
-              onClick={() => setDark(!dark)}
-              className="p-2 rounded-full bg-white/20 hover:bg-white/30 transition"
-            >
-              {dark ? <Sun size={20} /> : <Moon size={20} />}
-            </button>
-            {user && (
-              <button
-                onClick={() => setPage("notifications")}
-                className="relative p-2 rounded-full bg-white/20 hover:bg-white/30 transition"
-              >
-                <Bell size={20} />
-                {unreadCount > 0 && (
-                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">
-                    {unreadCount > 99 ? "99+" : unreadCount}
-                  </span>
-                )}
-              </button>
-            )}
+            <button onClick={() => setDark()} className="p-2 rounded-full bg-white/20 hover:bg-white/30 transition">{dark ? <Sun size={20} /> : <Moon size={20} />}</button>
+            {user && <button onClick={() => setPage("notifications")} className="relative p-2 rounded-full bg-white/20 hover:bg-white/30 transition"><Bell size={20} />{unreadCount > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">{unreadCount > 99 ? "99+" : unreadCount}</span>}</button>}
           </div>
         </div>
-        
-        {/* Search Bar (يبقى كما هو) */}
-        <div className="relative">
-          <Search className="absolute right-3 top-3.5 text-gray-400" size={20} />
-          <input
-            type="text"
-            placeholder={t("search")}
-            className="w-full p-3 pr-10 rounded-xl bg-white/20 backdrop-blur-sm placeholder-white/70 border border-white/30 focus:outline-none focus:border-white focus:bg-white/30 transition"
-          />
-        </div>
+        <div className="relative"><Search className="absolute right-3 top-3.5 text-gray-400" size={20} /><input type="text" placeholder={t("search")} className="w-full p-3 pr-10 rounded-xl bg-white/20 backdrop-blur-sm placeholder-white/70 border border-white/30 focus:outline-none focus:border-white focus:bg-white/30 transition" /></div>
       </div>
-
-      {/* باقي المحتوى (أزرار الوصول السريع، البرامج القريبة) – لم يتغير */}
       <div className="p-4">
         <h2 className="text-lg font-bold mb-4 text-gray-800 dark:text-white">{t("explore")}</h2>
         <div className="grid grid-cols-4 gap-3 mb-6">
-          <button 
-            onClick={() => {
-              if (!user) {
-                alert(lang === 'ar' 
-                  ? 'الرجاء تسجيل الدخول أولاً للوصول للخريطة' 
-                  : 'Please login first to access the map'
-                );
-                return;
-              }
-              setPage("explore");
-            }}
-            className="flex flex-col items-center p-3 bg-white dark:bg-gray-800 rounded-xl shadow-sm hover:shadow-md transition"
-          >
-            <div className="w-12 h-12 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center mb-2">
-              <MapPin className="text-blue-600 dark:text-blue-400" size={24} />
-            </div>
-            <span className="text-xs font-medium dark:text-gray-200">الخريطة</span>
-          </button>
-          
-          <div className="flex flex-col items-center p-3 bg-white dark:bg-gray-800 rounded-xl shadow-sm">
-            <div className="w-12 h-12 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mb-2">
-              <Package className="text-green-600 dark:text-green-400" size={24} />
-            </div>
-            <span className="text-xs font-medium dark:text-gray-200">{t("nearbyPrograms")}</span>
-          </div>
-          
-          <button 
-            onClick={() => setPage(user?.type === "guide" ? "guideDashboard" : "guides")}
-            className="flex flex-col items-center p-3 bg-white dark:bg-gray-800 rounded-xl shadow-sm hover:shadow-md transition"
-          >
-            <div className="w-12 h-12 bg-purple-100 dark:bg-purple-900/30 rounded-full flex items-center justify-center mb-2">
-              <Users className="text-purple-600 dark:text-purple-400" size={24} />
-            </div>
-            <span className="text-xs font-medium dark:text-gray-200">
-              {user?.type === "guide" ? t("guideDashboard") : t("guides")}
-            </span>
-          </button>
-          
-          <button 
-            onClick={() => setPage("profile")}
-            className="flex flex-col items-center p-3 bg-white dark:bg-gray-800 rounded-xl shadow-sm hover:shadow-md transition"
-          >
-            <div className="w-12 h-12 bg-orange-100 dark:bg-orange-900/30 rounded-full flex items-center justify-center mb-2">
-              {user?.type === "guide" ? 
-                <Archive className="text-orange-600 dark:text-orange-400" size={24} /> :
-                <Heart className="text-orange-600 dark:text-orange-400" size={24} />
-              }
-            </div>
-            <span className="text-xs font-medium dark:text-gray-200">
-              {user?.type === "guide" ? t("archiveTrips") : t("favorites")}
-            </span>
-          </button>
+          <button onClick={() => { if (!user) { alert(lang === 'ar' ? 'الرجاء تسجيل الدخول أولاً للوصول للخريطة' : 'Please login first to access the map'); return; } setPage("explore"); }} className="flex flex-col items-center p-3 bg-white dark:bg-gray-800 rounded-xl shadow-sm hover:shadow-md transition"><div className="w-12 h-12 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center mb-2"><MapPin className="text-blue-600 dark:text-blue-400" size={24} /></div><span className="text-xs font-medium dark:text-gray-200">الخريطة</span></button>
+          <div className="flex flex-col items-center p-3 bg-white dark:bg-gray-800 rounded-xl shadow-sm"><div className="w-12 h-12 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mb-2"><Package className="text-green-600 dark:text-green-400" size={24} /></div><span className="text-xs font-medium dark:text-gray-200">{t("nearbyPrograms")}</span></div>
+          <button onClick={() => setPage(user?.type === "guide" ? "guideDashboard" : "guides")} className="flex flex-col items-center p-3 bg-white dark:bg-gray-800 rounded-xl shadow-sm hover:shadow-md transition"><div className="w-12 h-12 bg-purple-100 dark:bg-purple-900/30 rounded-full flex items-center justify-center mb-2"><Users className="text-purple-600 dark:text-purple-400" size={24} /></div><span className="text-xs font-medium dark:text-gray-200">{user?.type === "guide" ? t("guideDashboard") : t("guides")}</span></button>
+          <button onClick={() => setPage("profile")} className="flex flex-col items-center p-3 bg-white dark:bg-gray-800 rounded-xl shadow-sm hover:shadow-md transition"><div className="w-12 h-12 bg-orange-100 dark:bg-orange-900/30 rounded-full flex items-center justify-center mb-2">{user?.type === "guide" ? <Archive className="text-orange-600 dark:text-orange-400" size={24} /> : <Heart className="text-orange-600 dark:text-orange-400" size={24} />}</div><span className="text-xs font-medium dark:text-gray-200">{user?.type === "guide" ? t("archiveTrips") : t("favorites")}</span></button>
         </div>
-
         <h2 className="text-lg font-bold mb-4 text-gray-800 dark:text-white">{t("nearbyPrograms")}</h2>
-        
-        {!user ? (
-          <div className="bg-white dark:bg-gray-800 rounded-xl p-6 text-center shadow-sm">
-            <p className="text-gray-600 dark:text-gray-400 mb-4">
-              {lang === 'ar' ? 'سجل دخول لمشاهدة البرامج القريبة منك' : 'Login to see nearby programs'}
-            </p>
-            <button onClick={() => setPage('profile')} className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition">
-              {lang === 'ar' ? 'تسجيل الدخول' : 'Login'}
-            </button>
-          </div>
-        ) : (
-          <div className="bg-white dark:bg-gray-800 rounded-xl p-6 text-center shadow-sm">
-            <p className="text-gray-600 dark:text-gray-400">
-              {lang === 'ar' ? 'جاري تحميل البرامج القريبة...' : 'Loading nearby programs...'}
-            </p>
-          </div>
-        )}
+        {!user ? <div className="bg-white dark:bg-gray-800 rounded-xl p-6 text-center shadow-sm"><p className="text-gray-600 dark:text-gray-400 mb-4">{lang === 'ar' ? 'سجل دخول لمشاهدة البرامج القريبة منك' : 'Login to see nearby programs'}</p><button onClick={() => setPage('profile')} className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition">{lang === 'ar' ? 'تسجيل الدخول' : 'Login'}</button></div> : <div className="bg-white dark:bg-gray-800 rounded-xl p-6 text-center shadow-sm"><p className="text-gray-600 dark:text-gray-400">{lang === 'ar' ? 'جاري تحميل البرامج القريبة...' : 'Loading nearby programs...'}</p></div>}
       </div>
     </div>
   );
 }
 
-// ===================== 🗺️ Explore/Map Page (نسخة متكاملة مع الصور المتعددة، الدردشة، الحجز) =====================
+// ===================== 🗺️ Explore/Map Page (نسخة متكاملة مع الصور المتعددة، الدردشة، الحجز، إرشادات السلامة) =====================
 function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, user, unreadCount, dark }) {
   const t = (k) => LOCALES[lang][k] || k;
   const [selectedProgram, setSelectedProgram] = useState(null);
@@ -501,10 +288,39 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
   const [showGallery, setShowGallery] = useState(false);
   const [loadingImages, setLoadingImages] = useState(false);
   const [bookingLoading, setBookingLoading] = useState(false);
+  const [guidesMap, setGuidesMap] = useState({}); // ✅ خريطة UUID -> old_id
   
   const markersRef = useRef([]);
   const isMapLoadedRef = useRef(false);
   const API_BASE = 'https://tourist-app-api.onrender.com';
+
+  // ✅ جلب قائمة المرشدين لتحويل UUID -> old_id
+  useEffect(() => {
+    const fetchGuidesList = async () => {
+      try {
+        const response = await api.get('/api/guides');
+        let guidesList = [];
+        if (response.data?.data?.guides) guidesList = response.data.data.guides;
+        else if (response.data?.guides) guidesList = response.data.guides;
+        else if (Array.isArray(response.data)) guidesList = response.data;
+        else if (response.data?.data && Array.isArray(response.data.data)) guidesList = response.data.data;
+
+        const map = {};
+        guidesList.forEach(guide => {
+          const uuid = guide.id || guide.uuid;
+          const numericId = guide.old_id;
+          if (uuid && numericId && !isNaN(Number(numericId))) {
+            map[uuid] = Number(numericId);
+          }
+        });
+        setGuidesMap(map);
+        console.log('✅ Guides map (UUID -> old_id):', map);
+      } catch (err) {
+        console.error('Failed to fetch guides list:', err);
+      }
+    };
+    fetchGuidesList();
+  }, []);
 
   // ✅ جلب البرامج من API (جميع البرامج النشطة)
   const fetchProgramsFromAPI = useCallback(async () => {
@@ -520,6 +336,7 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
             name_en: p.name,
             guide_name: p.guide_name,
             guide_id: p.guide_id,
+            guide_uuid: p.guide_id, // قد يكون UUID
             coords: [p.location_lng, p.location_lat],
             price: p.price,
             duration: p.duration,
@@ -527,19 +344,18 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
             location_name: p.location,
             description: p.description,
             image: p.image ? (p.image.startsWith('http') ? p.image : `${API_BASE}${p.image}`) : null,
+            images: p.images || [], // ✅ الصور المتعددة
+            safetyGuidelines: p.safetyGuidelines || "", // ✅ إرشادات السلامة
           }));
         setPrograms(progs);
-        localStorage.setItem('public_programs', JSON.stringify(progs));
         console.log(`📦 Loaded ${progs.length} real programs from API`);
       } else {
-        console.warn('API returned no programs, using localStorage fallback');
-        const stored = localStorage.getItem('public_programs');
-        if (stored) setPrograms(JSON.parse(stored));
+        console.warn('API returned no programs');
+        setPrograms([]);
       }
     } catch (err) {
       console.error('Failed to fetch programs from API', err);
-      const stored = localStorage.getItem('public_programs');
-      if (stored) setPrograms(JSON.parse(stored));
+      setPrograms([]);
     }
   }, []);
 
@@ -550,37 +366,40 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
     return () => clearInterval(interval);
   }, [fetchProgramsFromAPI]);
 
-  // الاستماع لتغييرات localStorage (عند إضافة برنامج من GuideDashboard)
-  useEffect(() => {
-    const handleStorage = (e) => {
-      if (e.key === 'public_programs') {
-        console.log('🔄 Storage event: reloading programs');
-        fetchProgramsFromAPI();
-      }
-    };
-    window.addEventListener('storage', handleStorage);
-    return () => window.removeEventListener('storage', handleStorage);
-  }, [fetchProgramsFromAPI]);
-
-  // ✅ جلب الصور الإضافية للبرنامج المحدد
-  const fetchProgramImages = useCallback(async (programId) => {
+  // ✅ جلب الصور الإضافية للبرنامج المحدد (إذا لم تكن موجودة في كائن البرنامج)
+  const fetchProgramImages = useCallback(async (program) => {
+    if (!program) return;
     setLoadingImages(true);
-    console.log(`🖼️ Fetching images for program ${programId}`);
+    console.log(`🖼️ Fetching images for program ${program.id}`);
     try {
-      const response = await api.getProgramImages(programId);
-      console.log(`📥 Images response:`, response);
+      // إذا كان البرنامج يحتوي على صور متعددة في الكائن نفسه، استخدمها مباشرة
+      if (program.images && program.images.length > 0) {
+        const images = program.images.map(img => img.url.startsWith('http') ? img.url : `${API_BASE}${img.url}`);
+        setProgramImages(images);
+        const primaryIndex = program.images.findIndex(img => img.is_primary);
+        setCurrentImageIndex(primaryIndex !== -1 ? primaryIndex : 0);
+        console.log(`✅ Using ${images.length} images from program object`);
+        setLoadingImages(false);
+        return;
+      }
+      // خلاف ذلك، حاول جلبها من API
+      const response = await api.getProgramImages(program.id);
       if (response.success && Array.isArray(response.images) && response.images.length > 0) {
         const images = response.images.map(img => img.image_url.startsWith('http') ? img.image_url : `${API_BASE}${img.image_url}`);
         setProgramImages(images);
         const primaryIndex = response.images.findIndex(img => img.is_primary);
         setCurrentImageIndex(primaryIndex !== -1 ? primaryIndex : 0);
-        console.log(`✅ Loaded ${images.length} images for program ${programId}`);
+        console.log(`✅ Loaded ${images.length} images from API for program ${program.id}`);
+      } else if (program.image) {
+        setProgramImages([program.image]);
+        setCurrentImageIndex(0);
+        console.log(`✅ Using single image for program ${program.id}`);
       } else {
-        console.log(`⚠️ No additional images for program ${programId}`);
+        console.log(`⚠️ No images for program ${program.id}`);
         setProgramImages([]);
       }
     } catch (err) {
-      console.error(`❌ Error fetching images for program ${programId}:`, err);
+      console.error(`❌ Error fetching images for program ${program.id}:`, err);
       setProgramImages([]);
     } finally {
       setLoadingImages(false);
@@ -605,15 +424,19 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
       const response = await api.createSupportTicket(ticketData);
       if (response.success) {
         alert(t('requestSent'));
-        const guideIdNum = parseInt(program.guide_id, 10);
-        if (program.guide_id && !isNaN(guideIdNum)) {
+        // تحويل guide_id إلى رقم صحيح (old_id) إذا كان UUID
+        let numericGuideId = program.guide_id;
+        if (isNaN(Number(program.guide_id)) && guidesMap[program.guide_id]) {
+          numericGuideId = guidesMap[program.guide_id];
+        } else if (!isNaN(Number(program.guide_id))) {
+          numericGuideId = Number(program.guide_id);
+        }
+        if (numericGuideId && !isNaN(numericGuideId)) {
           try {
-            await api.createConversation(guideIdNum, 'booking', program.id);
+            await api.createConversation(numericGuideId, 'booking', program.id);
           } catch (convErr) {
-            console.warn("Could not create conversation (guide ID not numeric):", convErr);
+            console.warn("Could not create conversation:", convErr);
           }
-        } else {
-          console.log("Skipping conversation creation because guide_id is not a number:", program.guide_id);
         }
       } else {
         alert('فشل إرسال طلب الحجز، حاول مرة أخرى');
@@ -626,7 +449,7 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
     }
   };
 
-  // ✅ الدالة المعدلة لبدء المحادثة المباشرة مع المرشد (تستخدم localStorage)
+  // ✅ الدالة المعدلة لبدء المحادثة المباشرة مع المرشد (تستخدم old_id)
   const handleChatWithGuide = (guideId, guideName) => {
     if (!user) {
       alert(lang === 'ar' ? 'يجب تسجيل الدخول أولاً' : 'Please login first');
@@ -640,16 +463,27 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
       return;
     }
 
-    // حفظ معاملات المحادثة في localStorage
+    // ✅ تحويل guideId إلى رقم صحيح (old_id) إذا كان UUID
+    let numericGuideId = guideId;
+    if (isNaN(Number(guideId)) && guidesMap[guideId]) {
+      numericGuideId = guidesMap[guideId];
+    } else if (!isNaN(Number(guideId))) {
+      numericGuideId = Number(guideId);
+    }
+
+    if (!numericGuideId || isNaN(numericGuideId)) {
+      alert(lang === 'ar' ? 'معرف المرشد غير صالح' : 'Invalid guide ID');
+      return;
+    }
+
     const chatParams = {
-      recipientId: guideId,
+      recipientId: numericGuideId,
       recipientName: guideName || 'المرشد',
       timestamp: Date.now()
     };
     localStorage.setItem('directChatParams', JSON.stringify(chatParams));
     console.log('✅ Saved chat params to localStorage:', chatParams);
 
-    // الانتقال إلى صفحة المحادثة المباشرة
     setPage('directChat');
   };
 
@@ -659,7 +493,7 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
     : allPrograms;
   const isGuide = user?.role === 'guide' || user?.type === 'guide' || user?.isGuide === true;
 
-  // ✅ إضافة العلامات
+  // ✅ إضافة العلامات (مع إضافة إرشادات السلامة في النافذة المنبثقة)
   const addMarkersToMap = useCallback((map, programsList, currentLang) => {
     if (!map || !isMapLoadedRef.current) {
       console.warn('⚠️ Map not ready');
@@ -677,9 +511,10 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
     validPrograms.forEach(program => {
       const coords = program.coords || [program.location_lng, program.location_lat];
       const color = program.guide_id === user?.id ? "#9b59b6" : "#10b981";
+      const safetyIcon = program.safetyGuidelines ? '⚠️' : '';
       const popupHTML = `
         <div style="text-align:${currentLang === "ar" ? "right" : "left"}; padding:12px; min-width:220px; direction:${currentLang === "ar" ? "rtl" : "ltr"};">
-          <strong>${program.name_ar || program.name}</strong><br/>
+          <strong>${program.name_ar || program.name}</strong> ${safetyIcon}<br/>
           👤 ${program.guide_name || "مرشد سياحي"}<br/>
           💰 ${program.price} ${currentLang === "ar" ? "ريال" : "SAR"}<br/>
           ⏱️ ${program.duration || "غير محدد"}<br/>
@@ -694,7 +529,7 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
       marker.getElement().addEventListener('click', () => {
         console.log("🟢 Marker clicked for program:", program.id);
         setSelectedProgram(program);
-        fetchProgramImages(program.id);
+        fetchProgramImages(program);
         if (mapInstance && program.coords)
           mapInstance.flyTo({ center: program.coords, zoom: 14 });
       });
@@ -712,7 +547,7 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
       .addTo(map);
   };
 
-  // ✅ تهيئة الخريطة (مرة واحدة)
+  // ✅ تهيئة الخريطة
   useEffect(() => {
     if (!mapContainerRef?.current) return;
     if (mapInstance) return;
@@ -752,7 +587,7 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
     }
   }, [mapContainerRef]);
 
-  // ✅ تحديث العلامات عند تغيير البرامج
+  // ✅ تحديث العلامات عند تغيير البرامج أو اللغة
   useEffect(() => {
     if (mapInstance && isMapLoadedRef.current) {
       addMarkersToMap(mapInstance, displayedPrograms, lang);
@@ -778,14 +613,14 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
     }
   }, [lang, mapInstance]);
 
-  // ربط اختيار البرنامج
+  // ربط اختيار البرنامج من خلال النافذة المنبثقة
   useEffect(() => {
     window.selectProgram = (id) => {
       console.log("🔍 window.selectProgram called with id:", id);
       const prog = displayedPrograms.find(p => p.id === id);
       if (prog) {
         setSelectedProgram(prog);
-        fetchProgramImages(id);
+        fetchProgramImages(prog);
         const coords = prog.coords || [prog.location_lng, prog.location_lat];
         if (mapInstance && coords) mapInstance.flyTo({ center: coords, zoom: 14 });
       } else {
@@ -799,7 +634,6 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
     alert(lang === 'ar' ? `✅ تم إرسال طلب المشاركة في "${program.name_ar || program.name}"` : `✅ Request sent for "${program.name}"`);
   };
 
-  // إذا لم يكن المستخدم مسجلاً
   if (!user) {
     return (
       <div className="h-full flex items-center justify-center bg-gray-50 dark:bg-gray-900">
@@ -812,7 +646,6 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
     );
   }
 
-  // الواجهة الرئيسية
   return (
     <div className="h-full relative flex flex-col">
       {/* الشريط العلوي */}
@@ -849,63 +682,30 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
         </div>
       </div>
 
-      {/* حاوية الخريطة */}
+      {/* الخريطة */}
       <div ref={mapContainerRef} className="flex-1 w-full min-h-0" />
 
-      {/* نافذة تفاصيل البرنامج */}
+      {/* نافذة تفاصيل البرنامج - مع عرض الصور وإرشادات السلامة */}
       {selectedProgram && (
         <div className="absolute bottom-20 left-4 right-4 z-20 bg-white dark:bg-gray-800 rounded-xl p-4 shadow-lg border-2 border-green-500 max-h-[70vh] overflow-y-auto">
           {/* معرض الصور */}
           {loadingImages ? (
-            <div className="mb-3 flex justify-center items-center h-48">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div>
-            </div>
+            <div className="mb-3 flex justify-center items-center h-48"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div></div>
           ) : programImages.length > 0 ? (
             <div className="mb-3">
               <div className="relative">
-                <img
-                  src={programImages[currentImageIndex]}
-                  alt={selectedProgram.name_ar || selectedProgram.name}
-                  className="w-full h-48 object-cover rounded-lg cursor-pointer"
-                  onClick={() => setShowGallery(true)}
-                  onError={(e) => { e.target.src = 'https://via.placeholder.com/400x300?text=Image+Not+Found'; }}
-                />
+                <img src={programImages[currentImageIndex]} alt={selectedProgram.name_ar || selectedProgram.name} className="w-full h-48 object-cover rounded-lg cursor-pointer" onClick={() => setShowGallery(true)} onError={(e) => { e.target.src = 'https://via.placeholder.com/400x300?text=Image+Not+Found'; }} />
                 {programImages.length > 1 && (
                   <>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setCurrentImageIndex((prev) => (prev - 1 + programImages.length) % programImages.length);
-                      }}
-                      className="absolute left-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full hover:bg-black/70"
-                    >
-                      ❮
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setCurrentImageIndex((prev) => (prev + 1) % programImages.length);
-                      }}
-                      className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full hover:bg-black/70"
-                    >
-                      ❯
-                    </button>
-                    <div className="absolute bottom-2 right-2 bg-black/50 text-white text-xs px-2 py-1 rounded-full">
-                      {currentImageIndex + 1} / {programImages.length}
-                    </div>
+                    <button onClick={(e) => { e.stopPropagation(); setCurrentImageIndex((prev) => (prev - 1 + programImages.length) % programImages.length); }} className="absolute left-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full hover:bg-black/70">❮</button>
+                    <button onClick={(e) => { e.stopPropagation(); setCurrentImageIndex((prev) => (prev + 1) % programImages.length); }} className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full hover:bg-black/70">❯</button>
+                    <div className="absolute bottom-2 right-2 bg-black/50 text-white text-xs px-2 py-1 rounded-full">{currentImageIndex + 1} / {programImages.length}</div>
                   </>
                 )}
               </div>
             </div>
           ) : selectedProgram.image ? (
-            <div className="mb-3 flex justify-center">
-              <img
-                src={selectedProgram.image}
-                alt={selectedProgram.name}
-                className="w-full h-48 object-cover rounded-lg"
-                onError={(e) => { e.target.style.display = 'none'; }}
-              />
-            </div>
+            <div className="mb-3 flex justify-center"><img src={selectedProgram.image} alt={selectedProgram.name} className="w-full h-48 object-cover rounded-lg" onError={(e) => { e.target.style.display = 'none'; }} /></div>
           ) : null}
 
           {/* معلومات البرنامج */}
@@ -918,14 +718,20 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
                 <span>{selectedProgram.duration}</span>
                 <span>⭐ {selectedProgram.rating || 4.5}</span>
               </div>
-              {selectedProgram.description && (
-                <p className="text-sm text-gray-500 mt-2">{selectedProgram.description}</p>
+              {selectedProgram.description && <p className="text-sm text-gray-500 mt-2">{selectedProgram.description}</p>}
+              
+              {/* ✅ عرض إرشادات السلامة */}
+              {selectedProgram.safetyGuidelines && (
+                <div className="mt-3 p-3 bg-orange-50 dark:bg-orange-900/20 rounded-lg border-r-4 border-orange-500">
+                  <div className="flex items-center gap-2 mb-1">
+                    <AlertTriangle className="w-4 h-4 text-orange-600" />
+                    <span className="text-sm font-semibold text-orange-700 dark:text-orange-400">إرشادات السلامة</span>
+                  </div>
+                  <p className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-line">{selectedProgram.safetyGuidelines}</p>
+                </div>
               )}
             </div>
-            <button onClick={() => {
-              setSelectedProgram(null);
-              setProgramImages([]);
-            }} className="text-gray-500">✕</button>
+            <button onClick={() => { setSelectedProgram(null); setProgramImages([]); }} className="text-gray-500">✕</button>
           </div>
 
           {/* أزرار الإجراءات */}
@@ -936,7 +742,6 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
               <option value="cycling">🚲 {t('cycling')}</option>
             </select>
             
-            {/* زر الدردشة مع المرشد - يستخدم localStorage */}
             <button
               onClick={() => handleChatWithGuide(selectedProgram.guide_id, selectedProgram.guide_name)}
               className="bg-blue-600 text-white px-3 py-1 rounded-lg text-sm flex items-center gap-1 hover:bg-blue-700"
@@ -968,32 +773,11 @@ function ExplorePage({ lang, mapContainerRef, setPage, transport, setTransport, 
             <img src={programImages[currentImageIndex]} className="max-w-full max-h-screen object-contain" alt="Gallery" onError={(e) => { e.target.src = 'https://via.placeholder.com/800x600?text=Image+Error'; }} />
             {programImages.length > 1 && (
               <>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setCurrentImageIndex((prev) => (prev - 1 + programImages.length) % programImages.length);
-                  }}
-                  className="absolute left-4 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-3 rounded-full hover:bg-black/70"
-                >
-                  ❮
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setCurrentImageIndex((prev) => (prev + 1) % programImages.length);
-                  }}
-                  className="absolute right-4 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-3 rounded-full hover:bg-black/70"
-                >
-                  ❯
-                </button>
+                <button onClick={(e) => { e.stopPropagation(); setCurrentImageIndex((prev) => (prev - 1 + programImages.length) % programImages.length); }} className="absolute left-4 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-3 rounded-full hover:bg-black/70">❮</button>
+                <button onClick={(e) => { e.stopPropagation(); setCurrentImageIndex((prev) => (prev + 1) % programImages.length); }} className="absolute right-4 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-3 rounded-full hover:bg-black/70">❯</button>
               </>
             )}
-            <button
-              onClick={() => setShowGallery(false)}
-              className="absolute top-4 right-4 bg-black/50 text-white p-2 rounded-full hover:bg-black/70"
-            >
-              ✕
-            </button>
+            <button onClick={() => setShowGallery(false)} className="absolute top-4 right-4 bg-black/50 text-white p-2 rounded-full hover:bg-black/70">✕</button>
           </div>
         </div>
       )}
@@ -1198,6 +982,34 @@ function GuidesPage({ lang, user, setPage }) {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [error, setError] = useState(null);
+  const [guidesMap, setGuidesMap] = useState({}); // خريطة UUID -> old_id
+
+  // جلب خريطة المرشدين للمساعدة في تحويل UUID إلى old_id
+  useEffect(() => {
+    const fetchGuidesMap = async () => {
+      try {
+        const response = await api.get('/api/guides');
+        let guidesList = [];
+        if (response.data?.data?.guides) guidesList = response.data.data.guides;
+        else if (response.data?.guides) guidesList = response.data.guides;
+        else if (Array.isArray(response.data)) guidesList = response.data;
+        else if (response.data?.data && Array.isArray(response.data.data)) guidesList = response.data.data;
+
+        const map = {};
+        guidesList.forEach(guide => {
+          const uuid = guide.id || guide.uuid;
+          const numericId = guide.old_id;
+          if (uuid && numericId && !isNaN(Number(numericId))) {
+            map[uuid] = Number(numericId);
+          }
+        });
+        setGuidesMap(map);
+      } catch (err) {
+        console.error('Failed to fetch guides map:', err);
+      }
+    };
+    fetchGuidesMap();
+  }, []);
 
   useEffect(() => {
     fetchGuides();
@@ -1217,24 +1029,16 @@ function GuidesPage({ lang, user, setPage }) {
 
       // 2. تنسيق البيانات الأساسية مع تحسين معالجة الصورة
       const formattedGuides = guidesList.map(guide => {
-        // معالجة الصورة: نبحث عن أي حقل يحمل رابط الصورة
         let avatarUrl = guide.avatar || guide.avatar_url || guide.profile_image || guide.image;
-        
-        // إذا كان الرابط موجوداً، نحوله إلى رابط كامل
         if (avatarUrl) {
           if (!avatarUrl.startsWith('http') && !avatarUrl.startsWith('data:image')) {
-            // إذا كان يبدأ بـ /uploads أو مسار نسبي
             avatarUrl = `https://tourist-app-api.onrender.com${avatarUrl.startsWith('/') ? avatarUrl : '/' + avatarUrl}`;
           }
         } else {
-          // في حالة عدم وجود صورة، نستخدم رابط صورة افتراضية
           avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(guide.full_name || guide.name || 'Guide')}&background=3b82f6&color=fff&size=200`;
         }
         
-        // عدد البرامج - سيتم تحديثه لاحقاً
         let programsCount = 0;
-        
-        // التخصصات
         let specialties = [];
         if (Array.isArray(guide.specialties)) {
           specialties = guide.specialties;
@@ -1244,7 +1048,6 @@ function GuidesPage({ lang, user, setPage }) {
           specialties = [guide.specialization];
         }
         
-        // المسافة
         let distance = guide.distance;
         if (distance && !isNaN(parseFloat(distance))) {
           distance = parseFloat(distance).toFixed(1);
@@ -1261,7 +1064,7 @@ function GuidesPage({ lang, user, setPage }) {
           reviews: guide.reviews_count || guide.reviews || 0,
           specialties: specialties,
           distance: distance,
-          userId: guide.user_id || guide.id,  // معرف المستخدم الحقيقي للمرشد
+          userId: guide.user_id || guide.id,
           programs: 0
         };
       });
@@ -1296,7 +1099,28 @@ function GuidesPage({ lang, user, setPage }) {
     }
   };
 
-  // ✅ الدالة المعدلة: بدء محادثة مباشرة مع المرشد (بدون الرجوع إلى الدعم الفني)
+  // ✅ دالة مساعدة لتحويل UUID إلى رقمي (old_id)
+  const resolveNumericGuideId = async (guideId) => {
+    if (!guideId) return null;
+    if (!isNaN(Number(guideId))) return Number(guideId);
+    if (guidesMap[guideId]) return guidesMap[guideId];
+    try {
+      const token = localStorage.getItem('token');
+      const userRes = await fetch(`https://tourist-app-api.onrender.com/api/users/${guideId}`, {
+        headers: { Authorization: token ? `Bearer ${token}` : '' }
+      });
+      const userData = await userRes.json();
+      if (userData.success && userData.user) {
+        if (userData.user.old_id) return Number(userData.user.old_id);
+        if (userData.user.id && !isNaN(Number(userData.user.id))) return Number(userData.user.id);
+      }
+    } catch(e) {
+      console.warn('Failed to fetch user:', e);
+    }
+    return null;
+  };
+
+  // ✅ الدالة المعدلة: بدء محادثة مباشرة مع المرشد (نفس آلية ExplorePage)
   const handleStartChat = async (guide) => {
     if (!user) {
       toast.error(lang === 'ar' ? 'الرجاء تسجيل الدخول أولاً للمراسلة' : 'Please login first to message');
@@ -1304,18 +1128,25 @@ function GuidesPage({ lang, user, setPage }) {
       return;
     }
     try {
-      // استخدام userId الحقيقي للمرشد (وليس guide.id)
-      const recipientId = guide.userId || guide.id;
-      const response = await api.createConversation(recipientId, 'direct');
-      
-      if (response && response.success) {
-        // الانتقال إلى صفحة المحادثات
-        setPage('messages');
-        toast.success(lang === 'ar' ? 'تم فتح المحادثة مع المرشد' : 'Conversation with guide opened');
-      } else {
-        // فشل إنشاء المحادثة بدون الرجوع إلى الدعم الفني
-        toast.error(lang === 'ar' ? 'لا يمكن بدء المحادثة مع المرشد حالياً' : 'Cannot start conversation with guide at the moment');
+      // استخدام المعرف الأصلي للمرشد (قد يكون UUID أو رقم)
+      let rawId = guide.userId || guide.id;
+      // تحويل إلى رقمي إن أمكن
+      const numericId = await resolveNumericGuideId(rawId);
+      if (!numericId) {
+        toast.error(lang === 'ar' ? 'معرف المرشد غير صالح' : 'Invalid guide ID');
+        return;
       }
+      // حفظ البيانات في localStorage كما في ExplorePage
+      const chatParams = {
+        recipientId: numericId,
+        recipientName: guide.name,
+        timestamp: Date.now()
+      };
+      localStorage.setItem('directChatParams', JSON.stringify(chatParams));
+      console.log('✅ Saved chat params to localStorage:', chatParams);
+      // الانتقال إلى صفحة المحادثة المباشرة
+      setPage('directChat');
+      toast.success(lang === 'ar' ? 'تم فتح المحادثة مع المرشد' : 'Conversation with guide opened');
     } catch (err) {
       console.error('Chat error:', err);
       toast.error(lang === 'ar' ? 'حدث خطأ أثناء محاولة بدء المحادثة' : 'Error starting conversation');
@@ -1501,7 +1332,7 @@ function GuidesPage({ lang, user, setPage }) {
         </div>
       )}
 
-      {/* باقي الأقسام (تسجيل الدخول، ترقية الحساب) تبقى كما هي */}
+      {/* باقي الأقسام (تسجيل الدخول، ترقية الحساب) */}
       {!user && (
         <div className="mt-8 p-6 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 rounded-xl border border-blue-200 dark:border-blue-800 text-center">
           <div className="max-w-md mx-auto">
@@ -1812,618 +1643,421 @@ function ProfilePage({ lang, user, setPage, setShowLogin, onLogout, onUpdateUser
     </div>
   );
 }
-// ===================== ⚙️ Settings Page =====================
+// ===================== ⚙️ Settings Page (معدل زر الوضع الليلي) =====================
 function SettingsPage({ lang, dark, setDark, setLang, setPage, locationEnabled, setLocationEnabled }) {
   const t = (k) => LOCALES[lang][k] || k;
-  
   return (
     <div className="h-full overflow-y-auto bg-gray-50 dark:bg-gray-900 p-4 pb-20">
-      <div className="flex items-center mb-6">
-        <button 
-          onClick={() => setPage("profile")}
-          className="p-2 rounded-full bg-white dark:bg-gray-800 shadow-sm ml-4"
-        >
-          <span className="text-xl dark:text-white">‹</span>
-        </button>
-        <h1 className="text-2xl font-bold text-gray-800 dark:text-white">{t("settings")}</h1>
-      </div>
-      
+      <div className="flex items-center mb-6"><button onClick={() => setPage("profile")} className="p-2 rounded-full bg-white dark:bg-gray-800 shadow-sm ml-4"><span className="text-xl dark:text-white">‹</span></button><h1 className="text-2xl font-bold text-gray-800 dark:text-white">{t("settings")}</h1></div>
       <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm overflow-hidden">
-        <div className="p-4 border-b dark:border-gray-700">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="font-medium text-gray-800 dark:text-white">{t("darkMode")}</h3>
-              <p className="text-sm text-gray-500 dark:text-gray-400">مريح للعين في الإضاءة المنخفضة</p>
-            </div>
-            <button 
-              onClick={() => setDark(!dark)}
-              className={`w-12 h-6 rounded-full relative transition-colors ${dark ? "bg-green-600" : "bg-gray-300"}`}
-            >
-              <div className={`w-5 h-5 rounded-full bg-white absolute top-0.5 transition-transform ${dark ? "right-0.5" : "left-0.5"}`}></div>
-            </button>
-          </div>
-        </div>
-        
-        <div className="p-4 border-b dark:border-gray-700">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="font-medium text-gray-800 dark:text-white">{t("locationSharing")}</h3>
-              <p className="text-sm text-gray-500 dark:text-gray-400">مشاركة موقعك لعرض البرامج القريبة</p>
-            </div>
-            <button 
-              onClick={() => setLocationEnabled(!locationEnabled)}
-              className={`w-12 h-6 rounded-full relative transition-colors ${locationEnabled ? "bg-green-600" : "bg-gray-300"}`}
-            >
-              <div className={`w-5 h-5 rounded-full bg-white absolute top-0.5 transition-transform ${locationEnabled ? "right-0.5" : "left-0.5"}`}></div>
-            </button>
-          </div>
-        </div>
-        
-        <div className="p-4 border-b dark:border-gray-700">
-          <div className="flex items-center justify-between">
-            <h3 className="font-medium text-gray-800 dark:text-white">{t("language")}</h3>
-            <select 
-              value={lang}
-              onChange={(e) => setLang(e.target.value)}
-              className="border rounded-lg px-3 py-2 dark:bg-gray-700 dark:text-white dark:border-gray-600 focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
-            >
-              <option value="ar">العربية</option>
-              <option value="en">English</option>
-            </select>
-          </div>
-        </div>
-        
-        <div className="p-4">
-          <h3 className="font-medium text-gray-800 dark:text-white mb-3">حول التطبيق</h3>
-          <div className="space-y-2">
-            <div className="flex items-center justify-between w-full p-2">
-              <span className="text-gray-700 dark:text-gray-300">الإصدار</span>
-              <span className="text-gray-500 dark:text-gray-400">1.0.0</span>
-            </div>
-            <button className="flex items-center justify-between w-full p-2 hover:bg-gray-50 dark:hover:bg-gray-700 rounded transition">
-              <span className="text-gray-700 dark:text-gray-300">الشروط والأحكام</span>
-              <span className="text-gray-400">‹</span>
-            </button>
-            <button className="flex items-center justify-between w-full p-2 hover:bg-gray-50 dark:hover:bg-gray-700 rounded transition">
-              <span className="text-gray-700 dark:text-gray-300">سياسة الخصوصية</span>
-              <span className="text-gray-400">‹</span>
-            </button>
-          </div>
-        </div>
+        <div className="p-4 border-b dark:border-gray-700"><div className="flex items-center justify-between"><div><h3 className="font-medium text-gray-800 dark:text-white">{t("darkMode")}</h3><p className="text-sm text-gray-500 dark:text-gray-400">مريح للعين في الإضاءة المنخفضة</p></div><button onClick={() => setDark()} className={`w-12 h-6 rounded-full relative transition-colors ${dark ? "bg-green-600" : "bg-gray-300"}`}><div className={`w-5 h-5 rounded-full bg-white absolute top-0.5 transition-transform ${dark ? "right-0.5" : "left-0.5"}`}></div></button></div></div>
+        <div className="p-4 border-b dark:border-gray-700"><div className="flex items-center justify-between"><div><h3 className="font-medium text-gray-800 dark:text-white">{t("locationSharing")}</h3><p className="text-sm text-gray-500 dark:text-gray-400">مشاركة موقعك لعرض البرامج القريبة</p></div><button onClick={() => setLocationEnabled(!locationEnabled)} className={`w-12 h-6 rounded-full relative transition-colors ${locationEnabled ? "bg-green-600" : "bg-gray-300"}`}><div className={`w-5 h-5 rounded-full bg-white absolute top-0.5 transition-transform ${locationEnabled ? "right-0.5" : "left-0.5"}`}></div></button></div></div>
+        <div className="p-4 border-b dark:border-gray-700"><div className="flex items-center justify-between"><h3 className="font-medium text-gray-800 dark:text-white">{t("language")}</h3><select value={lang} onChange={(e) => setLang(e.target.value)} className="border rounded-lg px-3 py-2 dark:bg-gray-700 dark:text-white dark:border-gray-600 focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"><option value="ar">العربية</option><option value="en">English</option></select></div></div>
+        <div className="p-4"><h3 className="font-medium text-gray-800 dark:text-white mb-3">حول التطبيق</h3><div className="space-y-2"><div className="flex items-center justify-between w-full p-2"><span className="text-gray-700 dark:text-gray-300">الإصدار</span><span className="text-gray-500 dark:text-gray-400">1.0.0</span></div><button className="flex items-center justify-between w-full p-2 hover:bg-gray-50 dark:hover:bg-gray-700 rounded transition"><span className="text-gray-700 dark:text-gray-300">الشروط والأحكام</span><span className="text-gray-400">‹</span></button><button className="flex items-center justify-between w-full p-2 hover:bg-gray-50 dark:hover:bg-gray-700 rounded transition"><span className="text-gray-700 dark:text-gray-300">سياسة الخصوصية</span><span className="text-gray-400">‹</span></button></div></div>
       </div>
     </div>
   );
 }
 
+// ===================== 🚨 صفحة الطوارئ =====================
+function EmergencyPage({ setPage, user }) {
+  const emergencyNumbers = [
+    { name: "الشرطة", number: "999", icon: "📞", color: "bg-blue-100 dark:bg-blue-900/30", textColor: "text-blue-700 dark:text-blue-300" },
+    { name: "الإسعاف", number: "997", icon: "🚑", color: "bg-red-100 dark:bg-red-900/30", textColor: "text-red-700 dark:text-red-300" },
+    { name: "الدفاع المدني", number: "998", icon: "🔥", color: "bg-orange-100 dark:bg-orange-900/30", textColor: "text-orange-700 dark:text-orange-300" },
+    { name: "النجدة", number: "911", icon: "🚨", color: "bg-purple-100 dark:bg-purple-900/30", textColor: "text-purple-700 dark:text-purple-300" }
+  ];
+  const handleCall = (number) => { window.location.href = `tel:${number}`; };
+  return (
+    <div className="h-full overflow-y-auto bg-gradient-to-br from-red-50 to-orange-50 dark:from-gray-900 dark:to-gray-800 p-4 pb-20">
+      <div className="flex items-center mb-6"><button onClick={() => setPage('home')} className="p-2 rounded-full bg-white dark:bg-gray-800 shadow-md ml-4 transition hover:bg-gray-100 dark:hover:bg-gray-700"><span className="text-xl dark:text-white">‹</span></button><h1 className="text-2xl font-bold text-gray-800 dark:text-white">🚨 خدمات الطوارئ</h1></div>
+      <div className="bg-red-100 dark:bg-red-900/30 border border-red-300 dark:border-red-700 rounded-xl p-4 mb-6"><p className="text-red-700 dark:text-red-300 text-sm font-medium">⚠️ في حالات الطوارئ الخطيرة، اتصل فوراً على الأرقام أدناه.</p></div>
+      <div className="grid gap-4">
+        {emergencyNumbers.map((item, idx) => (
+          <button key={idx} onClick={() => handleCall(item.number)} className={`${item.color} rounded-xl p-4 shadow-sm hover:shadow-md transition transform hover:scale-[1.02] active:scale-98`}>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4"><span className="text-3xl">{item.icon}</span><div className="text-right"><h3 className={`font-bold text-lg ${item.textColor}`}>{item.name}</h3><p className={`text-2xl font-mono font-bold ${item.textColor}`}>{item.number}</p></div></div>
+              <span className="text-gray-500 dark:text-gray-400 text-sm">📞 اتصل</span>
+            </div>
+          </button>
+        ))}
+      </div>
+      <div className="mt-6 bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm"><h3 className="font-bold text-gray-800 dark:text-white mb-2">💡 نصائح مهمة</h3><ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400"><li>• حافظ على هدوئك وقدم معلومات دقيقة للمسؤول.</li><li>• حدد موقعك بوضوح (استخدم تطبيق الخرائط إذا أمكن).</li><li>• لا تتصل برقم الطوارئ إلا للحالات الخطيرة.</li><li>• أخبر شخصاً قريباً منك بحالتك إن أمكن.</li></ul></div>
+    </div>
+  );
+}
+// ===================== 👑 شريط المسؤولين (معدل – أنحف وأصغر) =====================
+function AdminTopBar({ setPage, lang, unreadCount }) {
+  const user = JSON.parse(localStorage.getItem('user') || '{}');
+  const isAdmin = user?.role === 'admin';
+  const isSupport = user?.role === 'support';
+  const showAdminBar = isAdmin || isSupport;
+  if (!showAdminBar) return null;
 
-// ===================== 📱 Main App Component =====================
-
+  return (
+    <div className="bg-gradient-to-r from-teal-600 to-cyan-600 py-0.5 px-2 flex justify-center gap-1.5 shadow-md relative z-10">
+      <button
+        onClick={() => setPage('adminNotifications')}
+        className="relative flex items-center justify-center w-7 h-7 bg-white/20 rounded-full hover:bg-white/30 transition"
+        title={lang === 'ar' ? 'الإشعارات' : 'Notifications'}
+      >
+        <Bell size={14} className="text-white" />
+        {unreadCount > 0 && (
+          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] rounded-full w-3.5 h-3.5 flex items-center justify-center">
+            {unreadCount > 9 ? '9+' : unreadCount}
+          </span>
+        )}
+      </button>
+      <button
+        onClick={() => setPage('adminSupport')}
+        className="px-2 py-0.5 bg-white text-teal-700 rounded-full text-[11px] font-bold shadow-md hover:bg-gray-100 transition flex items-center gap-1"
+      >
+        📧 {lang === 'ar' ? 'تذاكر الدعم' : 'Support Tickets'}
+      </button>
+      {isAdmin && (
+        <button
+          onClick={() => setPage('upgrade-requests')}
+          className="px-2 py-0.5 bg-white text-teal-700 rounded-full text-[11px] font-bold shadow-md hover:bg-gray-100 transition flex items-center gap-1"
+        >
+          ⭐ {lang === 'ar' ? 'طلبات الترقية' : 'Upgrade Requests'}
+        </button>
+      )}
+    </div>
+  );
+}
+// ===================== 📱 Main App Component (المعدل نهائياً - رفع المحتوى للأعلى) =====================
 export function TouristAppPrototype() {
+  const { user: authUser, logout: authLogout, updateUser: authUpdateUser } = useAuth();
+  const { darkMode: dark, toggleDarkMode } = useTheme();
+
   const [lang, setLang] = useState("ar");
-  const [dark, setDark] = useState(false);
-  const [user, setUser] = useState(null);
-  const [guide, setGuide] = useState(null);
   const [showLogin, setShowLogin] = useState(false);
-  const [showChat, setShowChat] = useState(false);
   const [page, setPage] = useState("home");
   const [locationEnabled, setLocationEnabled] = useState(true);
   const [userPrograms, setUserPrograms] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
   const mapContainerRef = useRef(null);
-  
-  // ✅ أضف هذه المتغيرات الجديدة
   const [transport, setTransport] = useState("driving");
   const [refreshMap, setRefreshMap] = useState(false);
   const [isTestMode, setIsTestMode] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
-  
-  // ✅ التحقق الشامل من أن المستخدم مرشد
-  const isGuide = user?.isGuide === true || 
-                  user?.role === 'guide' || 
-                  user?.type === 'guide' || 
-                  user?.guide_status === 'approved';
+  const [chatType, setChatType] = useState(null);
+  const [guideUnreadCount, setGuideUnreadCount] = useState(0);
+  const pollingRef = useRef(null);
+  const prevGuideUnreadCountRef = useRef(0);
 
-  // ✅ دالة لتحديث الخريطة
-  const handleProgramAdded = () => {
-    console.log('🔄 Program added, refreshing map...');
-    setRefreshMap(prev => !prev);
-    if (page === 'explore') {
-      toast.success(lang === 'ar' ? '🗺️ تم تحديث الخريطة بالبرامج الجديدة' : '🗺️ Map updated with new programs');
-    }
-  };
+  const user = authUser;
+  const isGuide = user?.isGuide === true || user?.role === 'guide' || user?.type === 'guide' || user?.guide_status === 'approved';
 
-  // ✅ تحميل المستخدم من localStorage عند بدء التطبيق
-  useEffect(() => {
-    const savedUser = localStorage.getItem('touristAppUser');
-    if (savedUser) {
-      try {
-        const parsedUser = JSON.parse(savedUser);
-        console.log('📦 [App] Loaded user from localStorage:', parsedUser);
-        setUser(parsedUser);
-        if (parsedUser.isGuide || parsedUser.role === 'guide') {
-          setGuide(parsedUser);
-        }
-      } catch (e) {
-        console.error('Error parsing user:', e);
-      }
-    }
+  // ✅ دالة مساعدة لإنشاء تذكرة guide_chat جديدة (احتياطي)
+  const createChatTicket = useCallback(async (touristId, guideId, touristName, guideName) => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch('https://tourist-app-api.onrender.com/api/support/tickets', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'guide_chat',
+          user_id: touristId,
+          metadata: { guideId, guideName, created_by_name: touristName, created_by_id: touristId },
+          subject: `محادثة بين ${touristName} والمرشد ${guideName}`,
+          status: 'open',
+          priority: 'normal'
+        })
+      });
+      const data = await response.json();
+      return data.success ? data.ticket : null;
+    } catch (error) { console.error(error); return null; }
   }, []);
 
-  // ✅ مراقبة تغييرات المستخدم
-  useEffect(() => {
-    console.log('🔍 [App] User state changed:', {
-      user,
-      isGuide: isGuide,
-      role: user?.role,
-      type: user?.type,
-      guide_status: user?.guide_status,
-      page: page
-    });
-  }, [user, isGuide, page]);
-  
-  const handleLoginSuccess = (response) => {
-    console.log('📥 [App] Login response:', response);
-    console.log('📥 [App] response.user.role:', response.user.role);
-    console.log('📥 [App] response.user.type:', response.user.type);
-    console.log('📥 [App] response.user.isGuide:', response.user.isGuide);
-    console.log('📥 [App] response.user.guide_status:', response.user.guide_status);
+  // ✅ دالة محسنة لفتح المحادثة من الإشعار – تفتح DirectChatPage لكل المستخدمين
+  const openChatFromNotification = useCallback(async (notification) => {
+    console.log('🔔 Opening chat from notification:', notification);
     
-    // ✅ التحقق من أن المستخدم مرشد
-    const isUserGuide = response.user.isGuide === true || 
-                        response.user.role === 'guide' || 
-                        response.user.type === 'guide' || 
-                        response.user.guide_status === 'approved';
-    
-    console.log('📥 [App] isUserGuide:', isUserGuide);
-    
-    const unifiedUser = {
-      id: response.user.id,
-      email: response.user.email,
-      fullName: response.user.fullName || response.user.name,
-      phone: response.user.phone || '',
-      phoneVerified: response.user.phoneVerified || false,
-      avatar: response.user.avatar || null,
-      createdAt: response.user.createdAt,
-      walletNumber: response.user.walletNumber,
-      chatId: response.user.chatId,
-      balance: response.user.balance || 0,
-      isGuide: isUserGuide,
-      role: isUserGuide ? 'guide' : (response.user.role || 'user'),
-      type: isUserGuide ? 'guide' : (response.user.type || 'user'),
-      guide_status: response.user.guide_status || null,
-      licenseNumber: response.user.licenseNumber || null,
-      civilId: response.user.civilId || null,
-      specialties: response.user.specialties || null,
-      experience: response.user.experience || null,
-      guideVerified: response.user.guideVerified || false,
-      programsCount: response.user.programsCount || 0,
-    };
-    
-    console.log('✅ [App] User after login:', unifiedUser);
-    console.log('✅ [App] Is Guide:', unifiedUser.isGuide);
-    console.log('✅ [App] Role:', unifiedUser.role);
-    console.log('✅ [App] Type:', unifiedUser.type);
-    
-    setUser(unifiedUser);
-    if (unifiedUser.isGuide) {
-      setGuide(unifiedUser);
-    }
-    
-    localStorage.setItem('touristAppUser', JSON.stringify(unifiedUser));
-    localStorage.setItem('touristAppToken', response.token);
-    localStorage.setItem('userType', unifiedUser.type);
-    setShowLogin(false);
-    
-    alert(lang === 'ar' 
-      ? `👋 مرحباً ${unifiedUser.fullName}! تم تسجيل الدخول بنجاح`
-      : `👋 Welcome ${unifiedUser.fullName}! Login successful`
-    );
-  };
+    const isGuideChatNotif = notification.type === 'GUIDE_CHAT' ||
+                            notification.type === 'guide_chat' ||
+                            notification.type === 'guide_chat_message' ||
+                            notification.type === 'new_message';
 
-useEffect(() => { 
-  document.documentElement.dir = lang === "ar" ? "rtl" : "ltr"; 
-  document.documentElement.lang = lang;
-  
-  if (dark) {
-    document.documentElement.classList.add("dark");
-    document.body.classList.add("bg-gray-900");
-  } else {
-    document.documentElement.classList.remove("dark");
-    document.body.classList.remove("bg-gray-900");
-  }
-  
-  const savedUser = localStorage.getItem('touristAppUser');
-  const savedToken = localStorage.getItem('touristAppToken');
-  
-  if (savedUser && savedToken && !isTestMode) {
-    api.verifyToken(savedToken)
-      .then((response) => {
-        if (response.valid) {
-          const parsedUser = JSON.parse(savedUser);
-          
-          // ✅ إصلاح old_id للمرشد (Tour Guide 2)
-          if (parsedUser && parsedUser.old_id !== 6 && parsedUser.id === '64be64ff-ae41-4eb0-a41f-27de577b6246') {
-            console.log('🔧 Fixing user.old_id from', parsedUser.old_id, 'to 6');
-            parsedUser.old_id = 6;
-            localStorage.setItem('touristAppUser', JSON.stringify(parsedUser));
+    if (isGuideChatNotif) {
+      const currentUserId = user?.id ? String(user.id) : null;
+      let otherPartyId = notification.userId || notification.data?.userId ||
+                         notification.data?.created_by_id || notification.data?.senderId;
+      let otherPartyName = notification.userName || notification.data?.userName ||
+                           notification.data?.fromName || notification.data?.created_by_name ||
+                           (lang === 'ar' ? 'مستخدم' : 'User');
+      let ticketId = notification.ticketId || notification.data?.ticketId;
+      if (!ticketId && notification.action_url) {
+        const match = notification.action_url.match(/\d+/);
+        if (match) ticketId = match[0];
+      }
+      
+      if (!otherPartyId && ticketId) {
+        try {
+          const token = localStorage.getItem('token');
+          const res = await fetch(`https://tourist-app-api.onrender.com/api/support/tickets/${ticketId}`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          if (res.status === 404) {
+            toast.error(lang === 'ar' ? 'هذه المحادثة لم تعد موجودة' : 'This conversation no longer exists');
+            if (notification.id && !String(notification.id).startsWith('ticket_')) {
+              try { await api.deleteNotification(notification.id); } catch(e) {}
+            }
+            return;
           }
-          
-          console.log('✅ [App] User loaded from storage:', parsedUser);
-          setUser(parsedUser);
-          if (parsedUser.isGuide) {
-            setGuide(parsedUser);
-            loadGuidePrograms(parsedUser.id, savedToken);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.success && data.ticket) {
+              const ticket = data.ticket;
+              if (ticket.user_id && (!currentUserId || String(ticket.user_id) !== currentUserId)) {
+                otherPartyId = ticket.user_id;
+                otherPartyName = ticket.user_name || (lang === 'ar' ? 'مستخدم' : 'User');
+              } else if (ticket.metadata?.created_by_id && (!currentUserId || String(ticket.metadata.created_by_id) !== currentUserId)) {
+                otherPartyId = ticket.metadata.created_by_id;
+                otherPartyName = ticket.metadata.created_by_name || (lang === 'ar' ? 'مسافر' : 'Traveler');
+              } else if (ticket.metadata?.guideId && (!currentUserId || String(ticket.metadata.guideId) !== currentUserId)) {
+                otherPartyId = ticket.metadata.guideId;
+                otherPartyName = ticket.metadata.guideName || (lang === 'ar' ? 'مرشد' : 'Guide');
+              } else if (ticket.sender_id && (!currentUserId || String(ticket.sender_id) !== currentUserId)) {
+                otherPartyId = ticket.sender_id;
+              }
+            }
           }
-        } else {
-          localStorage.removeItem('touristAppUser');
-          localStorage.removeItem('touristAppToken');
-          localStorage.removeItem('userType');
+        } catch (err) {
+          console.error('Error fetching ticket for notification:', err);
         }
-      })
-      .catch(() => {
-        const parsedUser = JSON.parse(savedUser);
-        
-        // ✅ إصلاح old_id للمرشد (Tour Guide 2) – أيضاً في حالة الخطأ
-        if (parsedUser && parsedUser.old_id !== 6 && parsedUser.id === '64be64ff-ae41-4eb0-a41f-27de577b6246') {
-          console.log('🔧 Fixing user.old_id from', parsedUser.old_id, 'to 6');
-          parsedUser.old_id = 6;
-          localStorage.setItem('touristAppUser', JSON.stringify(parsedUser));
-        }
-        
-        setUser(parsedUser);
-        if (parsedUser.isGuide) {
-          setGuide(parsedUser);
-        }
-      });
-  } else if (savedUser && isTestMode) {
-    const parsedUser = JSON.parse(savedUser);
-    
-    // ✅ إصلاح old_id للمرشد (Tour Guide 2) – وضع الاختبار
-    if (parsedUser && parsedUser.old_id !== 6 && parsedUser.id === '64be64ff-ae41-4eb0-a41f-27de577b6246') {
-      console.log('🔧 Fixing user.old_id from', parsedUser.old_id, 'to 6');
-      parsedUser.old_id = 6;
-      localStorage.setItem('touristAppUser', JSON.stringify(parsedUser));
+      }
+      
+      if (otherPartyId) {
+        localStorage.setItem('directChatParams', JSON.stringify({
+          recipientId: otherPartyId,
+          recipientName: otherPartyName,
+          recipientType: 'tourist',
+          ticketId: ticketId || null
+        }));
+        setPage('directChat');
+      } else {
+        toast.error(lang === 'ar' ? 'تعذر تحديد الطرف الآخر للمحادثة' : 'Cannot identify the other party');
+      }
+      return;
     }
     
-    setUser(parsedUser);
-    if (parsedUser.isGuide) {
-      setGuide(parsedUser);
+    let ticketId = null;
+    let type = 'support';
+    let userName = null;
+    if (notification.ticketId) ticketId = notification.ticketId;
+    else if (notification.data?.ticketId) ticketId = notification.data.ticketId;
+    else if (notification.action_url) ticketId = notification.action_url.match(/\d+/)?.[0];
+    if (ticketId) {
+      localStorage.setItem('selectedTicketId', ticketId);
+      localStorage.setItem('selectedChatType', type);
+      if (userName) localStorage.setItem('chatUserName', userName);
+      setChatType(type);
+      setPage('support');
+    } else {
+      setChatType(type);
+      setPage('support');
     }
-  }
-}, [lang, dark, isTestMode]);
+  }, [user, lang, setPage, setChatType]);
 
-  const loadGuidePrograms = async (guideId, token) => {
+  // ✅ دالة جلب التذاكر غير المقروءة للمرشد
+  const fetchGuideUnreadCount = useCallback(async () => {
+    if (!user || (!user.isGuide && user.role !== 'guide')) return;
     try {
-      const programs = await api.getGuidePrograms(guideId, token);
-      setUserPrograms(programs);
-    } catch (error) {
-      console.error('Error loading guide programs:', error);
+      const token = localStorage.getItem('token');
+      const response = await fetch('https://tourist-app-api.onrender.com/api/support/tickets?status=open', {
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+      });
+      const data = await response.json();
+      if (data.success && data.tickets) {
+        const guideId = user.id;
+        let unreadTickets = data.tickets.filter(ticket =>
+          ticket.type === 'guide_chat' &&
+          !ticket.is_read &&
+          (ticket.metadata?.guideId == guideId || ticket.user_id === guideId)
+        );
+        unreadTickets.sort((a, b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at));
+        const newCount = unreadTickets.length;
+        if (newCount > prevGuideUnreadCountRef.current && newCount > 0) {
+          const latestTicket = unreadTickets[0];
+          const userName = latestTicket.metadata?.created_by_name || (latestTicket.user_id === guideId ? 'الدعم' : 'مسافر');
+          let touristId = null;
+          if (latestTicket.metadata?.created_by_id && String(latestTicket.metadata.created_by_id) !== String(guideId)) {
+            touristId = latestTicket.metadata.created_by_id;
+          } else if (latestTicket.user_id && String(latestTicket.user_id) !== String(guideId)) {
+            touristId = latestTicket.user_id;
+          } else if (latestTicket.metadata?.userId && String(latestTicket.metadata.userId) !== String(guideId)) {
+            touristId = latestTicket.metadata.userId;
+          } else if (latestTicket.metadata?.sender_id && String(latestTicket.metadata.sender_id) !== String(guideId)) {
+            touristId = latestTicket.metadata.sender_id;
+          }
+          toast(`📩 ${lang === 'ar' ? `رسالة جديدة من ${userName}` : `New message from ${userName}`}`, {
+            icon: '💬',
+            duration: 8000,
+            onClick: () => {
+              if (touristId) {
+                localStorage.setItem('directChatParams', JSON.stringify({
+                  recipientId: touristId,
+                  recipientName: userName,
+                  recipientType: 'tourist',
+                }));
+                setPage('directChat');
+              } else {
+                localStorage.setItem('selectedTicketId', latestTicket.id);
+                localStorage.setItem('selectedChatType', 'guide');
+                localStorage.setItem('chatUserName', userName);
+                setChatType('guide');
+                setPage('support');
+              }
+            }
+          });
+        }
+        prevGuideUnreadCountRef.current = newCount;
+        setGuideUnreadCount(newCount);
+      }
+    } catch (err) {
+      console.error('Polling error for guide tickets:', err);
     }
+  }, [user, lang]);
+
+  // بدء polling للمرشد
+  useEffect(() => {
+    if (user && isGuide) {
+      fetchGuideUnreadCount();
+      pollingRef.current = setInterval(fetchGuideUnreadCount, 10000);
+    }
+    return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
+  }, [user, isGuide, fetchGuideUnreadCount]);
+
+  // تحديث عند تغيير الصفحة
+  useEffect(() => {
+    if (user && isGuide) fetchGuideUnreadCount();
+  }, [page, user, fetchGuideUnreadCount]);
+
+  // جلب عدد الإشعارات للمسؤول
+  useEffect(() => {
+    if (user && (user.role === 'admin' || user.role === 'support')) {
+      const fetchAdminUnread = async () => {
+        try {
+          const response = await api.getUserNotifications({ status: 'unread', limit: 1 });
+          let count = 0;
+          if (response.success && response.pagination) count = response.pagination.total || 0;
+          else if (response.unreadCount !== undefined) count = response.unreadCount;
+          setUnreadCount(count);
+        } catch (err) { console.error(err); }
+      };
+      fetchAdminUnread();
+      const interval = setInterval(fetchAdminUnread, 30000);
+      return () => clearInterval(interval);
+    }
+  }, [user]);
+
+  const handleProgramAdded = () => {
+    setRefreshMap(prev => !prev);
+    if (page === 'explore') toast.success(lang === 'ar' ? '🗺️ تم تحديث الخريطة' : '🗺️ Map updated');
   };
+
+  const handleLoginSuccess = (response) => {
+    if (response.token) {
+      localStorage.setItem('token', response.token);
+      localStorage.setItem('user', JSON.stringify(response.user));
+      localStorage.setItem('userType', response.user.type === 'guide' ? 'guide' : 'user');
+    }
+    authUpdateUser(response.user);
+    setShowLogin(false);
+    toast.success(`👋 مرحباً ${response.user.fullName || response.user.name}! تم تسجيل الدخول بنجاح`);
+  };
+
+  const handleLogout = () => {
+    authLogout();
+    setPage('home');
+    setUserPrograms([]);
+  };
+
+  const handleUserUpdate = (userData) => authUpdateUser(userData);
 
   const toggleTestMode = () => {
     const newMode = !isTestMode;
     setIsTestMode(newMode);
-    
-    setUser(null);
-    setGuide(null);
-    localStorage.removeItem('touristAppUser');
-    localStorage.removeItem('touristAppToken');
-    localStorage.removeItem('userType');
-    
-    alert(lang === 'ar'
-      ? `🔄 تم التبديل إلى ${newMode ? 'وضع الاختبار' : 'وضع الإنتاج'} وتم تسجيل الخروج`
-      : `🔄 Switched to ${newMode ? 'Test Mode' : 'Production Mode'} and logged out`
-    );
-    
+    authLogout();
     setPage("home");
+    toast.info(lang === 'ar' ? `🔄 تم التبديل إلى ${newMode ? 'وضع الاختبار' : 'وضع الإنتاج'}` : `🔄 Switched to ${newMode ? 'Test Mode' : 'Production Mode'}`);
   };
 
-  const handleLogout = () => {
-    setUser(null);
-    setGuide(null);
-    setUserPrograms([]);
-    localStorage.removeItem('touristAppUser');
-    localStorage.removeItem('touristAppToken');
-    localStorage.removeItem('userType');
-    setPage('home');
-    
-    alert(lang === 'ar' 
-      ? '👋 تم تسجيل الخروج بنجاح' 
-      : '👋 Logged out successfully'
-    );
-  };
-
-  const handleUserUpdate = (updatedUserData) => {
-    console.log('🔄 [App] handleUserUpdate called with:', updatedUserData);
-    
-    const updatedUser = { ...user, ...updatedUserData };
-    
-    if (updatedUserData.isGuide === true || 
-        updatedUserData.role === 'guide' || 
-        updatedUserData.type === 'guide' || 
-        updatedUserData.guide_status === 'approved') {
-      updatedUser.type = 'guide';
-      updatedUser.isGuide = true;
-      updatedUser.role = 'guide';
-    }
-    
-    console.log('🔄 [App] Updated user:', updatedUser);
-    console.log('🔄 [App] Is guide after update:', updatedUser.isGuide);
-    
-    setUser(updatedUser);
-    if (updatedUser.isGuide) {
-      setGuide(updatedUser);
-    }
-    localStorage.setItem('touristAppUser', JSON.stringify(updatedUser));
-    localStorage.setItem('userType', updatedUser.type);
-  };
-
-  const t = (k) => LOCALES[lang][k] || k;
+  useEffect(() => {
+    document.documentElement.dir = lang === "ar" ? "rtl" : "ltr";
+    document.documentElement.lang = lang;
+    if (dark) document.documentElement.classList.add("dark");
+    else document.documentElement.classList.remove("dark");
+  }, [lang, dark]);
 
   return (
     <div className="h-screen flex flex-col bg-gray-50 dark:bg-gray-900 overflow-hidden">
-      
       {isTestMode && (
         <div className="bg-yellow-500 text-white text-center py-1 px-4 text-xs font-medium flex items-center justify-center gap-2">
           <span className="animate-pulse">🧪</span>
-          <span>
-            {lang === 'ar' ? 'وضع الاختبار التجريبي - بيانات وهمية' : 'Test Mode - Demo Data'}
-          </span>
-          <button 
-            onClick={toggleTestMode}
-            className="bg-white/20 hover:bg-white/30 px-2 py-0.5 rounded text-xs transition"
-          >
-            {lang === 'ar' ? 'التبديل للإنتاج' : 'Switch to Production'}
-          </button>
+          <span>{lang === 'ar' ? 'وضع الاختبار التجريبي' : 'Test Mode'}</span>
+          <button onClick={toggleTestMode} className="bg-white/20 hover:bg-white/30 px-2 py-0.5 rounded text-xs">🔄</button>
         </div>
       )}
       
-      <div className="flex-1 overflow-hidden relative">
-        {console.log('🔄 [App] Current page:', page)}
-        
-        {page === "home" && (
-          <HomePage 
-            lang={lang} 
-            user={user} 
-            setPage={setPage} 
-            dark={dark}
-            setDark={setDark}
-            locationEnabled={locationEnabled}
-            setLocationEnabled={setLocationEnabled}
-          />
-        )}
-        
-        {page === "explore" && (
-          <ExplorePage 
-            lang={lang} 
-            mapContainerRef={mapContainerRef}
-            setPage={setPage}
-            transport={transport}
-            setTransport={setTransport}
-            user={user}
-            programs={userPrograms}
-            setPrograms={setUserPrograms}
-            unreadCount={unreadCount}
-            refreshTrigger={refreshMap}
-             dark={dark}
-          />
-        )}
-        
-        {/* ✅ صفحة المحادثة المباشرة */}
-        {page === "directChat" && (
-          <DirectChatPage
-            setPage={setPage}
-            lang={lang}
-          />
-        )}
-        
-        {page === "notifications" && (
-          <NotificationsPage 
-            setPage={setPage} 
-          />
-        )}
-        
-        {page === "upgrade-to-guide" && (
-          <UpgradeToGuidePage 
-            setPage={setPage}
-            onUpgradeSuccess={handleUserUpdate}
-          />
-        )}
-
-        {page === "upgrade-status" && (
-          <UpgradeStatusPage 
-            setPage={setPage}
-          />
-        )}
-        
-        {page === "support" && (
-          <SupportChatPage setPage={setPage} />
-        )}
-        
-        {page === "upgrade-requests" && (
-          <SupportUpgradeRequestsPage setPage={setPage} />
-        )}
-        
-        {/* ✅ تم إصلاح المشكلة - إضافة دعم لكل من admin-support و adminSupport */}
-        {(page === "admin-support" || page === "adminSupport") && (
-          <AdminSupportPage setPage={setPage} />
-        )}
-        
-        {page === "admin-notifications" && (
-          <AdminNotificationsPage setPage={setPage} />
-        )}
-        
-        {page === "admin-upgrade-requests" && (
-          <AdminUpgradeRequestsPage setPage={setPage} />
-        )}
-        
-        {page === "favorites" && <FavoritesPage lang={lang} />}
-        
-        {page === "events" && <EventsPage lang={lang} />}
-        
-        {page === "guides" && (
-          <GuidesPage 
-            lang={lang} 
-            user={user}
-            setPage={setPage}
-          />
-        )}
-        
-        {/* ✅ صفحة الطوارئ */}
-        {page === "emergency" && (
-          <EmergencyPage setPage={setPage} user={user} />
-        )}
-        
-        {/* ✅ صفحة لوحة تحكم المرشد - مع التحقق الشامل */}
-        {page === "guideDashboard" && (
-          (() => {
-            console.log('🔴🔴🔴 [App] Rendering guideDashboard section 🔴🔴🔴');
-            console.log('[App] isGuide value:', isGuide);
-            console.log('[App] user:', user);
-            console.log('[App] user?.isGuide:', user?.isGuide);
-            console.log('[App] user?.role:', user?.role);
-            console.log('[App] user?.type:', user?.type);
-            console.log('[App] user?.guide_status:', user?.guide_status);
-            
-            if (isGuide) {
-              console.log('✅✅✅ [App] Rendering GuideDashboard ✅✅✅');
-              return (
-                <GuideDashboard 
-                  lang={lang} 
-                  guide={user}
-                  setPage={setPage}
-                  user={user}
-                  setUserPrograms={setUserPrograms}
-                  onProgramAdded={handleProgramAdded}
-                />
-              );
-            } else {
-              console.log('❌❌❌ [App] Showing Access Denied ❌❌❌');
-              return (
-                <div className="h-full flex items-center justify-center bg-gray-50 dark:bg-gray-900">
-                  <div className="text-center p-8">
-                    <div className="w-24 h-24 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center mx-auto mb-6">
-                      <Shield className="w-12 h-12 text-red-600 dark:text-red-400" />
-                    </div>
-                    <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-4">
-                      {lang === 'ar' ? 'غير مصرح بالوصول' : 'Access Denied'}
-                    </h2>
-                    <p className="text-gray-600 dark:text-gray-400 mb-6">
-                      {lang === 'ar' 
-                        ? `أنت لست مرشداً سياحياً. البيانات: isGuide=${user?.isGuide}, role=${user?.role}, type=${user?.type}, status=${user?.guide_status}`
-                        : `You are not a guide. Data: isGuide=${user?.isGuide}, role=${user?.role}, type=${user?.type}, status=${user?.guide_status}`}
-                    </p>
-                    <button
-                      onClick={() => setPage('profile')}
-                      className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
-                    >
-                      {lang === 'ar' ? 'العودة للملف الشخصي' : 'Back to Profile'}
-                    </button>
-                  </div>
-                </div>
-              );
-            }
-          })()
-        )}
-        
-        {page === "messages" && (
-          <ChatSystem 
-            user={user}
-            lang={lang}
-            setPage={setPage}
-          />
-        )}
-        
-        {page === "profile" && (
-          <ProfilePage 
-            lang={lang} 
-            user={user} 
-            setPage={setPage} 
-            setShowLogin={setShowLogin}
-            onLogout={handleLogout}
-            onUpdateUser={handleUserUpdate}
-          />
-        )}
-        
-        {page === "settings" && (
-          <SettingsPage 
-            lang={lang} 
-            dark={dark} 
-            setDark={setDark} 
-            setLang={setLang} 
-            setPage={setPage}
-            locationEnabled={locationEnabled}
-            setLocationEnabled={setLocationEnabled}
-            isTestMode={isTestMode}
-            onToggleTestMode={toggleTestMode}
-            onLogout={handleLogout}
-          />
-        )}
-      </div>
-
-      <BottomNav current={page} setCurrent={setPage} lang={lang} user={user} />
-
-      {showLogin && (
-        <LoginPage 
-          lang={lang}
-          onLoginSuccess={handleLoginSuccess}
-        />
-      )}
+      {/* ✅ شريط المسؤولين في الأعلى */}
+      <AdminTopBar setPage={setPage} lang={lang} unreadCount={unreadCount} />
       
+      {/* ✅ إزالة المسافة العلوية (pt-0) لرفع المحتوى وجعل سطر الكتابة مرئياً */}
+      <div className="flex-1 overflow-hidden relative -mt-2">
+        {page === "home" && <HomePage lang={lang} user={user} setPage={setPage} dark={dark} setDark={toggleDarkMode} locationEnabled={locationEnabled} setLocationEnabled={setLocationEnabled} />}
+        {page === "explore" && <ExplorePage lang={lang} mapContainerRef={mapContainerRef} setPage={setPage} transport={transport} setTransport={setTransport} user={user} programs={userPrograms} setPrograms={setUserPrograms} unreadCount={unreadCount} refreshTrigger={refreshMap} dark={dark} />}
+        {page === "directChat" && <DirectChatPage setPage={setPage} lang={lang} />}
+        {page === "programs" && <ProgramsPage setPage={setPage} lang={lang} />} 
+        {page === "notifications" && <NotificationsPage setPage={setPage} onNotificationClick={openChatFromNotification} />}
+        {page === "upgrade-to-guide" && <UpgradeToGuidePage setPage={setPage} onUpgradeSuccess={handleUserUpdate} />}
+        {page === "upgrade-status" && <UpgradeStatusPage setPage={setPage} />}
+        {page === "support" && <SupportChatPage setPage={setPage} lang={lang} chatType={chatType} />}
+        {page === "upgrade-requests" && <SupportUpgradeRequestsPage setPage={setPage} />}
+        {(page === "admin-support" || page === "adminSupport") && <AdminSupportPage setPage={setPage} />}
+        {page === "admin-notifications" && <AdminNotificationsPage setPage={setPage} />}
+        {page === "admin-upgrade-requests" && <AdminUpgradeRequestsPage setPage={setPage} />}
+        {page === "favorites" && <FavoritesPage lang={lang} />}
+        {page === "events" && <EventsPage lang={lang} />}
+        {page === "guides" && <GuidesPage lang={lang} user={user} setPage={setPage} />}
+        {page === "emergency" && <EmergencyPage setPage={setPage} user={user} />}
+        {page === "guideDashboard" && (isGuide ? <GuideDashboard lang={lang} guide={user} setPage={setPage} user={user} setUserPrograms={setUserPrograms} onProgramAdded={handleProgramAdded} /> : (
+          <div className="h-full flex items-center justify-center">
+            <div className="text-center">
+              <Shield className="w-24 h-24 text-red-500 mx-auto mb-4" />
+              <h2 className="text-2xl font-bold">{lang === 'ar' ? 'غير مصرح' : 'Access Denied'}</h2>
+              <button onClick={() => setPage('profile')} className="mt-4 px-6 py-3 bg-green-600 text-white rounded-lg">{lang === 'ar' ? 'العودة للملف الشخصي' : 'Back'}</button>
+            </div>
+          </div>
+        ))}
+        {page === "profile" && <ProfilePage lang={lang} user={user} setPage={setPage} setShowLogin={setShowLogin} onLogout={handleLogout} onUpdateUser={handleUserUpdate} />}
+        {page === "settings" && <SettingsPage lang={lang} dark={dark} setDark={toggleDarkMode} setLang={setLang} setPage={setPage} locationEnabled={locationEnabled} setLocationEnabled={setLocationEnabled} isTestMode={isTestMode} onToggleTestMode={toggleTestMode} onLogout={handleLogout} />}
+      </div>
+      
+      <BottomNav current={page} setCurrent={setPage} lang={lang} user={user} unreadCount={unreadCount + guideUnreadCount} />
+      {showLogin && <LoginPage lang={lang} onLoginSuccess={handleLoginSuccess} />}
     </div>
   );
 }
 
 export default function App() {
   const [showLanding, setShowLanding] = useState(true);
-
   return showLanding ? (
     <div className="h-screen flex flex-col items-center justify-center bg-gradient-to-b from-green-500 to-emerald-600 text-white p-4 text-center">
-      <motion.div
-        initial={{ scale: 0.5, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        transition={{ duration: 0.5 }}
-        className="mb-8"
-      >
-        <div className="w-32 h-32 rounded-full bg-white/20 flex items-center justify-center backdrop-blur-sm">
-          <MapPin size={80} />
-        </div>
+      <motion.div initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ duration: 0.5 }} className="mb-8">
+        <div className="w-32 h-32 rounded-full bg-white/20 flex items-center justify-center backdrop-blur-sm"><MapPin size={80} /></div>
       </motion.div>
-      
-      <motion.h1 
-        initial={{ y: 20, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ delay: 0.2 }}
-        className="text-4xl font-bold mb-4"
-      >
-        السائح
-      </motion.h1>
-      
-      <motion.p 
-        initial={{ y: 20, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ delay: 0.4 }}
-        className="text-lg mb-8 max-w-md"
-      >
-        دليلك الذكي لاكتشاف أجمل الوجهات السياحية
-      </motion.p>
-      
-      <motion.button
-        initial={{ y: 20, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ delay: 0.6 }}
-        onClick={() => setShowLanding(false)}
-        className="px-8 py-3 bg-white text-green-700 rounded-xl font-bold text-lg shadow-lg hover:bg-gray-100 transition transform hover:scale-105"
-      >
-        ابدأ الرحلة
-      </motion.button>
+      <motion.h1 initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.2 }} className="text-4xl font-bold mb-4">السائح</motion.h1>
+      <motion.p initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.4 }} className="text-lg mb-8 max-w-md">دليلك الذكي لاكتشاف أجمل الوجهات السياحية</motion.p>
+      <motion.button initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.6 }} onClick={() => setShowLanding(false)} className="px-8 py-3 bg-white text-green-700 rounded-xl font-bold text-lg shadow-lg hover:bg-gray-100 transition transform hover:scale-105">ابدأ الرحلة</motion.button>
     </div>
   ) : (
     <ThemeProvider>
       <LanguageProvider>
         <AuthProvider>
-          <TouristAppPrototype />
+          <WalletProvider>
+            <TouristAppPrototype />
+          </WalletProvider>
         </AuthProvider>
       </LanguageProvider>
     </ThemeProvider>
