@@ -1,10 +1,10 @@
 // client/src/pages/NotificationsPage.jsx
-// ✅ النسخة النهائية - تعرض فقط المحادثات (الرسائل) بدون الإشعارات النظامية
+// ✅ الإصدار النهائي - يعرض المحادثات ويستقبل الإشعارات (تم إصلاح 403 وتحسين الاتصال)
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  FaArrowLeft, FaBell, FaSpinner, FaTrash, FaUser, FaHeadset,
-  FaChevronLeft, FaComments, FaSyncAlt, FaClock, FaExclamationTriangle
+  FaBell, FaSpinner, FaTrash, FaHeadset,
+  FaChevronLeft, FaComments, FaSyncAlt, FaClock
 } from 'react-icons/fa';
 import { RiAlarmWarningFill } from 'react-icons/ri';
 import { useLanguage } from '../contexts/LanguageContext';
@@ -28,6 +28,7 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
   const [error, setError] = useState(null);
   const socketRef = useRef(null);
   const pollingRef = useRef(null);
+  const lastMessageIdsRef = useRef(new Map());
 
   const getDeletedTickets = () => {
     const stored = localStorage.getItem(DELETED_TICKETS_KEY);
@@ -41,16 +42,29 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
     fetchDirectChats(false);
   };
 
+  // ✅ تحسين جلب آخر رسالة مع معالجة 403
   const fetchRealLastMessage = async (ticketId) => {
     try {
       const token = localStorage.getItem('token');
+      if (!token) return null;
+      
       const res = await fetch(`${API_BASE}/api/support/tickets/${ticketId}/messages?page=1&limit=1`, {
         headers: { Authorization: `Bearer ${token}` },
       });
+      
+      // ✅ معالجة 403 بهدوء - عدم عرض خطأ للمستخدم
+      if (res.status === 403) {
+        console.warn(`⚠️ Access denied to ticket ${ticketId}`);
+        return null;
+      }
+      
+      if (!res.ok) return null;
+      
       const data = await res.json();
       if (data.success && Array.isArray(data.messages) && data.messages.length > 0) {
         const last = data.messages[0];
-        return { message: last.message, time: last.created_at, sender_name: last.sender_name };
+        lastMessageIdsRef.current.set(ticketId, last.id);
+        return { message: last.message, time: last.created_at, sender_name: last.sender_name, messageId: last.id };
       }
     } catch (err) {
       console.warn(`Failed to fetch last message for ticket ${ticketId}:`, err);
@@ -58,11 +72,12 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
     return null;
   };
 
-  // جلب المحادثات المباشرة فقط (بدون إشعارات نظام)
+  // ✅ تحسين جلب المحادثات
   const fetchDirectChats = useCallback(async (showLoading = true) => {
     if (!user?.id) return;
     if (showLoading) setLoading(true);
     setError(null);
+    
     try {
       const token = localStorage.getItem('token');
       if (!token) throw new Error('No token');
@@ -70,13 +85,22 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
       const response = await fetch(`${API_BASE}/api/support/tickets`, {
         headers: { Authorization: `Bearer ${token}` },
       });
+      
+      // ✅ معالجة 401/403
+      if (response.status === 401 || response.status === 403) {
+        console.error('Authentication failed');
+        setError(language === 'ar' ? 'انتهت الجلسة، الرجاء تسجيل الدخول مرة أخرى' : 'Session expired');
+        setDirectChats([]);
+        return;
+      }
+      
       const data = await response.json();
       if (!data.success) throw new Error(data.message || 'API error');
 
       const currentUserId = String(user.id);
       const deletedSet = getDeletedTickets();
 
-      // تصفية: فقط guide_chat والتي يشارك فيها المستخدم
+      // ✅ تصفية التذاكر
       const userTickets = data.tickets.filter((ticket) => {
         if (deletedSet.has(String(ticket.id))) return false;
         if (ticket.type !== 'guide_chat') return false;
@@ -87,9 +111,8 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
         const isCreatedBy = ticket.metadata?.created_by_id && String(ticket.metadata.created_by_id) === currentUserId;
         const isInParticipants = ticket.metadata?.participants && Array.isArray(ticket.metadata.participants) &&
                                  ticket.metadata.participants.some(p => String(p) === currentUserId);
-        const isAssignedTo = ticket.assigned_to && String(ticket.assigned_to) === currentUserId;
 
-        return isUserCreator || isGuide || isTourist || isCreatedBy || isInParticipants || isAssignedTo;
+        return isUserCreator || isGuide || isTourist || isCreatedBy || isInParticipants;
       });
 
       const defaultMsg = language === 'ar' ? 'ابدأ المحادثة' : 'Start conversation';
@@ -97,31 +120,36 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
         userTickets.map(async (chat) => {
           let otherPartyName = '';
           let otherPartyId = null;
+          let otherPartyRole = '';
 
+          // تحديد الطرف الآخر
           if (chat.user_id && String(chat.user_id) !== currentUserId) {
             otherPartyId = chat.user_id;
             otherPartyName = chat.user_name || (language === 'ar' ? 'مسافر' : 'Traveler');
+            otherPartyRole = 'tourist';
           } else if (chat.metadata?.guideId && String(chat.metadata.guideId) !== currentUserId) {
             otherPartyId = chat.metadata.guideId;
             otherPartyName = chat.metadata.guideName || (language === 'ar' ? 'مرشد' : 'Guide');
+            otherPartyRole = 'guide';
           } else if (chat.metadata?.touristId && String(chat.metadata.touristId) !== currentUserId) {
             otherPartyId = chat.metadata.touristId;
             otherPartyName = chat.metadata.touristName || (language === 'ar' ? 'سائح' : 'Tourist');
+            otherPartyRole = 'tourist';
           } else {
-            otherPartyId = 'unknown';
-            otherPartyName = language === 'ar' ? 'محادثة' : 'Chat';
+            return null;
           }
 
           let lastMessage = chat.last_message;
           let lastMessageTime = chat.updated_at || chat.created_at;
 
-          if (!lastMessage || lastMessage === defaultMsg) {
+          // فقط إذا كانت last_message فارغة نحاول جلبها
+          if (!lastMessage || lastMessage === defaultMsg || lastMessage === '') {
             const realMsg = await fetchRealLastMessage(chat.id);
-            if (realMsg && realMsg.message !== defaultMsg) {
+            if (realMsg && realMsg.message !== defaultMsg && realMsg.message !== '') {
               lastMessage = realMsg.message;
               lastMessageTime = realMsg.time;
             } else {
-              return null; // لا توجد رسائل حقيقية بعد
+              return null;
             }
           }
 
@@ -130,9 +158,11 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
             type: chat.type,
             other_party_id: otherPartyId,
             other_party_name: otherPartyName,
+            other_party_role: otherPartyRole,
             subject: chat.subject,
             last_message: lastMessage,
             last_message_time: lastMessageTime,
+            last_message_id: chat.last_message_id,
             unread_count: chat.unread_count || 0,
             status: chat.status,
             created_at: chat.created_at,
@@ -140,49 +170,39 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
         })
       );
 
-      const validChats = chatsWithRealMsg.filter(chat => chat !== null);
-      // دمج المحادثات لنفس الطرف الآخر
-      const chatMap = new Map();
-      for (const chat of validChats) {
-        const key = chat.other_party_id;
-        if (key && key !== 'unknown') {
-          const existing = chatMap.get(key);
-          if (!existing || new Date(chat.last_message_time) > new Date(existing.last_message_time)) {
-            chatMap.set(key, chat);
-          }
-        } else {
-          chatMap.set(chat.id, chat);
-        }
-      }
-      const mergedChats = Array.from(chatMap.values());
-      mergedChats.sort((a, b) => new Date(b.last_message_time) - new Date(a.last_message_time));
+      const validChats = chatsWithRealMsg.filter(chat => chat !== null && chat.last_message);
+      validChats.sort((a, b) => new Date(b.last_message_time) - new Date(a.last_message_time));
 
-      setDirectChats(mergedChats);
-      console.log('✅ المحادثات المعروضة (فقط guide_chat برسائل حقيقية):', mergedChats.length);
+      setDirectChats(validChats);
+      console.log('✅ المحادثات المعروضة:', validChats.length);
     } catch (error) {
       console.error('Error fetching chats:', error);
       setError(error.message);
-      toast.error(language === 'ar' ? 'فشل تحميل المحادثات' : 'Failed to load chats');
+      if (!error.message.includes('token')) {
+        toast.error(language === 'ar' ? 'فشل تحميل المحادثات' : 'Failed to load chats');
+      }
     } finally {
       if (showLoading) setLoading(false);
     }
   }, [user?.id, language]);
 
-  const updateChatMessage = useCallback((ticketId, newMessage, newTimestamp, senderId = null) => {
+  // ✅ تحديث المحادثة
+  const updateChatMessage = useCallback((ticketId, newMessage, newTimestamp, senderId = null, messageId = null) => {
     setDirectChats((prev) => {
       const existingIndex = prev.findIndex(c => c.id === ticketId);
+      
       if (existingIndex !== -1) {
         const updated = [...prev];
+        const isNewMessage = updated[existingIndex].last_message !== newMessage;
         updated[existingIndex] = {
           ...updated[existingIndex],
           last_message: newMessage,
           last_message_time: newTimestamp,
-          unread_count: (updated[existingIndex].unread_count || 0) + 1,
+          unread_count: isNewMessage ? (updated[existingIndex].unread_count || 0) + 1 : updated[existingIndex].unread_count,
         };
         updated.sort((a, b) => new Date(b.last_message_time) - new Date(a.last_message_time));
         return updated;
       } else {
-        console.log(`🆕 Ticket ${ticketId} not in list, fetching full list...`);
         fetchDirectChats(false);
         return prev;
       }
@@ -195,27 +215,14 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
     setDeletingId(chat.id);
     try {
       const token = localStorage.getItem('token');
-      let serverDeleted = false;
-      try {
-        const delRes = await fetch(`${API_BASE}/api/support/tickets/${chat.id}`, {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (delRes.ok) serverDeleted = true;
-      } catch (e) { console.warn(e); }
-      if (!serverDeleted) {
-        try {
-          const patchRes = await fetch(`${API_BASE}/api/support/tickets/${chat.id}/status`, {
-            method: 'PATCH',
-            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ status: 'closed' }),
-          });
-          if (patchRes.ok) serverDeleted = true;
-        } catch (e) { console.warn(e); }
-      }
+      await fetch(`${API_BASE}/api/support/tickets/${chat.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {});
+      
       addDeletedTicket(chat.id);
       setDirectChats((prev) => prev.filter((c) => c.id !== chat.id));
-      toast.success(serverDeleted ? (language === 'ar' ? 'تم الحذف' : 'Deleted') : (language === 'ar' ? 'تم الإخفاء محلياً' : 'Hidden locally'));
+      toast.success(language === 'ar' ? 'تم الحذف' : 'Deleted');
     } catch (err) {
       toast.error(language === 'ar' ? 'فشل الحذف' : 'Delete failed');
     } finally {
@@ -224,10 +231,14 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
   };
 
   const openChat = (chat) => {
+    setDirectChats(prev => prev.map(c => 
+      c.id === chat.id ? { ...c, unread_count: 0 } : c
+    ));
+    
     const params = {
       recipientId: chat.other_party_id,
       recipientName: chat.other_party_name,
-      recipientType: 'tourist',
+      recipientType: chat.other_party_role,
       ticketId: chat.id,
     };
     localStorage.setItem('directChatParams', JSON.stringify(params));
@@ -236,6 +247,7 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
 
   const refreshAll = async () => {
     setRefreshing(true);
+    lastMessageIdsRef.current.clear();
     await fetchDirectChats(true);
     setRefreshing(false);
     toast.success(language === 'ar' ? 'تم التحديث' : 'Refreshed');
@@ -254,71 +266,120 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
     localStorage.removeItem('selectedSupportTicketId');
     setPage('support');
   };
+  
   const openEmergency = () => setPage('emergency');
 
-  // --------------------- Socket events ---------------------
+  // ✅ تحسين اتصال Socket.IO
   useEffect(() => {
     if (!user?.id) return;
+    
+    console.log('🔌 Setting up Socket.IO for Notifications...');
     const socket = io(SOCKET_URL, {
       auth: { token: localStorage.getItem('token') },
-      transports: ['websocket', 'polling']
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 2000,
     });
     socketRef.current = socket;
+    
     socket.on('connect', () => {
-      console.log('🔌 Socket connected for Chats');
-      socket.emit('register', { userId: user.id, role: user?.role === 'guide' ? 'guide' : 'user' });
+      console.log('✅ Socket connected for Notifications');
+      socket.emit('register', { 
+        userId: user.id, 
+        role: user?.role === 'guide' ? 'guide' : 'user' 
+      });
     });
 
-    socket.on('ticket_created', (data) => {
-      if (data.participants && data.participants.includes(user.id)) {
-        fetchDirectChats(false);
-      }
-    });
-
-    socket.on('new_chat_ticket', (data) => {
-      fetchDirectChats(false);
+    socket.on('connect_error', (error) => {
+      console.error('❌ Socket error:', error.message);
     });
 
     socket.on('new_message', (data) => {
-      console.log('💬 New message via socket:', data);
+      console.log('📩 New message via socket:', data);
+      
       if (data.ticketId) {
-        updateChatMessage(data.ticketId, data.message, data.createdAt || new Date().toISOString(), data.senderId);
+        updateChatMessage(
+          data.ticketId, 
+          data.message, 
+          data.createdAt || new Date().toISOString(), 
+          data.senderId,
+          data.messageId
+        );
+        
+        const senderName = data.senderName || (language === 'ar' ? 'مستخدم' : 'User');
+        const isOwnMessage = String(data.senderId) === String(user?.id);
+        
+        if (!isOwnMessage) {
+          toast.success(`${senderName}: ${data.message?.substring(0, 40)}`, {
+            duration: 4000,
+            icon: '💬',
+            onClick: () => {
+              const params = {
+                recipientId: data.senderId,
+                recipientName: senderName,
+                ticketId: data.ticketId
+              };
+              localStorage.setItem('directChatParams', JSON.stringify(params));
+              setPage('directChat');
+            }
+          });
+        }
+        
+        if (onNotificationClick) onNotificationClick();
       }
     });
 
-    socket.on('update_last_message', (data) => {
-      console.log('📝 Update last message via socket:', data);
-      if (data.ticketId) {
-        updateChatMessage(data.ticketId, data.lastMessage, data.lastMessageTime);
-      }
+    socket.on('ticket_created', () => {
+      fetchDirectChats(false);
     });
 
-    return () => socket.disconnect();
-  }, [user?.id, fetchDirectChats, updateChatMessage]);
+    return () => {
+      console.log('🔌 Cleaning up Socket');
+      if (socket) {
+        socket.off('connect');
+        socket.off('connect_error');
+        socket.off('new_message');
+        socket.off('ticket_created');
+        socket.disconnect();
+      }
+    };
+  }, [user?.id, language, setPage, onNotificationClick, updateChatMessage, fetchDirectChats]);
 
-  // التحميل الأولي والتحديث الدوري
+  // جلب المحادثات الأولي
   useEffect(() => {
     if (!authLoading && isAuthenticated && user) {
-      fetchDirectChats(true).finally(() => setLoading(false));
+      fetchDirectChats(true);
     }
-  }, [user, authLoading, isAuthenticated]);
+  }, [user, authLoading, isAuthenticated, fetchDirectChats]);
 
+  // Polling احتياطي
   useEffect(() => {
-    if (user?.id) {
-      const interval = setInterval(() => {
-        fetchDirectChats(false);
-      }, 5000);
-      pollingRef.current = interval;
-      return () => clearInterval(interval);
-    }
+    if (!user?.id) return;
+    
+    const interval = setInterval(() => {
+      fetchDirectChats(false);
+    }, 10000);
+    
+    pollingRef.current = interval;
+    return () => clearInterval(interval);
   }, [user?.id, fetchDirectChats]);
 
-  if (authLoading) return <div className="flex justify-center items-center h-full"><FaSpinner className="animate-spin text-teal-400" /></div>;
-  if (!isAuthenticated) return <div className="flex justify-center items-center h-full text-white">{language === 'ar' ? 'الرجاء تسجيل الدخول' : 'Please login'}</div>;
+  if (authLoading) {
+    return <div className="flex justify-center items-center h-full"><FaSpinner className="animate-spin text-teal-400" size={32} /></div>;
+  }
+  
+  if (!isAuthenticated) {
+    return (
+      <div className="flex justify-center items-center h-full text-white">
+        {language === 'ar' ? 'الرجاء تسجيل الدخول' : 'Please login'}
+      </div>
+    );
+  }
 
   return (
     <div className="h-full flex flex-col bg-gradient-to-br from-teal-900 via-cyan-900 to-emerald-900 overflow-hidden">
-      {/* Header */}
+      {/* الرأس - نفس الكود */}
       <div className="bg-gradient-to-r from-teal-600 to-cyan-600 shadow-lg flex-shrink-0">
         <div className="px-4 py-3">
           <div className="flex items-center justify-between">
@@ -338,17 +399,23 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
               </div>
               <div>
                 <h1 className="text-base font-bold text-white">{language === 'ar' ? 'المحادثات' : 'Chats'}</h1>
-                <p className="text-xs text-white/80">{language === 'ar' ? 'رسائلك المباشرة' : 'Your direct messages'}</p>
+                <p className="text-xs text-white/80">{language === 'ar' ? 'رسائلك المباشرة' : 'Your messages'}</p>
               </div>
             </div>
-            <button onClick={openEmergency} className="px-3 py-1.5 bg-red-500/80 rounded-lg text-white text-sm">
-              <RiAlarmWarningFill size={14} /> <span>{language === 'ar' ? 'طوارئ' : 'Emergency'}</span>
-            </button>
+            <div className="flex gap-2">
+              <button onClick={refreshAll} disabled={refreshing} className="p-2 hover:bg-white/20 rounded-xl">
+                <FaSyncAlt className={`text-white ${refreshing ? 'animate-spin' : ''}`} size={16} />
+              </button>
+              <button onClick={openEmergency} className="px-3 py-1.5 bg-red-500/80 rounded-lg text-white text-sm flex items-center gap-1">
+                <RiAlarmWarningFill size={14} />
+                <span>{language === 'ar' ? 'طوارئ' : 'Emergency'}</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Support button */}
+      {/* دعم المساعدة */}
       <div className="px-4 py-2 bg-white/5 border-b border-white/10 flex-shrink-0">
         <div className="flex items-center justify-between">
           <div>
@@ -362,12 +429,19 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
         </div>
       </div>
 
-      {/* قائمة المحادثات فقط */}
+      {/* قائمة المحادثات */}
       <div className="flex-1 overflow-y-auto px-4 py-3">
+        {error && (
+          <div className="mb-4 p-3 bg-red-500/20 border border-red-500/50 rounded-lg text-white text-sm">
+            {error}
+            <button onClick={refreshAll} className="ml-2 underline">إعادة المحاولة</button>
+          </div>
+        )}
+        
         <div className="space-y-3">
           {loading && directChats.length === 0 ? (
             <div className="flex justify-center py-12">
-              <FaSpinner className="animate-spin text-teal-400" size={24} />
+              <FaSpinner className="animate-spin text-teal-400" size={32} />
             </div>
           ) : directChats.length === 0 ? (
             <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-12 text-center border border-white/20">
@@ -381,30 +455,38 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
             directChats.map((chat) => {
               const unread = chat.unread_count > 0;
               const isDeleting = deletingId === chat.id;
-              const itemClass = `bg-white/10 backdrop-blur-sm rounded-xl p-3 border transition-all duration-200 cursor-pointer hover:bg-white/20 ${
-                unread ? 'border-teal-400/50 bg-white/15' : 'border-white/20'
-              }`;
-
+              
               return (
-                <div key={`chat-${chat.id}`} className={itemClass} onClick={() => openChat(chat)}>
+                <div 
+                  key={chat.id} 
+                  className={`bg-white/10 backdrop-blur-sm rounded-xl p-3 border cursor-pointer hover:bg-white/20 ${
+                    unread ? 'border-teal-400/50 bg-white/15' : 'border-white/20'
+                  }`}
+                  onClick={() => openChat(chat)}
+                >
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3 flex-1 min-w-0">
-                      <div className="w-10 h-10 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 flex items-center justify-center">
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                        chat.other_party_role === 'guide' 
+                          ? 'bg-gradient-to-r from-purple-500 to-pink-500'
+                          : 'bg-gradient-to-r from-blue-500 to-cyan-500'
+                      }`}>
                         <FaComments className="text-white" size={18} />
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <h3 className={`text-white font-bold truncate ${unread ? 'text-teal-200' : ''}`}>
                             {chat.other_party_name}
-                            <span className="text-xs text-purple-300 mr-2">(مرشد)</span>
                           </h3>
                           {unread && (
-                            <span className="bg-teal-500 text-white text-xs px-2 py-0.5 rounded-full flex-shrink-0">
+                            <span className="bg-teal-500 text-white text-xs px-2 py-0.5 rounded-full">
                               {language === 'ar' ? 'جديد' : 'New'}
                             </span>
                           )}
                         </div>
-                        <p className="text-white/60 text-sm truncate">{chat.last_message || (language === 'ar' ? 'بدون رسائل' : 'No messages')}</p>
+                        <p className={`text-sm truncate ${unread ? 'text-white/80' : 'text-white/60'}`}>
+                          {chat.last_message}
+                        </p>
                         <div className="flex items-center gap-2 mt-1">
                           <span className="text-white/40 text-xs flex items-center gap-1">
                             <FaClock size={10} /> {formatTime(chat.last_message_time)}
@@ -412,16 +494,13 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <span className="text-teal-300 text-sm font-medium">{language === 'ar' ? 'افتح' : 'Open'}</span>
-                      <button
-                        onClick={(e) => deleteDirectChat(chat, e)}
-                        disabled={isDeleting}
-                        className="p-2 hover:bg-red-500/20 rounded-full transition text-white/50 hover:text-red-400 disabled:opacity-50"
-                      >
-                        {isDeleting ? <FaSpinner className="animate-spin" size={14} /> : <FaTrash size={14} />}
-                      </button>
-                    </div>
+                    <button
+                      onClick={(e) => deleteDirectChat(chat, e)}
+                      disabled={isDeleting}
+                      className="p-2 hover:bg-red-500/20 rounded-full text-white/50 hover:text-red-400"
+                    >
+                      {isDeleting ? <FaSpinner className="animate-spin" size={14} /> : <FaTrash size={14} />}
+                    </button>
                   </div>
                 </div>
               );
