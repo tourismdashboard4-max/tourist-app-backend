@@ -7,10 +7,13 @@ import {
   FaUser, FaEnvelope, FaPhone, FaMapMarkerAlt, FaCalendarAlt,
   FaEdit, FaSave, FaTimes, FaWallet, FaEye, FaEyeSlash,
   FaArrowUp, FaArrowDown, FaSpinner, FaHistory, FaCreditCard,
-  FaMoneyBillWave, FaChartLine, FaShieldAlt, FaCheckCircle
+  FaMoneyBillWave, FaChartLine, FaShieldAlt, FaCheckCircle,
+  FaStar, FaUsers, FaBriefcase, FaTachometerAlt
 } from 'react-icons/fa';
 import toast from 'react-hot-toast';
 import { motion } from 'framer-motion';
+
+const API_BASE = 'https://tourist-app-api.onrender.com';
 
 const ProfilePage = () => {
   const { user, updateUser, isAuthenticated } = useAuth();
@@ -35,7 +38,16 @@ const ProfilePage = () => {
   const [showDepositModal, setShowDepositModal] = useState(false);
   const [showWithdrawModal, setShowWithdrawModal] = useState(false);
   const [processing, setProcessing] = useState(false);
-  const [activeTab, setActiveTab] = useState('info'); // info, wallet, transactions
+  const [activeTab, setActiveTab] = useState('info');
+  
+  // --- حالة خاصة بالمرشد السياحي ---
+  const [guideStats, setGuideStats] = useState({
+    totalRevenue: 0,
+    activePrograms: 0,
+    totalParticipants: 0,
+    loading: false
+  });
+  const isGuide = user?.role === 'guide' || user?.type === 'guide' || user?.isGuide === true;
 
   const lang = language;
   const t = (key) => {
@@ -76,7 +88,13 @@ const ProfilePage = () => {
         totalBalance: 'إجمالي الرصيد',
         stats: 'إحصائيات المحفظة',
         totalDeposits: 'إجمالي الإيداعات',
-        totalWithdrawals: 'إجمالي السحوبات'
+        totalWithdrawals: 'إجمالي السحوبات',
+        guideDashboard: 'لوحة تحكم المرشد',
+        guideRevenue: 'إيرادات البرامج',
+        activePrograms: 'برامج نشطة',
+        totalParticipantsShort: 'إجمالي المشاركين',
+        guideStatsTitle: 'إحصائيات البرامج (مرشد)',
+        goToDashboard: 'اذهب إلى لوحة التحكم'
       },
       en: {
         profile: 'Profile',
@@ -114,18 +132,60 @@ const ProfilePage = () => {
         totalBalance: 'Total Balance',
         stats: 'Wallet Statistics',
         totalDeposits: 'Total Deposits',
-        totalWithdrawals: 'Total Withdrawals'
+        totalWithdrawals: 'Total Withdrawals',
+        guideDashboard: 'Guide Dashboard',
+        guideRevenue: 'Program Revenue',
+        activePrograms: 'Active Programs',
+        totalParticipantsShort: 'Total Participants',
+        guideStatsTitle: 'Program Statistics (Guide)',
+        goToDashboard: 'Go to Dashboard'
       }
     };
     return texts[lang][key] || key;
   };
 
+  // تحميل بيانات المحفظة
   useEffect(() => {
     if (isAuthenticated && user) {
       loadWallet();
       loadTransactions();
     }
   }, [isAuthenticated, user]);
+
+  // تحميل إحصائيات المرشد إذا كان المستخدم مرشداً
+  useEffect(() => {
+    if (isGuide && user?.id) {
+      fetchGuideStats();
+    }
+  }, [isGuide, user?.id]);
+
+  const fetchGuideStats = async () => {
+    setGuideStats(prev => ({ ...prev, loading: true }));
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_BASE}/api/guides/${user.id}/programs`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      let programs = [];
+      if (res.ok && data.success && Array.isArray(data.programs)) programs = data.programs;
+      else if (Array.isArray(data)) programs = data;
+      else if (data.data && Array.isArray(data.data)) programs = data.data;
+
+      const activeProgs = programs.filter(p => p.status === 'active');
+      const totalRevenue = activeProgs.reduce((sum, p) => sum + (p.participants || 0) * (p.price || 0), 0);
+      const totalParticipants = activeProgs.reduce((sum, p) => sum + (p.participants || 0), 0);
+      setGuideStats({
+        totalRevenue,
+        activePrograms: activeProgs.length,
+        totalParticipants,
+        loading: false
+      });
+    } catch (err) {
+      console.error('Failed to fetch guide stats:', err);
+      setGuideStats(prev => ({ ...prev, loading: false }));
+    }
+  };
 
   useEffect(() => {
     if (user) {
@@ -286,6 +346,52 @@ const ProfilePage = () => {
             </div>
           </div>
         </motion.div>
+
+        {/* بطاقة إحصائيات المرشد (تظهر فقط إذا كان المستخدم مرشداً) */}
+        {isGuide && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1 }}
+            className="bg-gradient-to-r from-amber-600 to-orange-600 rounded-2xl p-6 mb-6 shadow-xl"
+          >
+            <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center">
+                  <FaStar className="text-white text-2xl" />
+                </div>
+                <div>
+                  <p className="text-white/80 text-sm">{t('guideStatsTitle')}</p>
+                  <div className="flex flex-wrap gap-4 mt-1">
+                    <div>
+                      <span className="text-white text-xl font-bold">{guideStats.totalRevenue} {getCurrency()}</span>
+                      <p className="text-white/60 text-xs">{t('guideRevenue')}</p>
+                    </div>
+                    <div>
+                      <span className="text-white text-xl font-bold">{guideStats.activePrograms}</span>
+                      <p className="text-white/60 text-xs">{t('activePrograms')}</p>
+                    </div>
+                    <div>
+                      <span className="text-white text-xl font-bold">{guideStats.totalParticipants}</span>
+                      <p className="text-white/60 text-xs">{t('totalParticipantsShort')}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => window.location.href = '/guide-dashboard'}
+                className="px-5 py-2 bg-white/20 hover:bg-white/30 text-white rounded-xl transition flex items-center gap-2"
+              >
+                <FaTachometerAlt /> {t('goToDashboard')}
+              </button>
+            </div>
+            {guideStats.loading && (
+              <div className="flex justify-center mt-2">
+                <FaSpinner className="animate-spin text-white/80" />
+              </div>
+            )}
+          </motion.div>
+        )}
 
         {/* تبويبات */}
         <div className="flex gap-2 mb-6 bg-white/10 rounded-xl p-1">
