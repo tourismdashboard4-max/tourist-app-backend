@@ -1,5 +1,5 @@
 // client/src/pages/DirectChatPage.jsx
-// ✅ النسخة النهائية - تفتح كل محادثة بشكل مستقل بناءً على ثنائية (المستخدم الحالي، الطرف الآخر)
+// ✅ النسخة النهائية - محادثة واحدة لكل زوج (مرشد-سائح) مع دمج جميع الرسائل
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Send, Loader2, ArrowLeft, User, MessageCircle, RefreshCw, Smile, Image, Paperclip, Mic, Bell, CheckCircle2, Trash2 } from 'lucide-react';
@@ -72,7 +72,6 @@ const DirectChatPage = ({ setPage, lang = 'ar', user: propUser }) => {
   const [initError, setInitError] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [user, setUser] = useState(propUser);
-  const [notificationSent, setNotificationSent] = useState(false);
   const [guideOnline, setGuideOnline] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [isGuide, setIsGuide] = useState(false);
@@ -83,6 +82,8 @@ const DirectChatPage = ({ setPage, lang = 'ar', user: propUser }) => {
   const pollingRef = useRef(null);
   const textareaRef = useRef(null);
   const joinedRoomRef = useRef(false);
+  const messageIdsRef = useRef(new Set());
+  const reconnectAttemptsRef = useRef(0);
 
   const scrollToBottom = useCallback(() => {
     setTimeout(() => {
@@ -122,7 +123,7 @@ const DirectChatPage = ({ setPage, lang = 'ar', user: propUser }) => {
     try {
       const data = await authFetch(`/api/support/tickets/${tId}/messages`);
       if (data.success && Array.isArray(data.messages)) {
-        setMessages(data.messages.map((m) => ({
+        const loadedMessages = data.messages.map((m) => ({
           id: m.id,
           message: m.message,
           is_from_user: m.is_from_user,
@@ -130,7 +131,9 @@ const DirectChatPage = ({ setPage, lang = 'ar', user: propUser }) => {
           sender_name: m.sender_name,
           sender_id: m.sender_id,
           read: m.read || false,
-        })));
+        }));
+        setMessages(loadedMessages);
+        messageIdsRef.current = new Set(loadedMessages.map(m => m.id));
       } else setMessages([]);
     } catch (e) { 
       console.error('loadMessages error:', e);
@@ -140,20 +143,29 @@ const DirectChatPage = ({ setPage, lang = 'ar', user: propUser }) => {
     }
   }, []);
 
-  const notifyViaSocket = useCallback((message, isFromUser = true) => {
+  const notifyViaSocket = useCallback((message, messageId) => {
     if (socketRef.current?.connected && ticketId && !isTicketDeleted(ticketId)) {
-      socketRef.current.emit('new_message', {
+      const notificationData = {
         ticketId: ticketId,
         message: message,
         senderId: user?.id,
         senderName: user?.fullName || user?.name,
         senderRole: isGuide ? 'guide' : 'tourist',
-        createdAt: new Date().toISOString()
+        recipientId: recipientNumericId || recipientId,
+        createdAt: new Date().toISOString(),
+        messageId: messageId
+      };
+      console.log('📤 Sending socket notification:', notificationData);
+      socketRef.current.emit('new_message', notificationData);
+      socketRef.current.emit('update_last_message', {
+        ticketId: ticketId,
+        lastMessage: message,
+        lastMessageTime: new Date().toISOString()
       });
       return true;
     }
     return false;
-  }, [ticketId, user?.id, user?.fullName, user?.name, isGuide]);
+  }, [ticketId, user?.id, user?.fullName, user?.name, isGuide, recipientNumericId, recipientId]);
 
   const deleteCurrentConversation = async () => {
     if (!ticketId) return toast.error(lang === 'ar' ? 'لا توجد محادثة' : 'No conversation');
@@ -173,6 +185,30 @@ const DirectChatPage = ({ setPage, lang = 'ar', user: propUser }) => {
       toast.error(lang === 'ar' ? 'فشل الحذف' : 'Delete failed');
     } finally { setDeleting(false); }
   };
+
+  // ✅ دالة للبحث عن تذكرة موجودة بين المستخدمين
+  const findExistingTicket = useCallback(async (userId1, userId2) => {
+    try {
+      const token = getToken();
+      const ticketsData = await authFetch(`/api/support/tickets?status=open`);
+      if (ticketsData.success && Array.isArray(ticketsData.tickets)) {
+        const existingTicket = ticketsData.tickets.find((t) => {
+          if (t.type !== 'guide_chat') return false;
+          if (isTicketDeleted(t.id)) return false;
+          
+          const participants = t.metadata?.participants || [];
+          const hasUser1 = participants.some(p => String(p) === String(userId1));
+          const hasUser2 = participants.some(p => String(p) === String(userId2));
+          
+          return hasUser1 && hasUser2;
+        });
+        return existingTicket;
+      }
+    } catch (err) {
+      console.warn('Error finding existing ticket:', err);
+    }
+    return null;
+  }, []);
 
   // استعادة معاملات المحادثة من localStorage
   useEffect(() => {
@@ -211,7 +247,7 @@ const DirectChatPage = ({ setPage, lang = 'ar', user: propUser }) => {
     }
   }, [user, lang, setPage, loadMessages, markTicketAsRead, isGuide]);
 
-  // تهيئة التذكرة إذا لم تكن موجودة (للمستخدم الذي يبدأ المحادثة)
+  // تهيئة التذكرة - ✅ استخدام تذكرة واحدة لكل زوج
   useEffect(() => {
     if (!user || !recipientId || ticketId) return;
     const init = async () => {
@@ -231,61 +267,36 @@ const DirectChatPage = ({ setPage, lang = 'ar', user: propUser }) => {
       
       try {
         const actualUserId = String(user.id);
-        const recipientUserId = String(numericRecipientId); // قد يكون رقميًا أو نصيًا، نحوله لنص
-        // البحث عن تذكرة موجودة تجمع بين المستخدم الحالي والطرف الآخر
-        const ticketsData = await authFetch(`/api/support/tickets?status=open`);
-        let existing = null;
-        if (ticketsData.success && Array.isArray(ticketsData.tickets)) {
-          existing = ticketsData.tickets.find((t) => {
-            if (t.type !== 'guide_chat') return false;
-            if (isTicketDeleted(t.id)) return false;
-
-            // دالة مساعدة للتحقق من وجود مستخدم في التذكرة (بأي من الحقول)
-            const isUserInTicket = (userId, ticket) => {
-              if (ticket.user_id && String(ticket.user_id) === userId) return true;
-              if (ticket.metadata?.guideId && String(ticket.metadata.guideId) === userId) return true;
-              if (ticket.metadata?.touristId && String(ticket.metadata.touristId) === userId) return true;
-              if (ticket.metadata?.created_by_id && String(ticket.metadata.created_by_id) === userId) return true;
-              if (ticket.metadata?.participants && Array.isArray(ticket.metadata.participants) && 
-                  ticket.metadata.participants.some(p => String(p) === userId)) return true;
-              if (ticket.assigned_to && String(ticket.assigned_to) === userId) return true;
-              return false;
-            };
-
-            const currentUserInTicket = isUserInTicket(actualUserId, t);
-            const recipientInTicket = isUserInTicket(recipientUserId, t);
-
-            // يجب أن يكون كلا المستخدمين موجودين في التذكرة
-            return currentUserInTicket && recipientInTicket;
-          });
-        }
-        if (existing) {
-          setTicketId(existing.id);
-          await loadMessages(existing.id);
+        const recipientUserId = String(numericRecipientId);
+        
+        // ✅ البحث عن تذكرة موجودة بين المستخدمين
+        const existingTicket = await findExistingTicket(actualUserId, recipientUserId);
+        
+        if (existingTicket) {
+          // ✅ استخدام التذكرة الموجودة
+          console.log('✅ Using existing ticket:', existingTicket.id);
+          setTicketId(existingTicket.id);
+          await loadMessages(existingTicket.id);
           await markTicketAsRead();
           const currentParams = JSON.parse(localStorage.getItem('directChatParams') || '{}');
-          currentParams.ticketId = existing.id;
+          currentParams.ticketId = existingTicket.id;
           localStorage.setItem('directChatParams', JSON.stringify(currentParams));
-          // انضمام إلى الغرفة فوراً
           if (socketRef.current?.connected) {
-            socketRef.current.emit('join_ticket_room', { ticketId: String(existing.id) });
+            socketRef.current.emit('join_ticket_room', { ticketId: String(existingTicket.id) });
             joinedRoomRef.current = true;
           }
         } else {
-          // إنشاء تذكرة جديدة
+          // ✅ إنشاء تذكرة جديدة فقط إذا لم تكن موجودة
+          console.log('🆕 No existing ticket found, creating new one');
           const subject = isGuide 
             ? `${lang === 'ar' ? 'محادثة مع السائح' : 'Chat with tourist'}: ${recipientName}`
             : `${lang === 'ar' ? 'محادثة مع المرشد' : 'Chat with guide'}: ${recipientName}`;
-          const initialMessage = isGuide
-            ? (lang === 'ar' ? `بدأ المرشد ${user.fullName || user.name} محادثة جديدة معك` : `Guide ${user.fullName || user.name} started a new chat with you`)
-            : (lang === 'ar' ? `بدأ المستخدم ${user.fullName || user.name} محادثة جديدة معك` : `User ${user.fullName || user.name} started a new chat with you`);
           
           const createPayload = {
             user_id: isGuide ? numericRecipientId : actualUserId,
             subject: subject,
             type: 'guide_chat',
             priority: 'high',
-            message: initialMessage,
             metadata: {
               guideId: isGuide ? actualUserId : numericRecipientId,
               touristId: isGuide ? numericRecipientId : actualUserId,
@@ -293,7 +304,7 @@ const DirectChatPage = ({ setPage, lang = 'ar', user: propUser }) => {
               touristName: isGuide ? recipientName : user.fullName || user.name,
               created_by: actualUserId,
               created_by_name: user.fullName || user.name,
-              participants: [actualUserId, String(numericRecipientId)], // لتسهيل البحث مستقبلاً
+              participants: [actualUserId, String(numericRecipientId)],
               status: 'waiting_for_response'
             },
           };
@@ -304,20 +315,12 @@ const DirectChatPage = ({ setPage, lang = 'ar', user: propUser }) => {
           if (createData.success && createData.ticket) {
             const newTicketId = createData.ticket.id;
             setTicketId(newTicketId);
-            setMessages([{
-              id: Date.now(),
-              message: lang === 'ar' ? `مرحباً! بدء المحادثة مع ${recipientName}. سيتم إعلامه.` : `Hello! Starting conversation with ${recipientName}.`,
-              is_from_user: false,
-              created_at: new Date().toISOString(),
-              sender_name: 'System',
-              sender_id: 'system',
-            }]);
+            setMessages([]);
+            
             const currentParams = JSON.parse(localStorage.getItem('directChatParams') || '{}');
             currentParams.ticketId = newTicketId;
             localStorage.setItem('directChatParams', JSON.stringify(currentParams));
-            // إعلام الطرف الآخر عبر WebSocket
-            setTimeout(() => notifyViaSocket(initialMessage), 500);
-            // انضمام إلى الغرفة
+            
             if (socketRef.current?.connected) {
               socketRef.current.emit('join_ticket_room', { ticketId: String(newTicketId) });
               joinedRoomRef.current = true;
@@ -336,79 +339,147 @@ const DirectChatPage = ({ setPage, lang = 'ar', user: propUser }) => {
       }
     };
     init();
-  }, [user, recipientId, recipientNumericId, recipientName, lang, ticketId, loadMessages, markTicketAsRead, notifyViaSocket, isGuide]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, recipientId, recipientNumericId, recipientName, lang, ticketId, loadMessages, markTicketAsRead, isGuide, findExistingTicket]);
 
-  // باقي الكود (Socket.IO, sendMessage, UI) كما هو دون تغيير
-  // Socket.IO – التسجيل والاستماع للرسائل الجديدة (مع دعم التحديث الفوري لجميع المشاركين)
+  // ✅ Socket.IO مع إصلاح استقبال الرسائل (نفس الكود السابق)
   useEffect(() => {
     if (!user?.id || !recipientId) return;
+
+    console.log('🔌 Initializing Socket.IO connection...');
     const socket = io(SOCKET_URL, {
       auth: { token: getToken() },
       transports: ['websocket', 'polling'],
       reconnection: true,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
     });
     socketRef.current = socket;
     joinedRoomRef.current = false;
+    reconnectAttemptsRef.current = 0;
 
     socket.on('connect', () => {
-      console.log('✅ Socket connected');
-      socket.emit('register', { userId: user.id, role: isGuide ? 'guide' : 'user' });
+      console.log('✅ Socket connected with ID:', socket.id);
+      reconnectAttemptsRef.current = 0;
+      
+      const userData = { userId: user.id, role: isGuide ? 'guide' : 'user' };
+      console.log('📝 Registering user:', userData);
+      socket.emit('register', userData);
+      
       if (ticketId && !isTicketDeleted(ticketId) && !joinedRoomRef.current) {
+        console.log('🏠 Joining ticket room:', ticketId);
         socket.emit('join_ticket_room', { ticketId: String(ticketId) });
         joinedRoomRef.current = true;
+      }
+      
+      if (recipientId) {
+        socket.emit('check_user_status', { userId: recipientId });
+      }
+    });
+
+    socket.on('connect_error', (error) => {
+      console.error('❌ Socket connection error:', error);
+      reconnectAttemptsRef.current++;
+      if (reconnectAttemptsRef.current >= 5) {
+        toast.error(lang === 'ar' ? 'صعوبة في الاتصال بالخادم' : 'Connection difficulty');
       }
     });
 
     socket.on('user_online', ({ userId }) => {
+      console.log('🟢 User online:', userId);
       if (String(userId) === String(recipientId) || (recipientNumericId && String(userId) === String(recipientNumericId))) {
         setGuideOnline(true);
-        toast.success(lang === 'ar' ? 'الطرف الآخر متصل الآن!' : 'Other party is online!');
+        toast.success(lang === 'ar' ? 'الطرف الآخر متصل الآن!' : 'Other party is online!', { duration: 2000 });
+        
+        if (ticketId && !isTicketDeleted(ticketId)) {
+          socket.emit('request_missed_messages', { ticketId: String(ticketId) });
+        }
       }
     });
 
     socket.on('user_offline', ({ userId }) => {
+      console.log('🔴 User offline:', userId);
       if (String(userId) === String(recipientId) || (recipientNumericId && String(userId) === String(recipientNumericId))) {
         setGuideOnline(false);
       }
     });
 
-    // استقبال رسالة جديدة من أي طرف مشارك
+    // ✅ معالج استقبال الرسائل المحسن
     socket.on('new_message', (data) => {
+      console.log('📩 Received new_message event:', data);
+      
       const incomingTicketId = String(data.ticketId);
       const currentTicketId = ticketId ? String(ticketId) : null;
-
-      if (incomingTicketId === currentTicketId && String(data.senderId) !== String(user?.id)) {
-        // رسالة لهذه المحادثة المفتوحة
+      const senderId = String(data.senderId);
+      const currentUserId = String(user?.id);
+      
+      if (senderId === currentUserId) {
+        console.log('⚠️ Skipping own message');
+        return;
+      }
+      
+      const messageKey = `${data.ticketId}_${data.messageId || data.createdAt || Date.now()}`;
+      if (messageIdsRef.current.has(messageKey)) {
+        console.log('⚠️ Duplicate message detected, skipping');
+        return;
+      }
+      
+      if (incomingTicketId === currentTicketId) {
+        console.log('✅ Processing message for current chat');
+        
         const newMsg = {
           id: data.messageId || Date.now(),
           message: data.message,
           is_from_user: false,
-          created_at: data.created_at || new Date().toISOString(),
+          created_at: data.created_at || data.createdAt || new Date().toISOString(),
           sender_name: data.senderName || (lang === 'ar' ? (isGuide ? 'السائح' : 'المرشد') : (isGuide ? 'Tourist' : 'Guide')),
           sender_id: data.senderId,
           read: false,
         };
-        setMessages(prev => prev.some(m => m.id === newMsg.id) ? prev : [...prev, newMsg]);
+        
+        setMessages(prev => {
+          const exists = prev.some(m => m.id === newMsg.id);
+          if (exists) {
+            console.log('Message already exists, skipping');
+            return prev;
+          }
+          console.log('Adding new message to state:', newMsg);
+          messageIdsRef.current.add(messageKey);
+          return [...prev, newMsg];
+        });
+        
         scrollToBottom();
+        
         window.dispatchEvent(new CustomEvent('refreshDirectChats'));
         window.dispatchEvent(new CustomEvent('update_last_message', {
-          detail: { ticketId: data.ticketId, lastMessage: data.message, lastMessageTime: data.created_at }
+          detail: { ticketId: data.ticketId, lastMessage: data.message, lastMessageTime: data.created_at || data.createdAt }
         }));
-      } 
-      else if (incomingTicketId !== currentTicketId) {
-        // رسالة لمحادثة أخرى: تحديث القائمة وإشعار للمستخدم
-        console.log(`📬 New message for ticket ${incomingTicketId}. Refreshing chat list.`);
-        window.dispatchEvent(new CustomEvent('refreshDirectChats'));
-        if (currentTicketId !== incomingTicketId) {
-          toast.success(lang === 'ar' ? `رسالة جديدة من ${data.senderName || (isGuide ? 'السائح' : 'المرشد')}` : `New message from ${data.senderName || (isGuide ? 'Tourist' : 'Guide')}`, { duration: 4000 });
+        
+        toast.success(lang === 'ar' ? `📨 رسالة جديدة من ${newMsg.sender_name}` : `📨 New message from ${newMsg.sender_name}`, { 
+          duration: 3000,
+          icon: '💬'
+        });
+        
+        if (ticketId) {
+          markTicketAsRead();
         }
+      } 
+      else {
+        console.log(`📬 New message for different ticket ${incomingTicketId}. Current: ${currentTicketId}`);
+        window.dispatchEvent(new CustomEvent('refreshDirectChats'));
+        
+        toast.info(lang === 'ar' 
+          ? `💬 رسالة جديدة من ${data.senderName || (isGuide ? 'السائح' : 'المرشد')} في محادثة أخرى` 
+          : `💬 New message from ${data.senderName || (isGuide ? 'Tourist' : 'Guide')} in another conversation`, 
+          { duration: 4000 }
+        );
       }
     });
 
-    // تحديث آخر رسالة للمحادثة (مفيد لتحديث القوائم)
     socket.on('update_last_message', (data) => {
+      console.log('🔄 Received update_last_message:', data);
       if (data.ticketId === ticketId) {
-        // تحديث آخر رسالة في الواجهة الحالية
         setMessages(prev => {
           if (prev.length === 0) return prev;
           const lastMsg = { ...prev[prev.length-1], message: data.lastMessage, created_at: data.lastMessageTime };
@@ -418,13 +489,12 @@ const DirectChatPage = ({ setPage, lang = 'ar', user: propUser }) => {
       window.dispatchEvent(new CustomEvent('refreshDirectChats'));
     });
 
-    // انضمام إلى غرفة التذكرة عند إنشائها من الطرف الآخر
     socket.on('ticket_created', ({ ticketId: newTicketId, participants }) => {
+      console.log('🆕 New ticket created:', newTicketId, participants);
       if (participants && participants.includes(user?.id)) {
         if (!ticketId || String(ticketId) !== String(newTicketId)) {
-          console.log(`🆕 New ticket ${newTicketId} created for this user, joining room.`);
+          console.log(`Joining new ticket room: ${newTicketId}`);
           socket.emit('join_ticket_room', { ticketId: String(newTicketId) });
-          // تحديث المعاملات المحلية إذا كانت هذه الصفحة مفتوحة
           const currentParams = JSON.parse(localStorage.getItem('directChatParams') || '{}');
           if (currentParams.recipientId && !currentParams.ticketId) {
             currentParams.ticketId = newTicketId;
@@ -437,29 +507,123 @@ const DirectChatPage = ({ setPage, lang = 'ar', user: propUser }) => {
       }
     });
 
-    // محاولة الانضمام للغرفة إذا تأخر ticketId
+    socket.on('missed_messages', ({ ticketId: missedTicketId, messages: missedMessages }) => {
+      console.log('📦 Received missed messages:', missedMessages);
+      if (String(missedTicketId) === String(ticketId)) {
+        setMessages(prev => {
+          const existingIds = new Set(prev.map(m => m.id));
+          const newMessages = missedMessages
+            .filter(msg => String(msg.sender_id) !== String(user?.id))
+            .filter(msg => !existingIds.has(msg.id))
+            .map(msg => ({
+              id: msg.id,
+              message: msg.message,
+              is_from_user: false,
+              created_at: msg.created_at,
+              sender_name: msg.sender_name,
+              sender_id: msg.sender_id,
+              read: false,
+            }));
+          
+          if (newMessages.length > 0) {
+            console.log('Adding missed messages:', newMessages);
+            toast.success(lang === 'ar' ? `📨 ${newMessages.length} رسالة جديدة` : `📨 ${newMessages.length} new message${newMessages.length > 1 ? 's' : ''}`);
+            return [...prev, ...newMessages];
+          }
+          return prev;
+        });
+        scrollToBottom();
+      }
+    });
+
     if (ticketId && socket.connected && !joinedRoomRef.current && !isTicketDeleted(ticketId)) {
+      console.log('🏠 Attempting to join ticket room (late):', ticketId);
       socket.emit('join_ticket_room', { ticketId: String(ticketId) });
       joinedRoomRef.current = true;
     }
 
     return () => {
+      console.log('🔌 Cleaning up socket connection');
       if (socket) {
-        if (ticketId) socket.emit('leave_ticket_room', { ticketId: String(ticketId) });
+        if (ticketId) {
+          socket.emit('leave_ticket_room', { ticketId: String(ticketId) });
+        }
+        socket.off('connect');
+        socket.off('connect_error');
+        socket.off('user_online');
+        socket.off('user_offline');
+        socket.off('new_message');
+        socket.off('update_last_message');
+        socket.off('ticket_created');
+        socket.off('missed_messages');
         socket.disconnect();
       }
+      joinedRoomRef.current = false;
     };
-  }, [user?.id, recipientId, recipientNumericId, lang, ticketId, scrollToBottom, isGuide, loadMessages]);
+  }, [user?.id, recipientId, recipientNumericId, lang, ticketId, scrollToBottom, isGuide, loadMessages, markTicketAsRead]);
 
-  // Polling احتياطي للمحادثات غير المحذوفة (كل 5 ثوانٍ)
+  // ✅ Polling احتياطي محسن
   useEffect(() => {
     if (!ticketId || isTicketDeleted(ticketId)) return;
+    
+    let lastMessageCount = messages.length;
+    let pollingAttempts = 0;
+    const maxPollingAttempts = 3;
+    
     const fetchMessages = async () => {
-      if (!sending && !loadingMessages) await loadMessages(ticketId);
+      if (!sending && !loadingMessages) {
+        try {
+          const data = await authFetch(`/api/support/tickets/${ticketId}/messages`);
+          if (data.success && Array.isArray(data.messages)) {
+            const serverMessages = data.messages.map((m) => ({
+              id: m.id,
+              message: m.message,
+              is_from_user: m.is_from_user,
+              created_at: m.created_at,
+              sender_name: m.sender_name,
+              sender_id: m.sender_id,
+              read: m.read || false,
+            }));
+            
+            const newMessages = serverMessages.filter(msg => 
+              !messages.some(m => m.id === msg.id) && 
+              String(msg.sender_id) !== String(user?.id)
+            );
+            
+            if (newMessages.length > 0) {
+              console.log('🔄 Polling found new messages:', newMessages);
+              setMessages(prev => [...prev, ...newMessages]);
+              scrollToBottom();
+              
+              toast.success(lang === 'ar' 
+                ? `📨 ${newMessages.length} رسالة جديدة` 
+                : `📨 ${newMessages.length} new message${newMessages.length > 1 ? 's' : ''}`, 
+                { duration: 2000 }
+              );
+            }
+            
+            lastMessageCount = serverMessages.length;
+            pollingAttempts = 0;
+          }
+        } catch (err) {
+          console.error('Polling fetch error:', err);
+          pollingAttempts++;
+          if (pollingAttempts >= maxPollingAttempts) {
+            console.warn('Polling failed multiple times');
+          }
+        }
+      }
     };
-    pollingRef.current = setInterval(fetchMessages, 5000);
-    return () => clearInterval(pollingRef.current);
-  }, [ticketId, sending, loadingMessages, loadMessages]);
+    
+    pollingRef.current = setInterval(fetchMessages, 8000);
+    
+    return () => {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+    };
+  }, [ticketId, sending, loadingMessages, messages, user?.id, scrollToBottom, lang]);
 
   const sendMessage = async () => {
     if (!newMessage.trim() || sending || !ticketId || isTicketDeleted(ticketId)) return;
@@ -468,31 +632,63 @@ const DirectChatPage = ({ setPage, lang = 'ar', user: propUser }) => {
     setSending(true);
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
     const tempId = `temp_${Date.now()}`;
+    const messageId = Date.now();
+    
     setMessages(prev => [...prev, {
-      id: tempId, message: text, is_from_user: true,
+      id: tempId, 
+      message: text, 
+      is_from_user: true,
       created_at: new Date().toISOString(),
       sender_name: user?.fullName || user?.name,
       sender_id: user?.id,
       status: 'sending',
     }]);
     scrollToBottom();
-    try {
-      await authFetch(`/api/support/tickets/${ticketId}/messages`, {
-        method: 'POST',
-        body: JSON.stringify({ message: text }),
-      });
-      setMessages(prev => prev.map(m => m.id === tempId ? { ...m, status: 'sent' } : m));
-      notifyViaSocket(text);
-      window.dispatchEvent(new CustomEvent('refreshDirectChats', {
-        detail: { ticketId, lastMessage: text, updatedAt: new Date().toISOString() }
-      }));
-    } catch (err) {
-      console.error('Send error:', err);
-      setMessages(prev => prev.filter(m => m.id !== tempId));
-      toast.error(lang === 'ar' ? 'فشل إرسال الرسالة' : 'Send failed');
-    } finally {
-      setSending(false);
+    
+    let messageSent = false;
+    let retryCount = 0;
+    const maxRetries = 2;
+    
+    while (!messageSent && retryCount <= maxRetries) {
+      try {
+        await authFetch(`/api/support/tickets/${ticketId}/messages`, {
+          method: 'POST',
+          body: JSON.stringify({ message: text }),
+        });
+        
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, status: 'sent', id: messageId } : m));
+        
+        const notificationSent = notifyViaSocket(text, messageId);
+        console.log('📤 Message sent, notification sent:', notificationSent);
+        
+        if (!notificationSent && retryCount < maxRetries) {
+          console.log('Retrying socket notification...');
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          retryCount++;
+          continue;
+        }
+        
+        messageSent = true;
+        
+        window.dispatchEvent(new CustomEvent('refreshDirectChats', {
+          detail: { ticketId, lastMessage: text, updatedAt: new Date().toISOString() }
+        }));
+        
+      } catch (err) {
+        console.error('Send error (attempt ' + (retryCount + 1) + '):', err);
+        retryCount++;
+        
+        if (retryCount > maxRetries) {
+          setMessages(prev => prev.filter(m => m.id !== tempId));
+          toast.error(lang === 'ar' ? 'فشل إرسال الرسالة بعد عدة محاولات' : 'Send failed after multiple attempts');
+        } else {
+          toast.loading(lang === 'ar' ? 'جاري إعادة المحاولة...' : 'Retrying...', { duration: 1000 });
+          await new Promise(resolve => setTimeout(resolve, 1500));
+        }
+      }
     }
+    
+    setSending(false);
   };
 
   const handleTextareaChange = (e) => {
@@ -518,13 +714,16 @@ const DirectChatPage = ({ setPage, lang = 'ar', user: propUser }) => {
   };
 
   if (!user) return <div className="flex items-center justify-center h-screen"><Loader2 className="animate-spin text-green-600" size={32} /></div>;
+  
   if (initError) return (
     <div className="flex flex-col items-center justify-center h-screen bg-gray-100 p-4">
       <div className="text-center p-6 bg-white rounded-2xl shadow-xl max-w-sm w-full">
         <MessageCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
         <h3 className="text-xl font-bold mb-2">{lang === 'ar' ? 'فشل فتح المحادثة' : 'Failed to open chat'}</h3>
         <p className="text-gray-600 mb-6 text-sm">{errorMessage}</p>
-        <button onClick={() => setPage('notifications')} className="w-full px-6 py-3 bg-green-600 text-white rounded-xl font-medium hover:bg-green-700">{lang === 'ar' ? 'العودة إلى الإشعارات' : 'Back to Notifications'}</button>
+        <button onClick={() => setPage('notifications')} className="w-full px-6 py-3 bg-green-600 text-white rounded-xl font-medium hover:bg-green-700">
+          {lang === 'ar' ? 'العودة إلى الإشعارات' : 'Back to Notifications'}
+        </button>
       </div>
     </div>
   );
@@ -535,15 +734,25 @@ const DirectChatPage = ({ setPage, lang = 'ar', user: propUser }) => {
   return (
     <div className="h-screen flex flex-col bg-gray-100 dark:bg-gray-900 pt-20" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
       <div className="bg-gradient-to-r from-green-600 to-emerald-600 text-white px-4 py-3 shadow-md flex items-center gap-3 flex-shrink-0">
-        <button onClick={() => setPage('notifications')} className="p-2 hover:bg-white/20 rounded-full transition"><ArrowLeft size={22} /></button>
-        <div className="w-10 h-10 rounded-full bg-white/20 border-2 border-white/30 flex items-center justify-center flex-shrink-0"><User size={20} /></div>
+        <button onClick={() => setPage('notifications')} className="p-2 hover:bg-white/20 rounded-full transition">
+          <ArrowLeft size={22} />
+        </button>
+        <div className="w-10 h-10 rounded-full bg-white/20 border-2 border-white/30 flex items-center justify-center flex-shrink-0">
+          <User size={20} />
+        </div>
         <div className="flex-1 min-w-0">
           <h2 className="font-bold truncate text-lg">{recipientName}</h2>
           <div className="flex items-center gap-2 text-xs">
             {guideOnline ? (
-              <span className="text-green-200 flex items-center gap-1"><div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>{lang === 'ar' ? 'متصل الآن' : 'Online'}</span>
+              <span className="text-green-200 flex items-center gap-1">
+                <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                {lang === 'ar' ? 'متصل الآن' : 'Online'}
+              </span>
             ) : (
-              <span className="text-white/70 flex items-center gap-1"><Bell size={10} />{notificationSent ? (lang === 'ar' ? '✓ تم إشعار الطرف الآخر' : '✓ Notified') : (lang === 'ar' ? 'سيتم إشعار الطرف الآخر' : 'Will notify')}</span>
+              <span className="text-white/70 flex items-center gap-1">
+                <Bell size={10} />
+                {lang === 'ar' ? 'انتظار الاتصال' : 'Waiting for connection'}
+              </span>
             )}
           </div>
         </div>
@@ -553,7 +762,9 @@ const DirectChatPage = ({ setPage, lang = 'ar', user: propUser }) => {
               {deleting ? <Loader2 size={18} className="animate-spin" /> : <Trash2 size={18} />}
             </button>
           )}
-          <button onClick={() => ticketId && !isTicketDeleted(ticketId) && loadMessages(ticketId)} className="p-2 hover:bg-white/20 rounded-full transition"><RefreshCw size={18} /></button>
+          <button onClick={() => ticketId && !isTicketDeleted(ticketId) && loadMessages(ticketId)} className="p-2 hover:bg-white/20 rounded-full transition">
+            <RefreshCw size={18} />
+          </button>
         </div>
       </div>
 
@@ -567,7 +778,9 @@ const DirectChatPage = ({ setPage, lang = 'ar', user: propUser }) => {
           <div className="flex flex-col items-center justify-center h-full text-gray-400 gap-3">
             <MessageCircle size={56} className="opacity-40" />
             <p className="font-medium">{lang === 'ar' ? 'لا توجد رسائل بعد' : 'No messages yet'}</p>
-            <p className="text-sm text-center opacity-70 max-w-xs">{lang === 'ar' ? 'اكتب رسالتك أدناه لبدء المحادثة' : 'Write below to start'}</p>
+            <p className="text-sm text-center opacity-70 max-w-xs">
+              {lang === 'ar' ? 'اكتب رسالتك أدناه لبدء المحادثة' : 'Write below to start'}
+            </p>
           </div>
         ) : (
           messages.map((msg) => (
@@ -602,10 +815,18 @@ const DirectChatPage = ({ setPage, lang = 'ar', user: propUser }) => {
 
       <div className="bg-white dark:bg-gray-800 border-t dark:border-gray-700 px-4 pt-3 pb-8 flex-shrink-0 shadow-lg">
         <div className="flex items-center gap-4 mb-2 px-2">
-          <button className="p-1.5 text-gray-500 hover:text-yellow-500 hover:bg-yellow-50 dark:hover:bg-yellow-900/20 rounded-full transition-colors"><Smile size={24} /></button>
-          <button className="p-1.5 text-gray-500 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-full transition-colors"><Image size={24} /></button>
-          <button className="p-1.5 text-gray-500 hover:text-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded-full transition-colors"><Paperclip size={24} /></button>
-          <button className="p-1.5 text-gray-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-full transition-colors"><Mic size={24} /></button>
+          <button className="p-1.5 text-gray-500 hover:text-yellow-500 hover:bg-yellow-50 dark:hover:bg-yellow-900/20 rounded-full transition-colors">
+            <Smile size={24} />
+          </button>
+          <button className="p-1.5 text-gray-500 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-full transition-colors">
+            <Image size={24} />
+          </button>
+          <button className="p-1.5 text-gray-500 hover:text-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded-full transition-colors">
+            <Paperclip size={24} />
+          </button>
+          <button className="p-1.5 text-gray-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-full transition-colors">
+            <Mic size={24} />
+          </button>
         </div>
         <div className="flex items-end gap-2">
           <textarea
@@ -628,8 +849,15 @@ const DirectChatPage = ({ setPage, lang = 'ar', user: propUser }) => {
           </button>
         </div>
         <div className="flex justify-between items-center mt-2 px-2">
-          <p className="text-[11px] text-gray-400">{lang === 'ar' ? '↵ للإرسال • Shift + ↵ لسطر جديد' : '↵ to send • Shift + ↵ for new line'}</p>
-          <p className="text-[11px] text-green-500 flex items-center gap-1"><Bell size={10} />{guideOnline ? (lang === 'ar' ? 'الطرف الآخر متصل - إشعار فوري' : 'Other party online - instant delivery') : (lang === 'ar' ? 'سيصل إشعار عند اتصال الطرف الآخر' : 'Notification when other party connects')}</p>
+          <p className="text-[11px] text-gray-400">
+            {lang === 'ar' ? '↵ للإرسال • Shift + ↵ لسطر جديد' : '↵ to send • Shift + ↵ for new line'}
+          </p>
+          <p className="text-[11px] text-green-500 flex items-center gap-1">
+            <Bell size={10} />
+            {guideOnline 
+              ? (lang === 'ar' ? 'الطرف الآخر متصل - إشعار فوري' : 'Other party online - instant delivery') 
+              : (lang === 'ar' ? 'سيصل إشعار عند اتصال الطرف الآخر' : 'Notification when other party connects')}
+          </p>
         </div>
       </div>
     </div>
