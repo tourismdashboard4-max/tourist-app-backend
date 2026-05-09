@@ -1,8 +1,5 @@
 // client/src/pages/GuideDashboard.jsx
-// ✅ النسخة النهائية - إصلاح فتح والرد على المحادثات للمرشد السياحي (مع دعم old_id)
-
-// تم إضافة تحسينات على دالة openDirectChat لضمان الحصول على معرف المسافر بشكل صحيح،
-// ودعم تحويل المعرف الرقمي (old_id) عند الاقتضاء.
+// ✅ النسخة النهائية - إصلاح ظهور المحادثات في المحادثات الواردة
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
@@ -30,6 +27,30 @@ const buildImageUrl = (url) => {
 };
 
 const DELETED_TICKETS_KEY = 'guide_deleted_tickets';
+const PERMANENTLY_DELETED_KEY = 'guide_permanently_deleted';
+
+// دالة لتنظيف التذاكر القديمة تلقائياً
+const cleanupOldTickets = () => {
+  const oldTickets = [128, 129, 134, 135, 142, 143, 144, 145, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169];
+  const currentPermanentlyDeleted = localStorage.getItem(PERMANENTLY_DELETED_KEY);
+  let deletedSet = currentPermanentlyDeleted ? new Set(JSON.parse(currentPermanentlyDeleted)) : new Set();
+  
+  let added = false;
+  oldTickets.forEach(ticketId => {
+    if (!deletedSet.has(String(ticketId))) {
+      deletedSet.add(String(ticketId));
+      added = true;
+    }
+  });
+  
+  if (added) {
+    localStorage.setItem(PERMANENTLY_DELETED_KEY, JSON.stringify([...deletedSet]));
+    console.log('🧹 تم تنظيف التذاكر القديمة:', oldTickets);
+  }
+};
+
+// تنفيذ التنظيف عند تحميل الملف
+cleanupOldTickets();
 
 const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgramAdded }) => {
   const [programs, setPrograms] = useState([]);
@@ -56,7 +77,7 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     totalPrograms: 0
   });
 
-  // --- محادثات وإشعارات ---
+  const [balance, setBalance] = useState(user?.balance || 0);
   const [activeTab, setActiveTab] = useState('programs');
   const [guideTickets, setGuideTickets] = useState([]);
   const [loadingTickets, setLoadingTickets] = useState(false);
@@ -93,6 +114,63 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
   const isSupport = user?.role === 'support';
   const showAdminButtons = isAdmin || isSupport;
 
+  // دالة مساعدة لتحويل UUID إلى رقم (old_id)
+  const convertToNumericId = useCallback(async (userId) => {
+    if (!userId) return null;
+    if (!isNaN(Number(userId))) return Number(userId);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_BASE}/api/users/${userId}`, {
+        headers: { Authorization: token ? `Bearer ${token}` : '' }
+      });
+      const data = await res.json();
+      if (data.success && data.user) {
+        if (data.user.old_id) return Number(data.user.old_id);
+        if (data.user.id && !isNaN(Number(data.user.id))) return Number(data.user.id);
+      }
+    } catch(e) { 
+      console.warn('Failed to convert user ID:', e);
+    }
+    return null;
+  }, []);
+
+  // جلب الرصيد
+  const fetchBalance = useCallback(async () => {
+    if (!user?.id) return;
+    try {
+      const token = localStorage.getItem('token');
+      const numericId = await convertToNumericId(user.id);
+      if (!numericId) {
+        setBalance(0);
+        return;
+      }
+      const response = await fetch(`${API_BASE}/api/users/${numericId}/balance`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setBalance(data.balance ?? data.newBalance ?? 0);
+      } else {
+        setBalance(0);
+      }
+    } catch (err) {
+      console.error('❌ خطأ في جلب الرصيد:', err);
+      setBalance(0);
+    }
+  }, [user?.id, convertToNumericId]);
+
+  const updateStats = useCallback((programsList) => {
+    const activeProgs = programsList.filter(p => p.status === 'active');
+    const newStats = {
+      totalParticipants: activeProgs.reduce((sum, p) => sum + (p.participants || 0), 0),
+      totalRevenue: activeProgs.reduce((sum, p) => sum + ((p.participants || 0) * (p.price || 0)), 0),
+      activePrograms: activeProgs.length,
+      totalPrograms: programsList.length
+    };
+    setStats(newStats);
+    fetchBalance();
+  }, [fetchBalance]);
+
   const getDeletedTickets = useCallback(() => {
     const stored = localStorage.getItem(DELETED_TICKETS_KEY);
     if (!stored) return new Set();
@@ -102,7 +180,22 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     } catch { return new Set(); }
   }, []);
 
-  // ========== جلب تذاكر المرشد (مصحح) ==========
+  const getPermanentlyDeletedTickets = useCallback(() => {
+    const stored = localStorage.getItem(PERMANENTLY_DELETED_KEY);
+    if (!stored) return new Set();
+    try {
+      const arr = JSON.parse(stored);
+      return new Set(arr);
+    } catch { return new Set(); }
+  }, []);
+
+  const addPermanentlyDeletedTicket = useCallback((ticketId) => {
+    const current = getPermanentlyDeletedTickets();
+    current.add(String(ticketId));
+    localStorage.setItem(PERMANENTLY_DELETED_KEY, JSON.stringify([...current]));
+  }, [getPermanentlyDeletedTickets]);
+
+  // ✅ دالة محسنة لجلب التذاكر
   const fetchGuideTickets = useCallback(async () => {
     if (!user?.id || !isGuide) return;
     setLoadingTickets(true);
@@ -110,61 +203,76 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
       const token = localStorage.getItem('token');
       if (!token) { setLoadingTickets(false); return; }
 
-      const response = await fetch(`${API_BASE}/api/support/tickets?status=open`, {
+      // جلب جميع التذاكر (وليس فقط open)
+      const response = await fetch(`${API_BASE}/api/support/tickets`, {
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
       });
       const data = await response.json();
       const deletedSet = getDeletedTickets();
+      const permanentlyDeletedSet = getPermanentlyDeletedTickets();
 
       let tickets = [];
       if (data.success && data.tickets) {
         const guideId = String(user.id);
         tickets = data.tickets.filter(ticket => {
-          if (ticket.type !== 'guide_chat') return false;
+          // تجاهل التذاكر المحذوفة نهائياً
+          if (permanentlyDeletedSet.has(String(ticket.id))) return false;
           if (deletedSet.has(String(ticket.id))) return false;
           
-          // تحقق من أن التذكرة تخص هذا المرشد (بوصفه مرشداً)
+          // قبول جميع أنواع المحادثات ذات الصلة
+          const isValidType = ticket.type === 'guide_chat' || ticket.type === 'chat' || ticket.type === 'direct_chat';
+          if (!isValidType && ticket.type !== 'guide_chat') return false;
+          
           const metadata = ticket.metadata || {};
-          if (metadata.guideId && String(metadata.guideId) === guideId) return true;
-          // أيضاً قد تكون التذكرة منشأة بواسطة المرشد نفسه (كمرسل)
-          if (ticket.user_id && String(ticket.user_id) === guideId) return true;
-          if (metadata.created_by_id && String(metadata.created_by_id) === guideId) return true;
-          return false;
+          // التحقق من أن المستخدم هو المرشد في هذه التذكرة
+          const isGuideInTicket = 
+            (metadata.guideId && String(metadata.guideId) === guideId) ||
+            (ticket.user_id && String(ticket.user_id) === guideId) ||
+            (metadata.created_by_id && String(metadata.created_by_id) === guideId) ||
+            (metadata.participants && metadata.participants.some(p => String(p) === guideId));
+          
+          return isGuideInTicket;
         });
         tickets.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-        tickets = tickets.map(t => ({ ...t, id: String(t.id).replace(/\D/g, '') }));
-        console.log(`✅ جلب ${tickets.length} تذكرة للمرشح`);
-      } else {
-        console.warn('⚠️ لم يتم جلب تذاكر من API:', data);
       }
       setGuideTickets(tickets);
+      console.log('✅ التذاكر المسترجعة للمرشد:', tickets.length);
     } catch (error) { console.error('Error fetching guide tickets:', error); }
     finally { setLoadingTickets(false); }
-  }, [user?.id, isGuide, getDeletedTickets]);
+  }, [user?.id, isGuide, getDeletedTickets, getPermanentlyDeletedTickets]);
 
-  // جلب الإشعارات
+  // ✅ دالة محسنة لجلب الإشعارات
   const fetchNotifications = useCallback(async () => {
     if (!user?.id) return;
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE}/api/notifications?limit=50`, {
+      const response = await fetch(`${API_BASE}/api/notifications?limit=100`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await response.json();
       if (data.success) {
-        setNotifications(data.notifications);
+        const permanentlyDeletedSet = getPermanentlyDeletedTickets();
+        // تصفية الإشعارات المرتبطة بتذاكر محذوفة نهائياً
+        const filteredNotifications = data.notifications.filter(n => {
+          const ticketId = n.data?.ticketId || n.ticket_id;
+          if (ticketId && permanentlyDeletedSet.has(String(ticketId))) return false;
+          // ✅ تجاهل الإشعارات من التذاكر المحذوفة
+          if (deletedSet.has(String(ticketId))) return false;
+          return true;
+        });
+        setNotifications(filteredNotifications);
         const CHAT_TYPES = new Set([
           'new_chat_ticket', 'guide_chat', 'new_chat_message',
           'GUIDE_CHAT', 'NEW_CHAT_TICKET', 'NEW_CHAT_MESSAGE',
           'new_message', 'NEW_MESSAGE'
         ]);
-        const unreadRegular = data.notifications.filter(n => !n.is_read && !CHAT_TYPES.has(n.type)).length;
-        const unreadChats = data.notifications.filter(n => !n.is_read && CHAT_TYPES.has(n.type)).length;
+        const unreadRegular = filteredNotifications.filter(n => !n.is_read && !CHAT_TYPES.has(n.type)).length;
+        const unreadChats = filteredNotifications.filter(n => !n.is_read && CHAT_TYPES.has(n.type)).length;
         setUnreadNotifCount(unreadRegular);
         setUnreadChatCount(prev => Math.max(prev, unreadChats));
       }
     } catch (error) { console.error('Error fetching notifications:', error); }
-  }, [user?.id]);
+  }, [user?.id, getPermanentlyDeletedTickets, getDeletedTickets]);
 
   const addDeletedTicket = useCallback((ticketId) => {
     const current = getDeletedTickets();
@@ -174,18 +282,24 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     fetchNotifications();
   }, [getDeletedTickets, fetchGuideTickets, fetchNotifications]);
 
-  // بناء القائمة الموحدة للمحادثات (من التذاكر والإشعارات)
-  const buildUnifiedChats = useCallback((tickets, notifs) => {
+  // ✅ دالة مدمجة لعرض المحادثات - محادثة واحدة لكل مستخدم مع تحسين جلب البيانات
+  const buildUnifiedChats = useCallback(async (tickets, notifs) => {
     const deletedSet = getDeletedTickets();
+    const permanentlyDeletedSet = getPermanentlyDeletedTickets();
     const CHAT_TYPES = new Set([
       'new_chat_ticket', 'guide_chat', 'new_chat_message',
       'GUIDE_CHAT', 'NEW_CHAT_TICKET', 'NEW_CHAT_MESSAGE',
       'new_message', 'NEW_MESSAGE', 'support_message', 'SUPPORT_MESSAGE'
     ]);
 
-    // معالجة الإشعارات
+    // جمع كل المحادثات من الإشعارات
     const chatNotifs = notifs
       .filter(n => CHAT_TYPES.has(n.type))
+      .filter(n => {
+        const ticketId = n.data?.ticketId || n.ticket_id;
+        if (ticketId && permanentlyDeletedSet.has(String(ticketId))) return false;
+        return true;
+      })
       .map(n => {
         let ticketId = n.data?.ticketId || n.ticket_id || null;
         if (!ticketId && n.action_url) {
@@ -196,10 +310,24 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
           const m = String(n.data.action_url).match(/\d+/);
           if (m) ticketId = m[0];
         }
-        if (ticketId && deletedSet.has(String(ticketId))) return null;
+        if (ticketId && (deletedSet.has(String(ticketId)) || permanentlyDeletedSet.has(String(ticketId)))) return null;
         
-        let touristId = n.data?.userId || n.data?.created_by_id || n.data?.senderId || n.data?.from_user_id || n.data?.touristId;
+        // محاولة استخراج معرف واسم المستخدم من بيانات الإشعار
+        let touristId = null;
         let touristName = n.data?.userName || n.data?.fromName || n.data?.created_by_name || n.data?.sender_name || (lang === 'ar' ? 'مسافر' : 'Traveler');
+        
+        if (n.data) {
+          if (typeof n.data === 'string') {
+            try {
+              const parsed = JSON.parse(n.data);
+              touristId = parsed.userId || parsed.senderId || parsed.touristId || parsed.from_user_id;
+              touristName = parsed.userName || parsed.senderName || parsed.touristName || touristName;
+            } catch (e) {}
+          } else {
+            touristId = n.data.userId || n.data.senderId || n.data.touristId || n.data.from_user_id;
+            touristName = n.data.userName || n.data.senderName || n.data.touristName || touristName;
+          }
+        }
         
         return {
           _sourceType: 'notification',
@@ -214,14 +342,36 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         };
       }).filter(Boolean);
 
-    // معالجة التذاكر
-    const chatTickets = tickets
+    // جمع كل المحادثات من التذاكر
+    const chatTicketsPromises = tickets
+      .filter(t => !permanentlyDeletedSet.has(String(t.id)))
       .filter(t => !deletedSet.has(String(t.id)))
-      .map(t => {
-        // استخراج معرف الطرف الآخر (المسافر)
+      .map(async (t) => {
+        // محاولة جلب اسم المستخدم من API إذا لم يكن موجوداً
         let touristId = t.user_id || t.metadata?.created_by_id || t.metadata?.userId || t.metadata?.tourist_id;
         let touristName = t.user_name || t.metadata?.created_by_name || t.metadata?.tourist_name || (lang === 'ar' ? 'مسافر' : 'Traveler');
-        // إذا لم نجد حتى الآن، نحاول من الرسائل لاحقاً
+        
+        // إذا لم نجد اسم المستخدم وكان لدينا معرف، نحاول جلبه
+        if ((!touristName || touristName === (lang === 'ar' ? 'مسافر' : 'Traveler')) && touristId) {
+          try {
+            const token = localStorage.getItem('token');
+            const numericId = await convertToNumericId(touristId);
+            if (numericId) {
+              const userRes = await fetch(`${API_BASE}/api/users/${numericId}`, {
+                headers: { Authorization: `Bearer ${token}` }
+              });
+              if (userRes.ok) {
+                const userData = await userRes.json();
+                if (userData.success && userData.user) {
+                  touristName = userData.user.full_name || userData.user.name || touristName;
+                }
+              }
+            }
+          } catch (err) {
+            console.warn('Failed to fetch user name:', err);
+          }
+        }
+        
         return {
           _sourceType: 'ticket',
           id: `ticket_${t.id}`,
@@ -234,24 +384,127 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
           rawTicket: t,
         };
       });
-
-    // دمج وإزالة التكرار
-    const seen = new Set();
-    const merged = [];
+    
+    const chatTickets = await Promise.all(chatTicketsPromises);
+    
+    // ✅ دمج جميع المحادثات حسب touristId (محادثة واحدة لكل مستخدم)
+    const chatMap = new Map();
+    
     [...chatTickets, ...chatNotifs].forEach(item => {
-      if (!item) return;
-      const key = item.ticketId ? `tid_${item.ticketId}` : item.id;
-      if (!seen.has(key)) {
-        seen.add(key);
-        merged.push(item);
+      if (!item || !item.touristId) return;
+      
+      const key = item.touristId;
+      const existing = chatMap.get(key);
+      
+      if (!existing) {
+        chatMap.set(key, item);
+      } else {
+        // إذا كانت المحادثة موجودة بالفعل، نأخذ أحدثها
+        if (new Date(item.created_at) > new Date(existing.created_at)) {
+          chatMap.set(key, item);
+        }
+        // ندمج حالة القراءة
+        if (!item.is_read && existing.is_read) {
+          existing.is_read = false;
+          chatMap.set(key, existing);
+        }
+        // إذا كانت التذكرة الجديدة تحتوي على ticketId والتذكرة القديمة لا، نأخذ الجديدة
+        if (item.ticketId && !existing.ticketId) {
+          chatMap.set(key, item);
+        }
       }
     });
 
+    // تحويل الخريطة إلى مصفوفة وترتيبها حسب التاريخ
+    const merged = Array.from(chatMap.values());
     merged.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    
+    console.log('✅ المحادثات المدمجة (محادثة واحدة لكل مستخدم):', merged.length);
     return merged;
-  }, [lang, getDeletedTickets]);
+  }, [lang, getDeletedTickets, getPermanentlyDeletedTickets, convertToNumericId]);
 
-  // دوال مساعدة لجلب التذاكر والرسائل
+  // ✅ استخدام useEffect لتحميل المحادثات المدمجة
+  const [unifiedChats, setUnifiedChats] = useState([]);
+  const [totalUnreadChats, setTotalUnreadChats] = useState(0);
+  
+  useEffect(() => {
+    const loadUnifiedChats = async () => {
+      if (guideTickets.length > 0 || notifications.length > 0) {
+        const merged = await buildUnifiedChats(guideTickets, notifications);
+        setUnifiedChats(merged);
+        const unreadCount = merged.filter(c => !c.is_read).length;
+        setTotalUnreadChats(unreadCount);
+      } else if (guideTickets.length === 0 && notifications.length === 0) {
+        setUnifiedChats([]);
+        setTotalUnreadChats(0);
+      }
+    };
+    loadUnifiedChats();
+  }, [guideTickets, notifications, buildUnifiedChats]);
+
+  // ========== دالة مساعدة لاستخراج معرف المسافر ==========
+  const extractTouristId = useCallback((data, currentUserId) => {
+    const ignoreFields = ['id', 'notification_id', 'notif_id', 'ticket_id', 'notificationId'];
+    const possibleFields = [
+      'userId', 'touristId', 'senderId', 'receiverId', 'from_user_id', 'to_user_id',
+      'created_by_id', 'participant_id', 'user_id', 'other_party_id',
+      'recipientId', 'targetId', 'target_user_id', 'from_id', 'to_id',
+      'guideId', 'tourist_id', 'sender_id', 'receiver_id', 'user_Id'
+    ];
+    
+    // معالجة data.data كسلسلة JSON
+    if (data.data && typeof data.data === 'string') {
+      try {
+        const parsed = JSON.parse(data.data);
+        if (parsed.userId && String(parsed.userId) !== String(currentUserId)) {
+          return String(parsed.userId);
+        }
+        if (parsed.touristId && String(parsed.touristId) !== String(currentUserId)) {
+          return String(parsed.touristId);
+        }
+        if (parsed.senderId && String(parsed.senderId) !== String(currentUserId)) {
+          return String(parsed.senderId);
+        }
+        if (parsed.from_user_id && String(parsed.from_user_id) !== String(currentUserId)) {
+          return String(parsed.from_user_id);
+        }
+      } catch (e) { 
+        console.warn('Failed to parse data.data:', e); 
+      }
+    }
+    
+    // البحث في البيانات المباشرة
+    for (const field of possibleFields) {
+      const value = data[field];
+      if (value && String(value) !== String(currentUserId) && !ignoreFields.includes(field)) {
+        return String(value);
+      }
+    }
+    
+    if (data.user_id && String(data.user_id) !== String(currentUserId)) {
+      return String(data.user_id);
+    }
+    
+    return null;
+  }, []);
+
+  const extractTouristName = useCallback((data, fallbackName) => {
+    const possibleNameFields = [
+      'userName', 'touristName', 'senderName', 'fromName', 'created_by_name',
+      'user_name', 'tourist_name', 'sender_name', 'fullName', 'full_name',
+      'name', 'displayName', 'display_name'
+    ];
+    
+    for (const field of possibleNameFields) {
+      const value = data[field];
+      if (value && typeof value === 'string' && value.trim().length > 0) {
+        return value;
+      }
+    }
+    
+    return fallbackName || (lang === 'ar' ? 'مسافر' : 'Traveler');
+  }, [lang]);
+
   const _fetchTicket = useCallback(async (ticketId) => {
     if (!ticketId || failedTicketsRef.current.has(String(ticketId))) return null;
     try {
@@ -295,22 +548,7 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     }
   }, [lang]);
 
-  const _extractTicketId = (item) => {
-    if (!item) return null;
-    if (item.ticketId) return String(item.ticketId);
-    if (item.id && !String(item.id).startsWith('notif_') && !String(item.id).startsWith('ticket_')) return String(item.id);
-    if (item.rawTicket?.id) return String(item.rawTicket.id);
-    const n = item.rawNotif;
-    if (n) {
-      if (n.data?.ticketId) return String(n.data.ticketId);
-      if (n.ticket_id) return String(n.ticket_id);
-      if (n.action_url) { const m = String(n.action_url).match(/\d+/); if (m) return m[0]; }
-      if (n.data?.action_url) { const m = String(n.data.action_url).match(/\d+/); if (m) return m[0]; }
-    }
-    return null;
-  };
-
-  // ========== فتح المحادثة (مصحح بالكامل) ==========
+  // ========== دالة فتح المحادثة ==========
   const openDirectChat = useCallback(async (chatItem) => {
     const guideId = user?.id;
     if (!guideId) {
@@ -318,158 +556,189 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
       return;
     }
 
-    let touristId = chatItem.touristId;
-    let touristName = chatItem.touristName || (lang === 'ar' ? 'مسافر' : 'Traveler');
-    let ticketId = _extractTicketId(chatItem);
+    let touristId = null;
+    let touristName = null;
+    let ticketId = null;
 
-    console.log('🔍 فتح محادثة مع:', { touristId, touristName, ticketId });
+    if (chatItem.touristId) touristId = chatItem.touristId;
+    if (chatItem.touristName) touristName = chatItem.touristName;
+    if (chatItem.ticketId) ticketId = chatItem.ticketId;
 
-    // 1. استخراج من rawTicket (إذا كان العنصر من نوع ticket)
-    if (!touristId && chatItem.rawTicket) {
-      const raw = chatItem.rawTicket;
-      const currentUserId = String(guideId);
-      const possibleIds = [
-        raw.user_id,
-        raw.sender_id,
-        raw.receiver_id,
-        raw.metadata?.guideId,
-        raw.metadata?.created_by_id,
-        raw.metadata?.userId,
-        raw.metadata?.senderId,
-        raw.metadata?.receiverId,
-        raw.metadata?.participantId,
-        raw.participant_id
-      ];
-      for (const id of possibleIds) {
-        if (id && String(id) !== currentUserId) {
-          touristId = String(id);
-          touristName = raw.user_name || raw.sender_name || raw.metadata?.created_by_name || raw.metadata?.userName || (lang === 'ar' ? 'مسافر' : 'Traveler');
-          break;
-        }
-      }
-    }
-
-    // 2. استخراج من rawNotif (إذا كان العنصر من نوع notification)
-    if (!touristId && chatItem.rawNotif) {
-      const n = chatItem.rawNotif;
-      const currentUserId = String(guideId);
-      const candidateId = n.data?.userId || n.data?.created_by_id || n.data?.senderId || n.data?.from_user_id || n.data?.touristId;
-      if (candidateId && String(candidateId) !== currentUserId) {
-        touristId = String(candidateId);
-        touristName = n.data?.userName || n.data?.fromName || n.data?.created_by_name || (lang === 'ar' ? 'مسافر' : 'Traveler');
-      }
-    }
-
-    // 3. إذا كان لدينا ticketId ولكن لم نجد touristId، نجلب التذكرة كاملة
-    if (!touristId && ticketId && !failedTicketsRef.current.has(String(ticketId))) {
-      const fullTicket = await _fetchTicket(ticketId);
-      if (fullTicket) {
-        const currentUserId = String(guideId);
-        const possibleIds = [
-          fullTicket.user_id,
-          fullTicket.sender_id,
-          fullTicket.receiver_id,
-          fullTicket.metadata?.guideId,
-          fullTicket.metadata?.created_by_id,
-          fullTicket.metadata?.userId,
-          fullTicket.metadata?.senderId,
-          fullTicket.metadata?.receiverId
-        ];
-        for (const id of possibleIds) {
-          if (id && String(id) !== currentUserId) {
-            touristId = String(id);
-            touristName = fullTicket.user_name || fullTicket.sender_name || fullTicket.metadata?.created_by_name || fullTicket.metadata?.userName || (lang === 'ar' ? 'مسافر' : 'Traveler');
-            break;
+    // معالجة الإشعارات
+    if (!touristId && chatItem._sourceType === 'notification' && chatItem.rawNotif) {
+      const rawNotif = chatItem.rawNotif;
+      
+      if (rawNotif.data) {
+        let parsedData = rawNotif.data;
+        if (typeof parsedData === 'string') {
+          try {
+            parsedData = JSON.parse(parsedData);
+            if (parsedData.userId && String(parsedData.userId) !== String(guideId)) {
+              touristId = String(parsedData.userId);
+            } else if (parsedData.touristId && String(parsedData.touristId) !== String(guideId)) {
+              touristId = String(parsedData.touristId);
+            } else if (parsedData.senderId && String(parsedData.senderId) !== String(guideId)) {
+              touristId = String(parsedData.senderId);
+            }
+            
+            if (!ticketId && parsedData.ticketId) {
+              ticketId = parsedData.ticketId;
+            }
+          } catch (e) { 
+            console.warn('Failed to parse data:', e); 
           }
         }
       }
-    }
-
-    // 4. المحاولة الأخيرة: جلب أول رسالة في التذكرة لتحديد المرسل
-    if (!touristId && ticketId && !failedTicketsRef.current.has(`msg_${ticketId}`)) {
-      const sender = await _fetchFirstMessageSender(ticketId, guideId);
-      if (sender) {
-        touristId = sender.id;
-        touristName = sender.name;
+      
+      if (!touristId) {
+        touristId = extractTouristId(rawNotif, guideId);
+      }
+      
+      if (!ticketId) {
+        ticketId = rawNotif.data?.ticketId || rawNotif.ticket_id;
       }
     }
 
-    // 5. إذا فشل كل شيء، نعرض خطأ
+    // معالجة التذاكر
+    if (!touristId && chatItem._sourceType === 'ticket' && chatItem.rawTicket) {
+      const rawTicket = chatItem.rawTicket;
+      touristId = extractTouristId(rawTicket, guideId);
+      if (!ticketId && rawTicket.id) ticketId = rawTicket.id;
+    }
+
     if (!touristId) {
-      console.error('❌ لا يمكن تحديد معرف المسافر للمحادثة:', chatItem);
-      toast.error(lang === 'ar' ? 'تعذر تحديد المسافر، يرجى تحديث الصفحة' : 'Cannot identify traveler, please refresh');
+      toast.error(lang === 'ar' ? 'تعذر تحديد المسافر' : 'Cannot identify traveler');
       return;
     }
 
-    // حفظ معاملات المحادثة
+    if (!touristName || touristName.trim() === '') {
+      touristName = lang === 'ar' ? 'مسافر' : 'Traveler';
+    }
+
+    const numericTouristId = await convertToNumericId(touristId);
+    if (!numericTouristId) {
+      toast.error(lang === 'ar' ? 'معرف المسافر غير صالح' : 'Invalid traveler ID');
+      return;
+    }
+
     const params = {
-      recipientId: touristId,
+      recipientId: numericTouristId,
       recipientName: touristName,
       recipientType: 'tourist',
+      timestamp: Date.now()
     };
     if (ticketId) params.ticketId = ticketId;
+    
     localStorage.setItem('directChatParams', JSON.stringify(params));
-    console.log('✅ فتح المحادثة باستخدام المعاملات:', params);
+    toast.success(lang === 'ar' ? `جاري فتح المحادثة مع ${touristName}` : `Opening chat with ${touristName}`);
     setPage('directChat');
-  }, [user?.id, lang, setPage, _fetchTicket, _fetchFirstMessageSender]);
+    
+  }, [user?.id, lang, setPage, convertToNumericId, extractTouristId]);
 
-  // حذف محادثة
-  const deleteConversation = useCallback(async (chat) => {
+  // ========== دالة حذف المحادثة بشكل دائم ==========
+  const deleteConversation = useCallback(async (chat, event) => {
+    if (event) event.stopPropagation();
+    
+    if (!window.confirm(lang === 'ar' ? 'هل أنت متأكد من حذف هذه المحادثة نهائياً؟' : 'Are you sure you want to delete this conversation permanently?')) {
+      return;
+    }
+    
     const uniqueKey = chat.id || chat.ticketId;
-    if (deletingIdsRef.current.has(uniqueKey)) { return; }
+    if (deletingIdsRef.current.has(uniqueKey)) return;
     deletingIdsRef.current.add(uniqueKey);
+    
     try {
-      if (chat._sourceType === 'notification' && !chat.ticketId) {
-        setNotifications(prev => prev.filter(n => n.id !== chat.rawNotif?.id));
-        if (!chat.is_read) setUnreadChatCount(prev => Math.max(0, prev - 1));
-        toast.success(lang === 'ar' ? 'تم حذف الإشعار' : 'Notification deleted');
-        deletingIdsRef.current.delete(uniqueKey);
-        return;
+      let ticketId = chat.ticketId;
+      if (!ticketId && chat.id && !String(chat.id).startsWith('notif_') && !String(chat.id).startsWith('ticket_')) {
+        ticketId = chat.id;
       }
-
-      const ticketId = chat.ticketId || (chat.rawTicket?.id);
+      if (!ticketId && chat.rawNotif) {
+        if (chat.rawNotif.data) {
+          let parsedData = chat.rawNotif.data;
+          if (typeof parsedData === 'string') {
+            try {
+              parsedData = JSON.parse(parsedData);
+              ticketId = parsedData.ticketId;
+            } catch (e) {}
+          } else if (typeof parsedData === 'object') {
+            ticketId = parsedData.ticketId;
+          }
+        }
+        if (!ticketId) {
+          ticketId = chat.rawNotif.ticket_id;
+        }
+      }
+      if (!ticketId && chat.rawTicket) {
+        ticketId = chat.rawTicket.id;
+      }
+      
       if (!ticketId) {
-        toast.error(lang === 'ar' ? 'لا يمكن حذف هذه المحادثة' : 'Cannot delete this conversation');
+        if (chat._sourceType === 'notification' && chat.rawNotif?.id) {
+          setNotifications(prev => prev.filter(n => n.id !== chat.rawNotif.id));
+          if (!chat.is_read) setUnreadChatCount(prev => Math.max(0, prev - 1));
+          toast.success(lang === 'ar' ? 'تم حذف الإشعار' : 'Notification deleted');
+        } else {
+          toast.error(lang === 'ar' ? 'لا يمكن حذف هذه المحادثة' : 'Cannot delete this conversation');
+        }
         deletingIdsRef.current.delete(uniqueKey);
         return;
       }
 
       const token = localStorage.getItem('token');
-      let serverDeleted = false;
+      
+      let deleteSuccess = false;
       try {
         const delRes = await fetch(`${API_BASE}/api/support/tickets/${ticketId}`, {
           method: 'DELETE',
           headers: { 'Authorization': `Bearer ${token}` }
         });
-        if (delRes.ok) serverDeleted = true;
-      } catch (e) { console.warn('DELETE failed', e); }
-      if (!serverDeleted) {
-        try {
-          const patchRes = await fetch(`${API_BASE}/api/support/tickets/${ticketId}/status`, {
-            method: 'PATCH',
-            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ status: 'closed' })
-          });
-          if (patchRes.ok) serverDeleted = true;
-        } catch (e) { console.warn('PATCH failed', e); }
+        if (delRes.ok) {
+          deleteSuccess = true;
+          console.log(`✅ Ticket ${ticketId} deleted successfully`);
+        } else if (delRes.status === 404) {
+          console.log(`⚠️ Ticket ${ticketId} already deleted on server`);
+          deleteSuccess = true;
+        } else {
+          console.warn(`DELETE returned ${delRes.status}`);
+        }
+      } catch (e) { 
+        console.warn('DELETE request failed:', e);
       }
-      const currentDeleted = getDeletedTickets();
-      if (serverDeleted) currentDeleted.delete(String(ticketId));
-      else currentDeleted.add(String(ticketId));
-      localStorage.setItem(DELETED_TICKETS_KEY, JSON.stringify([...currentDeleted]));
+      
+      addPermanentlyDeletedTicket(ticketId);
+      
       setGuideTickets(prev => prev.filter(t => String(t.id) !== String(ticketId)));
-      setNotifications(prev => prev.filter(n => { const notifTicketId = n.data?.ticketId || n.ticket_id; return String(notifTicketId) !== String(ticketId); }));
-      if (!chat.is_read) setUnreadChatCount(prev => Math.max(0, prev - 1));
-      await fetchGuideTickets();
-      await fetchNotifications();
-      toast.success(serverDeleted
-        ? (lang === 'ar' ? '✅ تم حذف المحادثة نهائياً' : '✅ Conversation permanently deleted')
-        : (lang === 'ar' ? '⚠️ تم إخفاء المحادثة محلياً' : '⚠️ Conversation hidden locally'));
-    } catch (error) { toast.error(lang === 'ar' ? '❌ فشل حذف المحادثة' : '❌ Failed to delete'); }
-    finally { deletingIdsRef.current.delete(uniqueKey); }
-  }, [lang, getDeletedTickets, fetchGuideTickets, fetchNotifications]);
+      setNotifications(prev => prev.filter(n => {
+        const notifTicketId = n.data?.ticketId || n.ticket_id;
+        return String(notifTicketId) !== String(ticketId);
+      }));
+      
+      if (!chat.is_read) {
+        setUnreadChatCount(prev => Math.max(0, prev - 1));
+      }
+      
+      const oldDeletedSet = getDeletedTickets();
+      if (oldDeletedSet.has(String(ticketId))) {
+        oldDeletedSet.delete(String(ticketId));
+        localStorage.setItem(DELETED_TICKETS_KEY, JSON.stringify([...oldDeletedSet]));
+      }
+      
+      toast.success(deleteSuccess
+        ? (lang === 'ar' ? '✅ تم حذف المحادثة نهائياً' : '✅ Conversation deleted')
+        : (lang === 'ar' ? '✅ تم حذف المحادثة محلياً' : '✅ Conversation deleted locally'));
+      
+    } catch (error) {
+      console.error('Delete error:', error);
+      toast.error(lang === 'ar' ? '❌ فشل حذف المحادثة' : '❌ Failed to delete');
+    } finally {
+      deletingIdsRef.current.delete(uniqueKey);
+      setTimeout(() => {
+        fetchGuideTickets();
+        fetchNotifications();
+      }, 500);
+    }
+  }, [lang, getDeletedTickets, addPermanentlyDeletedTicket, fetchGuideTickets, fetchNotifications]);
 
-  // وظائف الإشعارات
   const markNotificationAsRead = useCallback(async (notificationId) => {
     try {
       const token = localStorage.getItem('token');
@@ -489,7 +758,6 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     } catch (error) { console.error(error); }
   }, [lang]);
 
-  // معالج النقر على إشعار من القائمة المنسدلة
   const handleBellNotifClick = useCallback(async (notif) => {
     await markNotificationAsRead(notif.id);
     setShowNotifications(false);
@@ -500,11 +768,12 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     ]);
     if (CHAT_TYPES.has(notif.type)) {
       let ticketId = notif.data?.ticketId || notif.ticket_id || null;
-      if (!ticketId && notif.action_url) { const match = String(notif.action_url).match(/\d+/); if (match) ticketId = match[0]; }
-      if (!ticketId && notif.data?.action_url) { const match = String(notif.data.action_url).match(/\d+/); if (match) ticketId = match[0]; }
-      const deletedSet = getDeletedTickets();
-      if (ticketId && deletedSet.has(String(ticketId))) { toast(lang === 'ar' ? 'هذه المحادثة محذوفة' : 'This conversation is deleted', { icon: '🗑️' }); return; }
-      // جلب التذكرة لتحديد المسافر
+      const permanentlyDeletedSet = getPermanentlyDeletedTickets();
+      if (ticketId && permanentlyDeletedSet.has(String(ticketId))) { 
+        toast(lang === 'ar' ? 'هذه المحادثة محذوفة' : 'Conversation deleted', { icon: '🗑️' }); 
+        return; 
+      }
+      
       let otherPartyId = null;
       let otherPartyName = null;
       try {
@@ -515,13 +784,9 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
           const fullTicket = data.ticket;
           const currentUserId = user?.id;
           const possibleIds = [
-            fullTicket.user_id,
-            fullTicket.sender_id,
-            fullTicket.receiver_id,
-            fullTicket.metadata?.guideId,
-            fullTicket.metadata?.created_by_id,
-            fullTicket.metadata?.userId,
-            fullTicket.metadata?.senderId,
+            fullTicket.user_id, fullTicket.sender_id, fullTicket.receiver_id,
+            fullTicket.metadata?.guideId, fullTicket.metadata?.created_by_id,
+            fullTicket.metadata?.userId, fullTicket.metadata?.senderId,
             fullTicket.metadata?.receiverId
           ];
           for (const id of possibleIds) {
@@ -533,13 +798,25 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
           }
         }
       } catch (err) { console.error('Error fetching ticket details:', err); }
+      
       if (!otherPartyId) {
         otherPartyId = notif.data?.userId || notif.data?.created_by_id || notif.data?.senderId;
         otherPartyName = notif.data?.userName || notif.data?.fromName || notif.data?.created_by_name || (lang === 'ar' ? 'مسافر' : 'Traveler');
       }
-      if (!otherPartyId) { toast.error(lang === 'ar' ? 'لا يمكن فتح المحادثة' : 'Cannot open conversation'); return; }
+      
+      if (!otherPartyId) { 
+        toast.error(lang === 'ar' ? 'لا يمكن فتح المحادثة' : 'Cannot open conversation'); 
+        return;
+      }
+      
+      const numericOtherPartyId = await convertToNumericId(otherPartyId);
+      if (!numericOtherPartyId) {
+        toast.error(lang === 'ar' ? 'معرف المستخدم غير صالح' : 'Invalid user ID');
+        return;
+      }
+      
       const params = {
-        recipientId: otherPartyId,
+        recipientId: numericOtherPartyId,
         recipientName: otherPartyName || (lang === 'ar' ? 'مستخدم' : 'User'),
         recipientType: 'tourist',
         ticketId: ticketId
@@ -552,7 +829,7 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         if (pageName && typeof setPage === 'function') setPage(pageName);
       } else { setPage('support'); }
     }
-  }, [lang, getDeletedTickets, user?.id]);
+  }, [lang, getPermanentlyDeletedTickets, user?.id, markNotificationAsRead, setPage, convertToNumericId]);
 
   // Socket.IO
   useEffect(() => {
@@ -586,7 +863,6 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     return () => { if (socket) socket.disconnect(); };
   }, [user?.id, isGuide, fetchGuideTickets, lang]);
 
-  // تحميل أولي وتحديث دوري
   useEffect(() => {
     if (isGuide) {
       fetchGuideTickets();
@@ -603,10 +879,7 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     }
   }, [activeTab, fetchGuideTickets]);
 
-  const unifiedChats = React.useMemo(() => buildUnifiedChats(guideTickets, notifications), [guideTickets, notifications, buildUnifiedChats]);
-  const totalUnreadChats = unifiedChats.filter(c => !c.is_read).length;
-
-  // ===================== دوال البرامج (لم تتغير) =====================
+  // ===================== دوال البرامج =====================
   const formatSafetyGuidelines = useCallback((text) => {
     if (!text) return null;
     return text.split(/\r?\n/).map((line, idx) => {
@@ -776,18 +1049,13 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
       const formatted = programsWithImages.map(p => formatProgramFromServer(p));
       setPrograms(formatted);
       updateMapWithPrograms(formatted);
-      const activeProgs = formatted.filter(p => p.status === 'active');
-      setStats({
-        totalParticipants: activeProgs.reduce((sum, p) => sum + (p.participants || 0), 0),
-        totalRevenue: activeProgs.reduce((sum, p) => sum + ((p.participants || 0) * (p.price || 0)), 0),
-        activePrograms: activeProgs.length,
-        totalPrograms: formatted.length
-      });
+      updateStats(formatted);
     } catch (error) { console.error(error); toast.error(lang === 'ar' ? 'فشل الاتصال بالخادم' : 'Connection failed'); }
     finally { setLoading(false); }
-  }, [user?.id, lang, updateMapWithPrograms]);
+  }, [user?.id, lang, updateMapWithPrograms, updateStats]);
 
   useEffect(() => { fetchRealPrograms(); }, [fetchRealPrograms]);
+  useEffect(() => { if (user?.id) fetchBalance(); }, [user?.id, fetchBalance]);
 
   const addMultipleImages = async (files) => {
     if (!files || files.length === 0) return;
@@ -1127,56 +1395,104 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
 
   return (
     <div className="h-full overflow-y-auto bg-gray-50 dark:bg-gray-900 p-4 pb-20" dir="rtl">
+      {/* الرأس */}
       <div className="flex justify-between items-center mb-6">
         <button onClick={() => setPage('home')} className="flex items-center gap-2 text-gray-600 hover:text-green-600 transition"><ArrowLeft size={20} /> العودة</button>
         <div className="flex items-center gap-3">
           {showAdminButtons && (
             <>
-              <button onClick={() => setPage('admin-support')} className="flex items-center gap-2 px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 transition shadow-md" title={lang === 'ar' ? 'تذاكر الدعم' : 'Support Tickets'}><Headphones size={16} /><span className="hidden sm:inline">{lang === 'ar' ? 'تذاكر الدعم' : 'Support'}</span></button>
-              <button onClick={() => setPage('upgrade-requests')} className="flex items-center gap-2 px-3 py-1.5 bg-purple-600 text-white rounded-lg text-sm hover:bg-purple-700 transition shadow-md" title={lang === 'ar' ? 'طلبات الترقية' : 'Upgrade Requests'}><Star size={16} /><span className="hidden sm:inline">{lang === 'ar' ? 'طلبات الترقية' : 'Upgrade'}</span></button>
+              <button onClick={() => setPage('admin-support')} className="flex items-center gap-2 px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 transition shadow-md"><Headphones size={16} /><span className="hidden sm:inline">الدعم</span></button>
+              <button onClick={() => setPage('upgrade-requests')} className="flex items-center gap-2 px-3 py-1.5 bg-purple-600 text-white rounded-lg text-sm hover:bg-purple-700 transition shadow-md"><Star size={16} /><span className="hidden sm:inline">الترقية</span></button>
             </>
           )}
           <div className="relative">
-            <button onClick={() => setShowNotifications(!showNotifications)} className="relative p-2 text-gray-600 hover:text-green-600 transition rounded-full hover:bg-gray-100 dark:hover:bg-gray-800"><Bell size={22} />{unreadNotifCount > 0 && <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-white text-xs font-bold">{unreadNotifCount > 9 ? '9+' : unreadNotifCount}</span>}</button>
+            <button onClick={() => setShowNotifications(!showNotifications)} className="relative p-2 text-gray-600 hover:text-green-600 transition rounded-full hover:bg-gray-100 dark:hover:bg-gray-800">
+              <Bell size={22} />
+              {unreadNotifCount > 0 && <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-white text-xs font-bold">{unreadNotifCount > 9 ? '9+' : unreadNotifCount}</span>}
+            </button>
             {showNotifications && (
               <div className="absolute left-0 mt-2 w-80 bg-white dark:bg-gray-800 rounded-xl shadow-xl z-50 border border-gray-200 dark:border-gray-700">
-                <div className="p-3 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center"><h3 className="font-bold text-gray-800 dark:text-white">{lang === 'ar' ? 'الإشعارات' : 'Notifications'}</h3>{(unreadNotifCount > 0 || unreadChatCount > 0) && <button onClick={markAllAsRead} className="text-xs text-green-600 hover:text-green-700">{lang === 'ar' ? 'تحديد الكل كمقروء' : 'Mark all as read'}</button>}</div>
+                <div className="p-3 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+                  <h3 className="font-bold text-gray-800 dark:text-white">الإشعارات</h3>
+                  {(unreadNotifCount > 0 || unreadChatCount > 0) && <button onClick={markAllAsRead} className="text-xs text-green-600">تحديد الكل كمقروء</button>}
+                </div>
                 <div className="max-h-96 overflow-y-auto">
-                  {notifications.length === 0 ? (<div className="p-4 text-center text-gray-500"><Bell size={32} className="mx-auto mb-2 opacity-50" /><p className="text-sm">{lang === 'ar' ? 'لا توجد إشعارات' : 'No notifications'}</p></div>) : (
+                  {notifications.length === 0 ? (
+                    <div className="p-4 text-center text-gray-500">
+                      <Bell size={32} className="mx-auto mb-2 opacity-50" />
+                      <p className="text-sm">لا توجد إشعارات</p>
+                    </div>
+                  ) : (
                     notifications.map(notif => {
-                      const isChatNotif = ['new_chat_ticket','guide_chat','new_chat_message','GUIDE_CHAT','NEW_CHAT_TICKET','NEW_CHAT_MESSAGE','new_message','NEW_MESSAGE'].includes(notif.type);
-                      return (<div key={notif.id} className={`p-3 border-b border-gray-100 dark:border-gray-700 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition ${!notif.is_read ? (isChatNotif ? 'bg-purple-50 dark:bg-purple-900/20' : 'bg-green-50 dark:bg-green-900/20') : ''}`} onClick={() => handleBellNotifClick(notif)}>
-                        <div className="flex items-start gap-2">
-                          <div className="flex-1"><div className="flex items-center gap-1 mb-0.5">{isChatNotif && <MessageCircle size={12} className="text-purple-500 flex-shrink-0" />}<p className="text-sm font-medium text-gray-800 dark:text-white">{notif.title}</p></div><p className="text-xs text-gray-500 mt-0.5">{notif.message?.length > 80 ? notif.message.substring(0,80)+'...' : notif.message}</p><p className="text-xs text-gray-400 mt-1">{new Date(notif.created_at).toLocaleTimeString(lang === 'ar' ? 'ar-EG' : 'en-US')}</p></div>
-                          <div className="flex flex-col items-center gap-1">{!notif.is_read && <div className={`w-2 h-2 rounded-full ${isChatNotif ? 'bg-purple-500' : 'bg-green-500'}`}></div>}{isChatNotif && <span className="text-xs bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap">{lang === 'ar' ? 'محادثة' : 'Chat'}</span>}</div>
+                      const isChatNotif = ['new_chat_ticket','guide_chat','new_chat_message','new_message'].includes(notif.type);
+                      return (
+                        <div key={notif.id} className={`p-3 border-b border-gray-100 dark:border-gray-700 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition ${!notif.is_read ? (isChatNotif ? 'bg-purple-50 dark:bg-purple-900/20' : 'bg-green-50 dark:bg-green-900/20') : ''}`} onClick={() => handleBellNotifClick(notif)}>
+                          <div className="flex items-start gap-2">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-1 mb-0.5">
+                                {isChatNotif && <MessageCircle size={12} className="text-purple-500 flex-shrink-0" />}
+                                <p className="text-sm font-medium text-gray-800 dark:text-white">{notif.title}</p>
+                              </div>
+                              <p className="text-xs text-gray-500 mt-0.5">{notif.message?.length > 80 ? notif.message.substring(0,80)+'...' : notif.message}</p>
+                              <p className="text-xs text-gray-400 mt-1">{new Date(notif.created_at).toLocaleTimeString()}</p>
+                            </div>
+                            <div className="flex flex-col items-center gap-1">
+                              {!notif.is_read && <div className={`w-2 h-2 rounded-full ${isChatNotif ? 'bg-purple-500' : 'bg-green-500'}`}></div>}
+                              {isChatNotif && <span className="text-xs bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full">محادثة</span>}
+                            </div>
+                          </div>
                         </div>
-                      </div>);
+                      );
                     })
                   )}
                 </div>
-                <div className="p-2 border-t border-gray-200 dark:border-gray-700"><button onClick={() => setShowNotifications(false)} className="w-full text-center text-xs text-gray-500 hover:text-gray-700 py-1">{lang === 'ar' ? 'إغلاق' : 'Close'}</button></div>
+                <div className="p-2 border-t border-gray-200 dark:border-gray-700">
+                  <button onClick={() => setShowNotifications(false)} className="w-full text-center text-xs text-gray-500 py-1">إغلاق</button>
+                </div>
               </div>
             )}
           </div>
-          <button onClick={() => setActiveTab('chats')} className="relative p-2 text-gray-600 hover:text-green-600 transition rounded-full hover:bg-gray-100 dark:hover:bg-gray-800"><MessageCircle size={22} />{totalUnreadChats > 0 && <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-white text-xs font-bold">{totalUnreadChats > 9 ? '9+' : totalUnreadChats}</span>}</button>
+          <button onClick={() => setActiveTab('chats')} className="relative p-2 text-gray-600 hover:text-green-600 transition rounded-full hover:bg-gray-100 dark:hover:bg-gray-800">
+            <MessageCircle size={22} />
+            {totalUnreadChats > 0 && <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-white text-xs font-bold">{totalUnreadChats > 9 ? '9+' : totalUnreadChats}</span>}
+          </button>
           <button onClick={() => setPage('safety')} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition shadow-md"><Shield size={18} /> إرشادات السلامة</button>
         </div>
       </div>
 
+      {/* الإحصائيات */}
       <div className="bg-gradient-to-r from-green-500 to-emerald-600 rounded-2xl p-6 text-white mb-8 shadow-lg">
         <div className="flex flex-wrap justify-between items-center gap-4">
-          <div><h1 className="text-2xl font-bold">لوحة تحكم المرشد</h1><p className="opacity-90 mt-1">{user?.full_name || guide?.name}</p><div className="flex items-center mt-2 gap-2"><CheckCircle className="w-5 h-5" /><span className="text-sm">حساب مرشد معتمد</span></div>{socketConnected && <div className="flex items-center mt-1 gap-1 text-xs"><div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div><span className="opacity-75">متصل للإشعارات الفورية</span></div>}</div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            {[{ value: stats.activePrograms, label: 'برنامج نشط' },{ value: stats.totalPrograms, label: 'إجمالي البرامج' },{ value: stats.totalParticipants, label: 'مشاركين' },{ value: `${stats.totalRevenue} ريال`, label: 'الإيرادات' }].map((s,i) => (<div key={i} className="text-center bg-white/20 rounded-xl p-3"><div className="text-2xl font-bold">{s.value}</div><div className="text-xs opacity-90">{s.label}</div></div>))}
+          <div>
+            <h1 className="text-2xl font-bold">لوحة تحكم المرشد</h1>
+            <p className="opacity-90 mt-1">{user?.full_name || guide?.name}</p>
+            <div className="flex items-center mt-2 gap-2"><CheckCircle className="w-5 h-5" /><span className="text-sm">حساب مرشد معتمد</span></div>
+            {socketConnected && <div className="flex items-center mt-1 gap-1 text-xs"><div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div><span className="opacity-75">متصل للإشعارات الفورية</span></div>}
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+            <div className="text-center bg-white/20 rounded-xl p-3"><div className="text-2xl font-bold">{stats.activePrograms}</div><div className="text-xs opacity-90">برنامج نشط</div></div>
+            <div className="text-center bg-white/20 rounded-xl p-3"><div className="text-2xl font-bold">{stats.totalPrograms}</div><div className="text-xs opacity-90">إجمالي البرامج</div></div>
+            <div className="text-center bg-white/20 rounded-xl p-3"><div className="text-2xl font-bold">{stats.totalParticipants}</div><div className="text-xs opacity-90">مشاركين</div></div>
+            <div className="text-center bg-white/20 rounded-xl p-3"><div className="text-2xl font-bold">{stats.totalRevenue} ريال</div><div className="text-xs opacity-90">الإيرادات</div></div>
+            <div className="text-center bg-white/20 rounded-xl p-3 relative group">
+              <div className="text-2xl font-bold">{balance} ريال</div>
+              <div className="text-xs opacity-90 flex items-center justify-center gap-1"><DollarSign size={12} /> الرصيد الحالي</div>
+              <button onClick={fetchBalance} className="absolute top-1 left-1 p-1 rounded-full hover:bg-white/20 transition opacity-0 group-hover:opacity-100"><RefreshCw size={12} /></button>
+            </div>
           </div>
         </div>
       </div>
 
+      {/* علامات التبويب */}
       <div className="flex border-b border-gray-200 dark:border-gray-700 mb-6">
-        <button onClick={() => setActiveTab('programs')} className={`px-4 py-2 font-medium text-sm transition-colors ${activeTab === 'programs' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400'}`}><Package className="inline w-4 h-4 ml-1" /> {lang === 'ar' ? 'البرامج' : 'Programs'}</button>
-        <button onClick={() => setActiveTab('chats')} className={`px-4 py-2 font-medium text-sm transition-colors relative ${activeTab === 'chats' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400'}`}><MessageCircle className="inline w-4 h-4 ml-1" /> {lang === 'ar' ? 'المحادثات الواردة' : 'Incoming chats'}{totalUnreadChats > 0 && <span className="ml-1 inline-flex items-center justify-center w-5 h-5 text-xs font-bold text-white bg-red-500 rounded-full">{totalUnreadChats}</span>}</button>
+        <button onClick={() => setActiveTab('programs')} className={`px-4 py-2 font-medium text-sm transition-colors ${activeTab === 'programs' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-500 hover:text-gray-700'}`}><Package className="inline w-4 h-4 ml-1" /> البرامج</button>
+        <button onClick={() => setActiveTab('chats')} className={`px-4 py-2 font-medium text-sm transition-colors relative ${activeTab === 'chats' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-500 hover:text-gray-700'}`}>
+          <MessageCircle className="inline w-4 h-4 ml-1" /> المحادثات الواردة
+          {totalUnreadChats > 0 && <span className="ml-1 inline-flex items-center justify-center w-5 h-5 text-xs font-bold text-white bg-red-500 rounded-full">{totalUnreadChats}</span>}
+        </button>
       </div>
 
+      {/* قائمة البرامج */}
       {activeTab === 'programs' && (
         <>
           <div className="flex flex-col sm:flex-row justify-between items-center gap-4 mb-6">
@@ -1214,24 +1530,60 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         </>
       )}
 
+      {/* ✅ محتوى المحادثات - محادثة واحدة لكل مستخدم */}
       {activeTab === 'chats' && (
         <div>
-          {loadingTickets && unifiedChats.length === 0 ? (<div className="flex justify-center items-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div></div>) : unifiedChats.length === 0 ? (
-            <div className="bg-white dark:bg-gray-800 rounded-2xl p-12 text-center border-2 border-dashed"><Inbox className="w-20 h-20 mx-auto text-gray-400 mb-4" /><p className="text-gray-500 text-lg mb-3">{lang === 'ar' ? 'لا توجد محادثات واردة من المسافرين' : 'No incoming chats from travelers'}</p><p className="text-sm text-gray-400">{lang === 'ar' ? 'عندما يبدأ مسافر محادثة معك، ستظهر هنا' : 'When a traveler starts a chat with you, it will appear here'}</p></div>
+          {loadingTickets && unifiedChats.length === 0 ? (
+            <div className="flex justify-center items-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div></div>
+          ) : unifiedChats.length === 0 ? (
+            <div className="bg-white dark:bg-gray-800 rounded-2xl p-12 text-center border-2 border-dashed">
+              <Inbox className="w-20 h-20 mx-auto text-gray-400 mb-4" />
+              <p className="text-gray-500 text-lg mb-3">لا توجد محادثات واردة من المسافرين</p>
+              <p className="text-sm text-gray-400">عندما يبدأ مسافر محادثة معك، ستظهر هنا</p>
+              <button onClick={() => { fetchGuideTickets(); fetchNotifications(); }} className="mt-4 px-4 py-2 bg-green-600 text-white rounded-lg text-sm">تحديث</button>
+            </div>
           ) : (
             <div className="space-y-4">
               {unifiedChats.map(chat => {
                 const isUnread = !chat.is_read;
-                const fromNotif = chat._sourceType === 'notification';
+                const isDeleting = deletingIdsRef.current.has(chat.id || chat.ticketId);
+                
                 return (
-                  <div key={chat.id} className={`bg-white dark:bg-gray-800 rounded-xl p-5 shadow-md hover:shadow-lg transition-all duration-300 border ${isUnread ? 'border-green-300 dark:border-green-700 ring-1 ring-green-200' : 'border-gray-100 dark:border-gray-700'}`}>
+                  <div 
+                    key={chat.id} 
+                    className={`bg-white dark:bg-gray-800 rounded-xl p-5 shadow-md hover:shadow-lg transition-all duration-300 border cursor-pointer ${
+                      isUnread ? 'border-green-300 dark:border-green-700 ring-1 ring-green-200' : 'border-gray-100 dark:border-gray-700'
+                    }`}
+                    onClick={() => openDirectChat(chat)}
+                  >
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-2 flex-wrap"><MessageCircle className="w-5 h-5 text-green-600 flex-shrink-0" /><h3 className="font-bold text-gray-800 dark:text-white">{lang === 'ar' ? `محادثة مع ${chat.touristName}` : `Chat with ${chat.touristName}`}</h3><span className="text-xs text-gray-500">{new Date(chat.created_at).toLocaleDateString(lang === 'ar' ? 'ar-EG' : 'en-US')}</span>{isUnread && <span className="px-2 py-0.5 bg-green-100 text-green-800 rounded-full text-xs font-medium">{lang === 'ar' ? 'جديدة' : 'New'}</span>}{fromNotif && <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-xs font-medium flex items-center gap-1"><Bell size={10} /> {lang === 'ar' ? 'إشعار' : 'Notif'}</span>}</div>
+                        <div className="flex items-center gap-2 mb-2 flex-wrap">
+                          <MessageCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
+                          <h3 className="font-bold text-gray-800 dark:text-white">
+                            {lang === 'ar' ? `محادثة مع ${chat.touristName}` : `Chat with ${chat.touristName}`}
+                          </h3>
+                          <span className="text-xs text-gray-500">{new Date(chat.created_at).toLocaleDateString()}</span>
+                          {isUnread && (
+                            <span className="px-2 py-0.5 bg-green-100 text-green-800 rounded-full text-xs font-medium">
+                              {lang === 'ar' ? 'جديدة' : 'New'}
+                            </span>
+                          )}
+                        </div>
                         <p className="text-gray-600 dark:text-gray-300 text-sm mb-2 truncate">{chat.subject}</p>
-                        <div className="flex items-center gap-4 text-sm text-gray-500"><span className="flex items-center gap-1"><Users size={14} /> {chat.touristName}</span><span className="flex items-center gap-1"><Clock size={14} /> {new Date(chat.created_at).toLocaleTimeString(lang === 'ar' ? 'ar-EG' : 'en-US')}</span></div>
+                        <div className="flex items-center gap-4 text-sm text-gray-500">
+                          <span className="flex items-center gap-1"><Users size={14} /> {chat.touristName}</span>
+                          <span className="flex items-center gap-1"><Clock size={14} /> {new Date(chat.created_at).toLocaleTimeString()}</span>
+                        </div>
                       </div>
-                      <div className="flex gap-2 flex-shrink-0"><button onClick={() => openDirectChat(chat)} className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 transition flex items-center gap-2"><MailOpen size={16} /> {lang === 'ar' ? 'فتح' : 'Open'}</button><button onClick={() => deleteConversation(chat)} className="px-4 py-2 bg-red-100 text-red-700 rounded-lg text-sm hover:bg-red-200 transition flex items-center gap-2"><Trash2 size={16} /> {lang === 'ar' ? 'حذف' : 'Delete'}</button></div>
+                      <button
+                        onClick={(e) => deleteConversation(chat, e)}
+                        disabled={isDeleting}
+                        className="p-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition flex items-center gap-2 flex-shrink-0 disabled:opacity-50"
+                      >
+                        {isDeleting ? <div className="animate-spin rounded-full h-4 w-4 border-2 border-red-600 border-t-transparent"></div> : <Trash2 size={16} />}
+                        <span>{lang === 'ar' ? 'حذف' : 'Delete'}</span>
+                      </button>
                     </div>
                   </div>
                 );
@@ -1241,6 +1593,7 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         </div>
       )}
 
+      {/* نافذة إضافة برنامج */}
       {showAddProgram && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
@@ -1254,6 +1607,7 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         </div>
       )}
 
+      {/* نافذة تعديل برنامج */}
       {showEditModal && editingProgram && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
