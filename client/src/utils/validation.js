@@ -1,76 +1,109 @@
-// ===================== دوال التحقق =====================
+// ===================== ثوابت التطبيق العامة =====================
 
-/**
- * التحقق من صحة النص
- * @param {string} text - النص
- * @param {Object} options - خيارات التحقق
- * @returns {Object} نتيجة التحقق
- */
-export const validateText = (text, options = {}) => {
-  const {
-    required = true,
-    minLength = 3,
-    maxLength = 100,
-    pattern = null
-  } = options;
-
-  if (required && (!text || text.trim() === '')) {
-    return { isValid: false, error: 'هذا الحقل مطلوب' };
-  }
-
-  if (text && text.length < minLength) {
-    return { isValid: false, error: `يجب أن يكون النص على الأقل ${minLength} أحرف` };
-  }
-
-  if (text && text.length > maxLength) {
-    return { isValid: false, error: `يجب أن لا يتجاوز النص ${maxLength} حرف` };
-  }
-
-  if (pattern && text && !pattern.test(text)) {
-    return { isValid: false, error: 'النص غير صالح' };
-  }
-
-  return { isValid: true };
+// أنواع المستخدمين
+export const USER_TYPES = {
+  TOURIST: 'tourist',
+  GUIDE: 'guide',
+  ADMIN: 'admin'
 };
 
-/**
- * التحقق من صحة الرقم
- * @param {number} value - الرقم
- * @param {Object} options - خيارات التحقق
- * @returns {Object} نتيجة التحقق
- */
-export const validateNumber = (value, options = {}) => {
-  const {
-    required = true,
-    min = null,
-    max = null,
-    integer = false
-  } = options;
+// حالات الحجز
+export const BOOKING_STATUS = {
+  PENDING: 'pending',
+  CONFIRMED: 'confirmed',
+  IN_PROGRESS: 'in_progress',
+  COMPLETED: 'completed',
+  CANCELLED: 'cancelled',
+  REJECTED: 'rejected'
+};
 
-  if (required && (value === null || value === undefined || value === '')) {
-    return { isValid: false, error: 'هذا الحقل مطلوب' };
-  }
+// طرق الدفع
+export const PAYMENT_METHODS = {
+  WALLET: 'wallet',
+  CASH: 'cash',
+  CARD: 'card',
+  APPLE_PAY: 'apple_pay',
+  STC_PAY: 'stc_pay'
+};
 
-  if (value === null || value === undefined || value === '') {
-    return { isValid: true };
-  }
+// أنواع المعاملات
+export const TRANSACTION_TYPES = {
+  DEPOSIT: 'deposit',
+  WITHDRAW: 'withdraw',
+  BOOKING: 'booking',
+  REFUND: 'refund',
+  FEE: 'fee'
+};
 
-  const num = Number(value);
-  if (isNaN(num)) {
-    return { isValid: false, error: 'يجب أن يكون رقماً صحيحاً' };
-  }
+// حالات المعاملات
+export const TRANSACTION_STATUS = {
+  PENDING: 'pending',
+  COMPLETED: 'completed',
+  FAILED: 'failed',
+  CANCELLED: 'cancelled'
+};
 
-  if (integer && !Number.isInteger(num)) {
-    return { isValid: false, error: 'يجب أن يكون رقماً صحيحاً' };
-  }
+// أنواع البرامج
+export const PROGRAM_TYPES = {
+  BASIC: 'basic',
+  PREMIUM: 'premium',
+  ENTERPRISE: 'enterprise'
+};
 
-  if (min !== null && num < min) {
-    return { isValid: false, error: `يجب أن يكون الرقم أكبر من أو يساوي ${min}` };
-  }
+// اللغات المدعومة
+export const SUPPORTED_LANGUAGES = {
+  AR: 'ar',
+  EN: 'en'
+};
 
-  if (max !== null && num > max) {
-    return { isValid: false, error: `يجب أن يكون الرقم أصغر من أو يساوي ${max}` };
-  }
+// العملات المدعومة
+export const CURRENCIES = {
+  SAR: 'SAR',
+  USD: 'USD'
+};
 
-  return { isValid: true };
+// حدود النظام
+export const SYSTEM_LIMITS = {
+  MIN_PROGRAM_PRICE: 25,
+  MAX_PROGRAM_PRICE: 10000,
+  MIN_WITHDRAW_AMOUNT: 100,
+  MAX_WITHDRAW_AMOUNT: 50000,
+  MAX_FILE_SIZE: 5 * 1024 * 1024, // 5MB
+  NEGATIVE_BALANCE_LIMIT: -250
+};
+
+// نسب الرسوم
+export const FEE_RATES = {
+  PLATFORM: 0.5,    // 0.5%
+  BOOKING: 0.75,    // 0.75%
+  MAP: 0.5,         // 0.5%
+  PAYMENT: 0.5,     // 0.5%
+  DISPUTE: 0.25,    // 0.25%
+  TOTAL: 2.5        // 2.5%
+};
+
+// رموز HTTP
+export const HTTP_STATUS = {
+  OK: 200,
+  CREATED: 201,
+  BAD_REQUEST: 400,
+  UNAUTHORIZED: 401,
+  FORBIDDEN: 403,
+  NOT_FOUND: 404,
+  SERVER_ERROR: 500
+};
+
+// مسارات التطبيق
+export const ROUTES = {
+  HOME: '/',
+  LOGIN: '/login',
+  REGISTER: '/register',
+  PROFILE: '/profile',
+  WALLET: '/wallet',
+  BOOKINGS: '/bookings',
+  PROGRAMS: '/programs',
+  CHAT: '/chat',
+  NOTIFICATIONS: '/notifications',
+  SETTINGS: '/settings',
+  GUIDE_DASHBOARD: '/guide/dashboard'
 };
