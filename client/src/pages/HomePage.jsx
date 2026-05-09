@@ -1,7 +1,7 @@
 // client/src/pages/HomePage.jsx
-// ✅ النسخة المحسنة - عرض البرامج القريبة من المستخدم بشكل دقيق وموثوق
+// ✅ تحديث الموقع كل 5 ثوانٍ مع إمكانية إيقاف التتبع
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   FaMapMarkedAlt, FaUserTie, FaWallet, FaComments,
   FaStar, FaArrowLeft, FaShieldAlt, FaClock,
@@ -9,6 +9,10 @@ import {
   FaSpinner, FaLocationArrow, FaRedoAlt
 } from 'react-icons/fa';
 import { motion } from 'framer-motion';
+
+// إعدادات صلاحية الموقع للتخزين
+const LOCATION_CACHE_KEY = 'cached_user_location';
+const LOCATION_CACHE_HOURS = 1; // صلاحية الموقع لمدة ساعة
 
 const LOCALES = {
   ar: {
@@ -23,17 +27,20 @@ const LOCALES = {
     featuresTitle: 'مميزات التطبيق',
     featuresSub: 'كل ما تحتاجه في منصة واحدة لتجربة سياحية مميزة',
     nearbyTitle: 'برامج قريبة منك',
-    nearbySub: 'اكتشف البرامج السياحية القريبة من موقعك الحالي (أقل من 10 كم)',
+    nearbySub: 'اكتشف البرامج السياحية القريبة من موقعك الحالي (أقل من 45 كم)',
     loading: 'جاري تحميل البرامج القريبة...',
-    noNearby: 'لا توجد برامج قريبة حالياً',
+    noNearby: 'لا توجد برامج قريبة ضمن نطاق 45 كم حالياً',
     enableLocation: 'يُرجى تفعيل خدمة الموقع لعرض البرامج القريبة',
     enableLocationBtn: 'تفعيل الموقع',
     viewOnMap: 'عرض على الخريطة',
-    refreshNearby: 'تحديث',
+    refreshNearby: 'تحديث الموقع والبرامج',
     retry: 'إعادة المحاولة',
     locationPermissionDenied: 'تم رفض إذن الموقع. يرجى السماح يدوياً من إعدادات المتصفح.',
     locationTimeout: 'انتهت مهلة الحصول على الموقع، حاول مرة أخرى.',
     locationGeneralError: 'حدث خطأ أثناء الحصول على الموقع.',
+    autoTrack: 'تتبع تلقائي (كل 5 ثوانٍ)',
+    stopTracking: 'إيقاف التتبع',
+    startTracking: 'تشغيل التتبع',
     howItWorks: 'كيف تعمل المنصة؟',
     howItWorksSub: 'ثلاث خطوات بسيطة لحجز رحلتك المثالية',
     step1Title: 'اختر المرشد',
@@ -74,17 +81,20 @@ const LOCALES = {
     featuresTitle: 'Features',
     featuresSub: 'Everything you need in one platform for an exceptional tourism experience',
     nearbyTitle: 'Nearby Programs',
-    nearbySub: 'Discover tour programs near your current location (within 10 km)',
+    nearbySub: 'Discover tour programs near your current location (within 45 km)',
     loading: 'Loading nearby programs...',
-    noNearby: 'No nearby programs at the moment',
+    noNearby: 'No nearby programs within 45 km at the moment',
     enableLocation: 'Please enable location to see nearby programs',
     enableLocationBtn: 'Enable location',
     viewOnMap: 'View on map',
-    refreshNearby: 'Refresh',
+    refreshNearby: 'Refresh location & programs',
     retry: 'Retry',
     locationPermissionDenied: 'Location permission denied. Please allow manually from browser settings.',
     locationTimeout: 'Location request timeout, please try again.',
     locationGeneralError: 'Error getting your location.',
+    autoTrack: 'Auto-track (every 5 sec)',
+    stopTracking: 'Stop tracking',
+    startTracking: 'Start tracking',
     howItWorks: 'How it works?',
     howItWorksSub: 'Three simple steps to book your perfect trip',
     step1Title: 'Choose a guide',
@@ -125,8 +135,33 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
   const [locationError, setLocationError] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
   const [isLocating, setIsLocating] = useState(false);
+  const [isAutoTracking, setIsAutoTracking] = useState(true);
+  const intervalRef = useRef(null);
 
-  // دقة حساب المسافة (Haversine)
+  // دوال التخزين المؤقت للموقع
+  const saveLocationToCache = (lat, lng) => {
+    const locationData = { lat, lng, timestamp: Date.now() };
+    localStorage.setItem(LOCATION_CACHE_KEY, JSON.stringify(locationData));
+  };
+
+  const loadLocationFromCache = () => {
+    const cached = localStorage.getItem(LOCATION_CACHE_KEY);
+    if (!cached) return null;
+    try {
+      const data = JSON.parse(cached);
+      const now = Date.now();
+      const hoursPassed = (now - data.timestamp) / (1000 * 60 * 60);
+      if (hoursPassed > LOCATION_CACHE_HOURS) {
+        localStorage.removeItem(LOCATION_CACHE_KEY);
+        return null;
+      }
+      return { lat: data.lat, lng: data.lng };
+    } catch (e) {
+      return null;
+    }
+  };
+
+  // حساب المسافة
   const getDistance = useCallback((lat1, lon1, lat2, lon2) => {
     const R = 6371;
     const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -138,7 +173,7 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
     return R * c;
   }, []);
 
-  // جلب البرامج القريبة بناءً على الموقع الحالي
+  // جلب البرامج القريبة
   const fetchNearbyPrograms = useCallback(async (lat, lng) => {
     if (!lat || !lng) return;
     setLoadingNearby(true);
@@ -174,9 +209,9 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
         price: p.price,
         image: p.image && (p.image.startsWith('http') ? p.image : (p.image ? `${API_BASE}${p.image}` : null)),
         distance: getDistance(lat, lng, p.location_lat, p.location_lng)
-      })).filter(p => p.distance <= 10) // فقط ضمن 10 كم
+      })).filter(p => p.distance <= 45)
         .sort((a,b) => a.distance - b.distance)
-        .slice(0, 8); // حد أقصى 8 برامج
+        .slice(0, 8);
 
       setNearbyPrograms(withDistance);
     } catch (err) {
@@ -187,8 +222,9 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
     }
   }, [getDistance, lang]);
 
-  // طلب الموقع الجغرافي (مع خيارات محسنة)
-  const requestLocation = useCallback(() => {
+  // طلب الموقع
+  const requestLocation = useCallback((forceFresh = false) => {
+    if (isLocating) return;
     if (!navigator.geolocation) {
       setLocationError(t('locationGeneralError'));
       return;
@@ -200,6 +236,7 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
         const { latitude, longitude } = pos.coords;
         setUserLocation({ lat: latitude, lng: longitude });
         setLocationEnabled(true);
+        saveLocationToCache(latitude, longitude);
         setIsLocating(false);
         fetchNearbyPrograms(latitude, longitude);
       },
@@ -221,31 +258,71 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
-  }, [fetchNearbyPrograms, setLocationEnabled, t]);
+  }, [fetchNearbyPrograms, setLocationEnabled, t, isLocating]);
 
-  // عندما يتم تفعيل الموقع من الخارج (عبر الـ prop)
-  useEffect(() => {
-    if (locationEnabled && !userLocation && !isLocating) {
-      requestLocation();
-    }
-  }, [locationEnabled, userLocation, isLocating, requestLocation]);
-
-  // تحديث يدوي (زر التحديث)
+  // تحديث يدوي
   const handleRefresh = () => {
-    if (userLocation) {
-      fetchNearbyPrograms(userLocation.lat, userLocation.lng);
-    } else {
-      requestLocation();
-    }
+    requestLocation(true);
   };
 
-  // الانتقال إلى صفحة الخريطة مع تمييز البرنامج
+  // الانتقال للخريطة
   const handleViewProgramOnMap = (programId) => {
     localStorage.setItem('highlightProgramId', String(programId));
     setPage('explore');
   };
 
-  // بيانات ثابتة للواجهة (كما هي)
+  // تحميل الموقع المخزن عند البداية
+  useEffect(() => {
+    const cachedLocation = loadLocationFromCache();
+    if (cachedLocation) {
+      setUserLocation(cachedLocation);
+      setLocationEnabled(true);
+      fetchNearbyPrograms(cachedLocation.lat, cachedLocation.lng);
+    } else {
+      if (locationEnabled && !userLocation && !isLocating) {
+        requestLocation();
+      }
+    }
+  }, []);
+
+  // مزامنة تفعيل الموقع مع props
+  useEffect(() => {
+    if (locationEnabled && !userLocation && !isLocating) {
+      const cached = loadLocationFromCache();
+      if (cached) {
+        setUserLocation(cached);
+        fetchNearbyPrograms(cached.lat, cached.lng);
+      } else {
+        requestLocation();
+      }
+    }
+  }, [locationEnabled, userLocation, isLocating, requestLocation, fetchNearbyPrograms]);
+
+  // التحديث الدوري كل 5 ثوانٍ
+  useEffect(() => {
+    if (!isAutoTracking) {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      return;
+    }
+    if (!locationEnabled && !userLocation) return;
+    
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    intervalRef.current = setInterval(() => {
+      if (isLocating) return;
+      if (userLocation) {
+        // تحديث البرامج بناءً على الموقع الحالي دون طلب موقع جديد
+        fetchNearbyPrograms(userLocation.lat, userLocation.lng);
+      } else if (locationEnabled) {
+        requestLocation();
+      }
+    }, 5000); // 5 ثوان
+
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [isAutoTracking, locationEnabled, userLocation, isLocating, fetchNearbyPrograms, requestLocation]);
+
+  // بقية البيانات الثابتة
   const features = [
     { icon: <FaMapMarkedAlt size={40} />, title: 'اكتشف الأماكن', desc: 'استكشف أفضل الوجهات السياحية والأماكن المميزة في جميع أنحاء المملكة', primary: true },
     { icon: <FaUserTie size={40} />, title: 'مرشدين محترفين', desc: 'احجز مع مرشدين سياحيين معتمدين ومتميزين بخبرة عالية', primary: false },
@@ -272,7 +349,7 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
 
   return (
     <div className={`${bgColor} ${textColor} min-h-screen`} dir="rtl">
-      {/* شريط التنقل (نفس السابق) */}
+      {/* شريط التنقل */}
       <nav className={`sticky top-0 z-50 ${cardBg} border-b ${borderColor} shadow-sm`}>
         <div className="container mx-auto px-4 py-3 flex justify-between items-center">
           <button onClick={() => setPage('home')} className="text-2xl font-bold">{t('appName')}</button>
@@ -292,7 +369,7 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
         </div>
       </nav>
 
-      {/* Hero section (نفس السابق) */}
+      {/* Hero section */}
       <section className="relative overflow-hidden bg-gradient-to-r from-green-600 to-emerald-600 text-white">
         <div className="absolute inset-0 bg-black/20" style={{ backgroundImage: 'url(https://images.unsplash.com/photo-1469474968028-56623f02e42e?ixlib=rb-4.0.3)', backgroundSize: 'cover', backgroundPosition: 'center', opacity: dark ? 0.1 : 0.2 }}></div>
         <div className="relative container mx-auto px-4 py-24 md:py-32 text-center">
@@ -312,7 +389,7 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
         <div className="absolute bottom-0 left-0 right-0"><svg viewBox="0 0 1440 120" fill="none"><path d="M0 120L60 105C120 90 240 60 360 45C480 30 600 30 720 37.5C840 45 960 60 1080 67.5C1200 75 1320 75 1380 75L1440 75V120H0Z" fill={dark ? '#1f2937' : 'white'} /></svg></div>
       </section>
 
-      {/* الإحصائيات (نفس السابق) */}
+      {/* الإحصائيات */}
       <section className={`py-12 ${cardBg}`}>
         <div className="container mx-auto px-4">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
@@ -326,7 +403,7 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
         </div>
       </section>
 
-      {/* الميزات (نفس السابق) */}
+      {/* الميزات */}
       <section className={`py-16 ${dark ? 'bg-gray-900' : 'bg-gray-50'}`}>
         <div className="container mx-auto px-4">
           <div className="text-center mb-12">
@@ -345,23 +422,34 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
         </div>
       </section>
 
-      {/* ========== قسم البرامج القريبة (المحسّن) ========== */}
+      {/* قسم البرامج القريبة مع زر تبديل التتبع التلقائي */}
       <section className={`py-16 ${cardBg}`}>
         <div className="container mx-auto px-4">
-          <div className="text-center mb-8">
-            <div className="flex items-center justify-center gap-2 mb-2">
-              <FaMapMarkerAlt className="text-green-600 text-2xl" />
-              <h2 className="text-2xl md:text-3xl font-bold">{t('nearbyTitle')}</h2>
-            </div>
-            <p className={secondaryText}>{t('nearbySub')}</p>
-            {userLocation && (
-              <div className="text-xs text-green-600 mt-1">
-                📍 {lang === 'ar' ? 'موقعك الحالي مفعل' : 'Your location enabled'}
+          <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
+            <div className="text-center flex-1">
+              <div className="flex items-center justify-center gap-2 mb-2">
+                <FaMapMarkerAlt className="text-green-600 text-2xl" />
+                <h2 className="text-2xl md:text-3xl font-bold">{t('nearbyTitle')}</h2>
               </div>
-            )}
+              <p className={secondaryText}>{t('nearbySub')}</p>
+              {userLocation && (
+                <div className="text-xs text-green-600 mt-1">
+                  📍 {lang === 'ar' ? 'موقعك الحالي مفعل' : 'Your location enabled'}
+                </div>
+              )}
+            </div>
+            <button
+              onClick={() => setIsAutoTracking(!isAutoTracking)}
+              className={`px-3 py-1.5 rounded-lg text-sm flex items-center gap-1 transition ${
+                isAutoTracking 
+                  ? 'bg-red-500 hover:bg-red-600 text-white' 
+                  : 'bg-green-600 hover:bg-green-700 text-white'
+              }`}
+            >
+              {isAutoTracking ? '🔴 ' + t('stopTracking') : '🟢 ' + t('startTracking')}
+            </button>
           </div>
 
-          {/* حالة التحميل */}
           {loadingNearby && (
             <div className="text-center py-8">
               <FaSpinner className="animate-spin h-8 w-8 text-green-600 mx-auto" />
@@ -369,23 +457,21 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
             </div>
           )}
 
-          {/* أخطاء الموقع */}
           {locationError && !loadingNearby && (
             <div className="text-center py-8 bg-red-50 dark:bg-red-900/20 rounded-xl">
               <p className="text-red-600 dark:text-red-400 mb-3">{locationError}</p>
-              <button onClick={requestLocation} className="bg-green-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 mx-auto">
+              <button onClick={handleRefresh} className="bg-green-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 mx-auto">
                 <FaLocationArrow size={14} /> {t('enableLocationBtn')}
               </button>
             </div>
           )}
 
-          {/* لا توجد برامج قريبة (مع إمكانية التحديث) */}
           {!loadingNearby && !locationError && nearbyPrograms.length === 0 && (
             <div className="text-center py-8 bg-gray-50 dark:bg-gray-800 rounded-xl">
               <FaBoxOpen size={48} className="mx-auto text-gray-400 mb-2" />
               <p>{locationEnabled && userLocation ? t('noNearby') : t('enableLocation')}</p>
               {!locationEnabled && !userLocation && (
-                <button onClick={requestLocation} className="mt-4 bg-green-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 mx-auto">
+                <button onClick={handleRefresh} className="mt-4 bg-green-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 mx-auto">
                   <FaLocationArrow size={14} /> {t('enableLocationBtn')}
                 </button>
               )}
@@ -397,7 +483,6 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
             </div>
           )}
 
-          {/* عرض البرامج القريبة */}
           {!loadingNearby && !locationError && nearbyPrograms.length > 0 && (
             <>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
@@ -414,19 +499,14 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
                     </div>
                     <div className="flex-1">
                       <h3 className="font-bold text-base line-clamp-1">{prog.name}</h3>
-                      <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
-                        👤 {prog.guide_name}
-                      </p>
+                      <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">👤 {prog.guide_name}</p>
                       <div className="flex items-center gap-3 mt-2">
                         <span className="text-green-600 font-bold text-sm">{prog.price} {lang === 'ar' ? 'ريال' : 'SAR'}</span>
                         <span className="text-xs bg-green-100 dark:bg-green-900/30 text-green-700 px-2 py-0.5 rounded-full">
                           🚶 {prog.distance.toFixed(1)} km
                         </span>
                       </div>
-                      <button 
-                        onClick={() => handleViewProgramOnMap(prog.id)} 
-                        className="mt-3 text-xs bg-green-600 text-white px-3 py-1.5 rounded-lg hover:bg-green-700 transition flex items-center gap-1"
-                      >
+                      <button onClick={() => handleViewProgramOnMap(prog.id)} className="mt-3 text-xs bg-green-600 text-white px-3 py-1.5 rounded-lg hover:bg-green-700 transition flex items-center gap-1">
                         <FaMapMarkerAlt size={10} /> {t('viewOnMap')}
                       </button>
                     </div>
@@ -443,7 +523,7 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
         </div>
       </section>
 
-      {/* باقي الأقسام (كيف تعمل، آراء، CTA، Footer) تبقى كما هي */}
+      {/* كيف يعمل */}
       <section className={`py-16 ${dark ? 'bg-gray-900' : 'bg-gray-50'}`}>
         <div className="container mx-auto px-4">
           <div className="text-center mb-12">
@@ -467,6 +547,7 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
         </div>
       </section>
 
+      {/* آراء المستخدمين */}
       <section className={`py-16 ${cardBg}`}>
         <div className="container mx-auto px-4">
           <div className="text-center mb-12">
@@ -488,6 +569,7 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
         </div>
       </section>
 
+      {/* CTA */}
       <section className="py-16 bg-gradient-to-r from-green-600 to-emerald-600 text-white">
         <div className="container mx-auto px-4 text-center">
           <h2 className="text-3xl font-bold mb-4">{t('ctaTitle')}</h2>
@@ -504,6 +586,7 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
         </div>
       </section>
 
+      {/* Footer */}
       <footer className={`py-12 bg-gray-800 text-gray-300`}>
         <div className="container mx-auto px-4">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
