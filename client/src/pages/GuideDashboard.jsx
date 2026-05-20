@@ -1,5 +1,5 @@
 // client/src/pages/GuideDashboard.jsx
-// ✅ النسخة النهائية - إصلاح ظهور المحادثات في المحادثات الواردة
+// ✅ النسخة النهائية - منع إضافة أكثر من 11 برنامج لكل مرشد
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
@@ -49,7 +49,6 @@ const cleanupOldTickets = () => {
   }
 };
 
-// تنفيذ التنظيف عند تحميل الملف
 cleanupOldTickets();
 
 const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgramAdded }) => {
@@ -203,7 +202,6 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
       const token = localStorage.getItem('token');
       if (!token) { setLoadingTickets(false); return; }
 
-      // جلب جميع التذاكر (وليس فقط open)
       const response = await fetch(`${API_BASE}/api/support/tickets`, {
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
       });
@@ -215,22 +213,16 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
       if (data.success && data.tickets) {
         const guideId = String(user.id);
         tickets = data.tickets.filter(ticket => {
-          // تجاهل التذاكر المحذوفة نهائياً
           if (permanentlyDeletedSet.has(String(ticket.id))) return false;
           if (deletedSet.has(String(ticket.id))) return false;
-          
-          // قبول جميع أنواع المحادثات ذات الصلة
           const isValidType = ticket.type === 'guide_chat' || ticket.type === 'chat' || ticket.type === 'direct_chat';
           if (!isValidType && ticket.type !== 'guide_chat') return false;
-          
           const metadata = ticket.metadata || {};
-          // التحقق من أن المستخدم هو المرشد في هذه التذكرة
           const isGuideInTicket = 
             (metadata.guideId && String(metadata.guideId) === guideId) ||
             (ticket.user_id && String(ticket.user_id) === guideId) ||
             (metadata.created_by_id && String(metadata.created_by_id) === guideId) ||
             (metadata.participants && metadata.participants.some(p => String(p) === guideId));
-          
           return isGuideInTicket;
         });
         tickets.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
@@ -252,11 +244,10 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
       const data = await response.json();
       if (data.success) {
         const permanentlyDeletedSet = getPermanentlyDeletedTickets();
-        // تصفية الإشعارات المرتبطة بتذاكر محذوفة نهائياً
         const filteredNotifications = data.notifications.filter(n => {
           const ticketId = n.data?.ticketId || n.ticket_id;
           if (ticketId && permanentlyDeletedSet.has(String(ticketId))) return false;
-          // ✅ تجاهل الإشعارات من التذاكر المحذوفة
+          const deletedSet = getDeletedTickets();
           if (deletedSet.has(String(ticketId))) return false;
           return true;
         });
@@ -312,7 +303,6 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         }
         if (ticketId && (deletedSet.has(String(ticketId)) || permanentlyDeletedSet.has(String(ticketId)))) return null;
         
-        // محاولة استخراج معرف واسم المستخدم من بيانات الإشعار
         let touristId = null;
         let touristName = n.data?.userName || n.data?.fromName || n.data?.created_by_name || n.data?.sender_name || (lang === 'ar' ? 'مسافر' : 'Traveler');
         
@@ -347,11 +337,9 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
       .filter(t => !permanentlyDeletedSet.has(String(t.id)))
       .filter(t => !deletedSet.has(String(t.id)))
       .map(async (t) => {
-        // محاولة جلب اسم المستخدم من API إذا لم يكن موجوداً
         let touristId = t.user_id || t.metadata?.created_by_id || t.metadata?.userId || t.metadata?.tourist_id;
         let touristName = t.user_name || t.metadata?.created_by_name || t.metadata?.tourist_name || (lang === 'ar' ? 'مسافر' : 'Traveler');
         
-        // إذا لم نجد اسم المستخدم وكان لدينا معرف، نحاول جلبه
         if ((!touristName || touristName === (lang === 'ar' ? 'مسافر' : 'Traveler')) && touristId) {
           try {
             const token = localStorage.getItem('token');
@@ -399,26 +387,21 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
       if (!existing) {
         chatMap.set(key, item);
       } else {
-        // إذا كانت المحادثة موجودة بالفعل، نأخذ أحدثها
         if (new Date(item.created_at) > new Date(existing.created_at)) {
           chatMap.set(key, item);
         }
-        // ندمج حالة القراءة
         if (!item.is_read && existing.is_read) {
           existing.is_read = false;
           chatMap.set(key, existing);
         }
-        // إذا كانت التذكرة الجديدة تحتوي على ticketId والتذكرة القديمة لا، نأخذ الجديدة
         if (item.ticketId && !existing.ticketId) {
           chatMap.set(key, item);
         }
       }
     });
 
-    // تحويل الخريطة إلى مصفوفة وترتيبها حسب التاريخ
     const merged = Array.from(chatMap.values());
     merged.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-    
     console.log('✅ المحادثات المدمجة (محادثة واحدة لكل مستخدم):', merged.length);
     return merged;
   }, [lang, getDeletedTickets, getPermanentlyDeletedTickets, convertToNumericId]);
@@ -452,7 +435,6 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
       'guideId', 'tourist_id', 'sender_id', 'receiver_id', 'user_Id'
     ];
     
-    // معالجة data.data كسلسلة JSON
     if (data.data && typeof data.data === 'string') {
       try {
         const parsed = JSON.parse(data.data);
@@ -473,7 +455,6 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
       }
     }
     
-    // البحث في البيانات المباشرة
     for (const field of possibleFields) {
       const value = data[field];
       if (value && String(value) !== String(currentUserId) && !ignoreFields.includes(field)) {
@@ -564,7 +545,6 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     if (chatItem.touristName) touristName = chatItem.touristName;
     if (chatItem.ticketId) ticketId = chatItem.ticketId;
 
-    // معالجة الإشعارات
     if (!touristId && chatItem._sourceType === 'notification' && chatItem.rawNotif) {
       const rawNotif = chatItem.rawNotif;
       
@@ -599,7 +579,6 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
       }
     }
 
-    // معالجة التذاكر
     if (!touristId && chatItem._sourceType === 'ticket' && chatItem.rawTicket) {
       const rawTicket = chatItem.rawTicket;
       touristId = extractTouristId(rawTicket, guideId);
@@ -1016,6 +995,7 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     return null;
   };
 
+  // ✅ جلب البرامج مع إضافة ?limit=1000
   const fetchRealPrograms = useCallback(async () => {
     const guideId = user?.id;
     if (!guideId) { setLoading(false); return; }
@@ -1023,21 +1003,37 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     try {
       const token = localStorage.getItem('token');
       let programsArray = [];
-      const response = await fetch(`${API_BASE}/api/guides/${guideId}/programs`, { headers: { 'Authorization': `Bearer ${token}` } });
+      const response = await fetch(`${API_BASE}/api/guides/${guideId}/programs?limit=1000`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
       const data = await response.json();
-      if (response.ok && data.success && Array.isArray(data.programs)) { programsArray = data.programs; }
-      else if (Array.isArray(data)) { programsArray = data; }
-      else if (data.data && Array.isArray(data.data)) { programsArray = data.data; }
-      else {
-        const fallbackRes = await fetch(`${API_BASE}/api/programs`, { headers: { 'Authorization': `Bearer ${token}` } });
+      
+      if (response.ok && data.success && Array.isArray(data.programs)) {
+        programsArray = data.programs;
+      } else if (Array.isArray(data)) {
+        programsArray = data;
+      } else if (data.data && Array.isArray(data.data)) {
+        programsArray = data.data;
+      } else {
+        const fallbackRes = await fetch(`${API_BASE}/api/programs?limit=1000`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
         const fallbackData = await fallbackRes.json();
-        if (fallbackRes.ok && fallbackData.success && Array.isArray(fallbackData.programs)) { programsArray = fallbackData.programs.filter(p => String(p.guide_id) === String(guideId)); }
-        else if (Array.isArray(fallbackData)) { programsArray = fallbackData.filter(p => String(p.guide_id) === String(guideId)); }
-        else if (fallbackData.data && Array.isArray(fallbackData.data)) { programsArray = fallbackData.data.filter(p => String(p.guide_id) === String(guideId)); }
+        if (fallbackRes.ok && fallbackData.success && Array.isArray(fallbackData.programs)) {
+          programsArray = fallbackData.programs.filter(p => String(p.guide_id) === String(guideId));
+        } else if (Array.isArray(fallbackData)) {
+          programsArray = fallbackData.filter(p => String(p.guide_id) === String(guideId));
+        } else if (fallbackData.data && Array.isArray(fallbackData.data)) {
+          programsArray = fallbackData.data.filter(p => String(p.guide_id) === String(guideId));
+        }
       }
+      console.log(`🔍 تم جلب ${programsArray.length} برنامج للمرشح (بعد إضافة ?limit=1000)`);
+      
       const programsWithImages = await Promise.all(programsArray.map(async (program) => {
         try {
-          const detailRes = await fetch(`${API_BASE}/api/programs/${program.id}`, { headers: { 'Authorization': `Bearer ${token}` } });
+          const detailRes = await fetch(`${API_BASE}/api/programs/${program.id}?limit=1000`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
           if (detailRes.ok) {
             const detailData = await detailRes.json();
             const programData = detailData.program || detailData.data || detailData;
@@ -1046,12 +1042,17 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         } catch (err) { console.warn(err); }
         return { ...program, images: [] };
       }));
+      
       const formatted = programsWithImages.map(p => formatProgramFromServer(p));
       setPrograms(formatted);
       updateMapWithPrograms(formatted);
       updateStats(formatted);
-    } catch (error) { console.error(error); toast.error(lang === 'ar' ? 'فشل الاتصال بالخادم' : 'Connection failed'); }
-    finally { setLoading(false); }
+    } catch (error) {
+      console.error(error);
+      toast.error(lang === 'ar' ? 'فشل الاتصال بالخادم' : 'Connection failed');
+    } finally {
+      setLoading(false);
+    }
   }, [user?.id, lang, updateMapWithPrograms, updateStats]);
 
   useEffect(() => { fetchRealPrograms(); }, [fetchRealPrograms]);
@@ -1146,6 +1147,17 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     }
   }, [showEditModal, editingProgram, newProgram.location_lat, newProgram.location_lng, initEditMap]);
 
+  // ✅ التحقق من إمكانية إضافة برنامج جديد (الحد الأقصى 11)
+  const canAddNewProgram = useCallback(() => {
+    if (programs.length >= 11) {
+      toast.error(lang === 'ar' 
+        ? '⚠️ لا يمكنك إضافة أكثر من 11 برنامج. الحد الأقصى 11 برنامج.' 
+        : '⚠️ You cannot add more than 11 programs. Maximum is 11 programs.');
+      return false;
+    }
+    return true;
+  }, [programs.length, lang]);
+
   const validateProgram = () => {
     if (!newProgram.name.trim()) { toast.error('الرجاء إدخال اسم البرنامج'); return false; }
     if (!newProgram.location_lat || !newProgram.location_lng) { toast.error('الرجاء تحديد موقع البرنامج على الخريطة'); return false; }
@@ -1156,6 +1168,8 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
   };
 
   const handleAddProgram = async () => {
+    // ✅ التحقق من الحد الأقصى أولاً
+    if (!canAddNewProgram()) return;
     if (!validateProgram()) return;
     setLoading(true);
     try {
@@ -1497,8 +1511,44 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         <>
           <div className="flex flex-col sm:flex-row justify-between items-center gap-4 mb-6">
             <div className="relative w-full sm:w-80"><Search className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" /><input type="text" placeholder="بحث في البرامج..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pr-10 p-3 border rounded-xl dark:bg-gray-800 dark:border-gray-700 focus:ring-2 focus:ring-green-500 outline-none" /></div>
-            <div className="flex gap-3"><select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="p-3 border rounded-xl dark:bg-gray-800 dark:border-gray-700 focus:ring-2 focus:ring-green-500 outline-none"><option value="all">الكل</option><option value="active">نشط</option><option value="inactive">غير نشط</option></select><button onClick={() => fetchRealPrograms()} className="p-3 bg-gray-200 dark:bg-gray-700 rounded-xl hover:bg-gray-300 transition"><RefreshCw size={20} /></button><button onClick={() => { setActiveStep(1); setShowAddProgram(true); }} className="px-5 py-3 bg-green-600 text-white rounded-xl flex items-center gap-2 hover:bg-green-700 transition shadow-md"><Plus size={20} /> إضافة برنامج</button></div>
+            <div className="flex gap-3">
+              <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="p-3 border rounded-xl dark:bg-gray-800 dark:border-gray-700 focus:ring-2 focus:ring-green-500 outline-none">
+                <option value="all">الكل</option>
+                <option value="active">نشط</option>
+                <option value="inactive">غير نشط</option>
+              </select>
+              <button onClick={() => fetchRealPrograms()} className="p-3 bg-gray-200 dark:bg-gray-700 rounded-xl hover:bg-gray-300 transition"><RefreshCw size={20} /></button>
+              {/* زر إضافة برنامج مع منع الإضافة إذا وصل العدد 11 */}
+              {programs.length >= 11 ? (
+                <button 
+                  className="px-5 py-3 bg-gray-400 text-white rounded-xl flex items-center gap-2 cursor-not-allowed opacity-60"
+                  title={lang === 'ar' ? 'لقد وصلت إلى الحد الأقصى (11 برنامج)' : 'You have reached the maximum (11 programs)'}
+                >
+                  <Plus size={20} /> إضافة برنامج
+                </button>
+              ) : (
+                <button 
+                  onClick={() => { setActiveStep(1); setShowAddProgram(true); }} 
+                  className="px-5 py-3 bg-green-600 text-white rounded-xl flex items-center gap-2 hover:bg-green-700 transition shadow-md"
+                >
+                  <Plus size={20} /> إضافة برنامج
+                </button>
+              )}
+            </div>
           </div>
+          {/* رسالة تحذير عند الاقتراب من الحد */}
+          {programs.length >= 10 && programs.length < 11 && (
+            <div className="mb-4 p-3 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-200 rounded-lg text-sm flex items-center gap-2">
+              <AlertTriangle size={16} />
+              {lang === 'ar' ? `لديك ${programs.length} برنامج، يمكنك إضافة برنامج واحد فقط` : `You have ${programs.length} programs, you can add only one more`}
+            </div>
+          )}
+          {programs.length >= 11 && (
+            <div className="mb-4 p-3 bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-200 rounded-lg text-sm flex items-center gap-2">
+              <AlertTriangle size={16} />
+              {lang === 'ar' ? 'لقد وصلت إلى الحد الأقصى (11 برنامج). احذف بعض البرامج لإضافة جديدة.' : 'You have reached the maximum (11 programs). Delete some programs to add new ones.'}
+            </div>
+          )}
           {filteredPrograms.length === 0 ? (
             <div className="bg-white dark:bg-gray-800 rounded-2xl p-12 text-center border-2 border-dashed"><Package className="w-20 h-20 mx-auto text-gray-400 mb-4" /><p className="text-gray-500 text-lg mb-3">لا توجد برامج</p><button onClick={() => setShowAddProgram(true)} className="px-6 py-2 bg-green-600 text-white rounded-xl">➕ أضف برنامجك الأول</button></div>
           ) : (
