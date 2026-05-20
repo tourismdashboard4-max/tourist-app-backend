@@ -1,16 +1,17 @@
 // client/src/pages/FavoritesPage.jsx
-// ✅ إصدار نهائي – أزرار "دردشة مع المرشد" و"احجز الآن" تعمل بنفس طريقة ExplorePage
+// ✅ النسخة النهائية – تستخدم دوال api.js التي تخزن المفضلة لكل مستخدم على حدة
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   MapPin, Star, Heart, Trash2, Navigation, 
   Image as ImageIcon, MessageCircle, CalendarCheck 
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import api from '../services/api';
 
 const API_BASE = 'https://tourist-app-api.onrender.com';
 
-// ========== دوال معالجة الصور (مطابقة لـ ExplorePage) ==========
+// ========== دوال معالجة الصور ==========
 const buildImageUrl = (url) => {
   if (!url || typeof url !== 'string') return null;
   if (url.startsWith('blob:') || url.startsWith('data:')) return url;
@@ -32,15 +33,14 @@ const fixImagesArray = (images) => {
     return { ...img, url };
   }).filter(Boolean);
 };
-// ============================================================
 
-// خريطة ثابتة للمرشدين (مثل FALLBACK_GUIDES_MAP في ExplorePage)
+// خريطة ثابتة للمرشدين
 const FALLBACK_GUIDES_MAP = {
   "64be64ff-ae41-4eb0-a41f-27de577b6246": 6,
   "d93beb84-4e67-4f64-bfe9-d20cc25f8b44": 1,
 };
 
-// دالة حساب المسافة (هافرسين)
+// دالة حساب المسافة
 const getDistance = (lat1, lon1, lat2, lon2) => {
   if (!lat1 || !lon1 || !lat2 || !lon2) return null;
   const R = 6371;
@@ -75,7 +75,7 @@ function FavoritesPage({ lang, setPage, user }) {
   const [bookingLoading, setBookingLoading] = useState(false);
   const [guidesMap, setGuidesMap] = useState(FALLBACK_GUIDES_MAP);
 
-  // ========== جلب خريطة تحويل المعرفات (مثل ExplorePage) ==========
+  // جلب خريطة المرشدين
   useEffect(() => {
     const fetchGuidesMap = async () => {
       try {
@@ -101,12 +101,11 @@ function FavoritesPage({ lang, setPage, user }) {
     fetchGuidesMap();
   }, []);
 
-  // ========== تحويل معرف المرشد (نفس ExplorePage) ==========
+  // تحويل معرف المرشد
   const convertGuideId = useCallback((guideId, guideName) => {
     if (guideId && !isNaN(Number(guideId))) return Number(guideId);
     if (guideId && guidesMap[guideId]) return guidesMap[guideId];
     if (guideName && guidesMap[guideName]) return guidesMap[guideName];
-    // حالات خاصة
     if (guideId === "64be64ff-ae41-4eb0-a41f-27de577b6246") return 6;
     if (guideId === "d93beb84-4e67-4f64-bfe9-d20cc25f8b44") return 1;
     if (guideName === "مرشد سياحي") return 6;
@@ -114,7 +113,7 @@ function FavoritesPage({ lang, setPage, user }) {
     return null;
   }, [guidesMap]);
 
-  // ========== فتح محادثة مع المرشد (نفس ExplorePage) ==========
+  // فتح محادثة مع المرشد
   const handleChatWithGuide = useCallback((guideId, guideName) => {
     if (!user) {
       toast.error(lang === 'ar' ? 'يجب تسجيل الدخول أولاً' : 'Please login first');
@@ -144,7 +143,7 @@ function FavoritesPage({ lang, setPage, user }) {
     setPage('directChat');
   }, [user, lang, setPage, convertGuideId]);
 
-  // ========== طلب حجز البرنامج (نفس ExplorePage) ==========
+  // طلب حجز البرنامج
   const handleBooking = async (program) => {
     if (!user) {
       toast.error(lang === 'ar' ? 'يجب تسجيل الدخول أولاً' : 'Please login first');
@@ -188,7 +187,7 @@ function FavoritesPage({ lang, setPage, user }) {
     }
   };
 
-  // ========== جلب التفاصيل الكاملة للبرنامج (بما في ذلك الصور) ==========
+  // جلب تفاصيل البرنامج الكاملة
   const fetchFullProgram = async (programId) => {
     try {
       const res = await fetch(`${API_BASE}/api/programs/${programId}`);
@@ -205,11 +204,17 @@ function FavoritesPage({ lang, setPage, user }) {
     return null;
   };
 
-  // ========== تحميل المفضلة ==========
+  // ========== تحميل المفضلة باستخدام api.js ==========
   const loadFavorites = async () => {
+    if (!user) {
+      setFavorites([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
-      const favIds = JSON.parse(localStorage.getItem('favorite_programs') || '[]');
+      const response = await api.getFavorites();
+      const favIds = response.favorites || [];
       if (favIds.length === 0) {
         setFavorites([]);
         setLoading(false);
@@ -238,20 +243,30 @@ function FavoritesPage({ lang, setPage, user }) {
       detailedFavs.forEach(p => { initialIndex[p.id] = 0; });
       setImageIndex(initialIndex);
     } catch (err) {
-      console.error(err);
+      console.error('Error loading favorites:', err);
       setFavorites([]);
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const removeFavorite = (programId) => {
-    const favIds = JSON.parse(localStorage.getItem('favorite_programs') || '[]');
-    const newFavIds = favIds.filter(id => id !== programId);
-    localStorage.setItem('favorite_programs', JSON.stringify(newFavIds));
+  // ========== إزالة من المفضلة باستخدام api.js ==========
+  const removeFavorite = async (programId) => {
+    if (!user) return;
+    const previousFavs = [...favorites];
+    // Optimistic update
     setFavorites(prev => prev.filter(p => p.id !== programId));
     toast.success(lang === 'ar' ? 'تمت الإزالة من المفضلة' : 'Removed from favorites');
+    try {
+      await api.removeFavorite(programId);
+    } catch (err) {
+      console.error('Failed to remove favorite:', err);
+      setFavorites(previousFavs);
+      toast.error(lang === 'ar' ? 'فشل الإزالة، حاول مرة أخرى' : 'Failed to remove, please try again');
+    }
   };
 
-  // ========== التنقل بين الصور ==========
+  // التنقل بين الصور
   const nextImage = (e, programId, total) => {
     e.stopPropagation();
     setImageIndex(prev => ({ ...prev, [programId]: (prev[programId] + 1) % total }));
@@ -261,7 +276,7 @@ function FavoritesPage({ lang, setPage, user }) {
     setImageIndex(prev => ({ ...prev, [programId]: (prev[programId] - 1 + total) % total }));
   };
 
-  // ========== تحميل موقع المستخدم ==========
+  // تحميل موقع المستخدم
   const loadUserLocation = () => {
     const cached = localStorage.getItem('cached_user_location');
     if (cached) {
@@ -280,12 +295,28 @@ function FavoritesPage({ lang, setPage, user }) {
   useEffect(() => {
     loadUserLocation();
     loadFavorites();
-  }, []);
+  }, [user]);
 
   if (loading) {
     return (
       <div className="h-full flex items-center justify-center bg-gray-50 dark:bg-gray-900">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="h-full overflow-y-auto bg-gray-50 dark:bg-gray-900 p-4 pb-20">
+        <div className="text-center py-12">
+          <Heart size={48} className="mx-auto text-gray-400 mb-3" />
+          <p className="text-gray-500 dark:text-gray-400 mb-4">
+            {lang === 'ar' ? 'يرجى تسجيل الدخول لعرض مفضلاتك' : 'Please login to view your favorites'}
+          </p>
+          <button onClick={() => setPage('profile')} className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition">
+            {lang === 'ar' ? 'تسجيل الدخول' : 'Login'}
+          </button>
+        </div>
       </div>
     );
   }
@@ -399,7 +430,6 @@ function FavoritesPage({ lang, setPage, user }) {
                         </span>
                       </div>
                       <div className="flex gap-2">
-                        {/* زر الدردشة مع المرشد */}
                         <button
                           onClick={() => handleChatWithGuide(program.guide_id, program.guide_name)}
                           className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-sm flex items-center gap-1 transition"
@@ -407,7 +437,6 @@ function FavoritesPage({ lang, setPage, user }) {
                           <MessageCircle size={14} />
                           {lang === 'ar' ? 'دردشة' : 'Chat'}
                         </button>
-                        {/* زر الحجز */}
                         <button
                           onClick={() => handleBooking(program)}
                           disabled={bookingLoading}
