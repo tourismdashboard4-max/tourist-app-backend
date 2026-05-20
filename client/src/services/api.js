@@ -817,6 +817,60 @@ export const api = {
   },
 
   // ============================================
+  // ❤️ FAVORITES SERVICES - المفضلة (حل باستخدام localStorage لكل مستخدم)
+  // ============================================
+
+  // دالة مساعدة للحصول على مفتاح localStorage الخاص بالمستخدم الحالي
+  _getFavoritesKey() {
+    const userStr = localStorage.getItem('user');
+    if (!userStr) throw new Error('User not logged in');
+    const user = JSON.parse(userStr);
+    return `favorite_programs_user_${user.id}`;
+  },
+
+  async getFavorites() {
+    try {
+      const key = this._getFavoritesKey();
+      const stored = localStorage.getItem(key);
+      const favorites = stored ? JSON.parse(stored) : [];
+      return { success: true, favorites };
+    } catch (error) {
+      console.error('❌ Get favorites error:', error);
+      throw error;
+    }
+  },
+
+  async addFavorite(programId) {
+    try {
+      const key = this._getFavoritesKey();
+      const stored = localStorage.getItem(key);
+      let favorites = stored ? JSON.parse(stored) : [];
+      if (!favorites.includes(programId)) {
+        favorites.push(programId);
+        localStorage.setItem(key, JSON.stringify(favorites));
+      }
+      return { success: true, favorites };
+    } catch (error) {
+      console.error('❌ Add favorite error:', error);
+      throw error;
+    }
+  },
+
+  async removeFavorite(programId) {
+    try {
+      const key = this._getFavoritesKey();
+      const stored = localStorage.getItem(key);
+      let favorites = stored ? JSON.parse(stored) : [];
+      favorites = favorites.filter(id => id !== programId);
+      localStorage.setItem(key, JSON.stringify(favorites));
+      return { success: true, favorites };
+    } catch (error) {
+      console.error('❌ Remove favorite error:', error);
+      throw error;
+    }
+  },
+
+  // ============================================
   // 🖼️ PROGRAM IMAGES SERVICES - صور البرامج المتعددة
   // ============================================
 
