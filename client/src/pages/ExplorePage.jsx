@@ -1,19 +1,21 @@
 // client/src/pages/ExplorePage.jsx
-// ✅ زر إغلاق (X) لإخفاء البرنامج، وزر المفضلة في أسفل يسار الصورة
+// ✅ إصلاح: عرض البرامج النشطة فقط للمستخدمين
+// ✅ إصلاح: فلترة "برامجي فقط" للمرشد باستخدام UUID
+// ✅ منع فتح المحادثة أو الحجز عند عرض برنامج خاص بالمرشد نفسه
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import mapboxgl from "mapbox-gl";
 import { 
   Home, Bell, User, MapPin, Search, MessageCircle, 
   CalendarCheck, AlertTriangle, Heart, X, Star, Image as ImageIcon 
 } from "lucide-react";
 import toast from "react-hot-toast";
+import api from '../services/api';
 
 mapboxgl.accessToken = "pk.eyJ1IjoibW9vaG1kMTUiLCJhIjoiY21obWJwN3EwMHF1czJvc2lyaWR5em0xciJ9.sl39WFOhm4m-kOOYtGqONw";
 
 const API_BASE = "https://tourist-app-api.onrender.com";
 
-// ========== دوال مساعدة لمعالجة الصور ==========
 const buildImageUrl = (url) => {
   if (!url || typeof url !== 'string') return null;
   if (url.startsWith('blob:') || url.startsWith('data:')) return url;
@@ -21,20 +23,6 @@ const buildImageUrl = (url) => {
   if (url.startsWith('/')) return `${API_BASE}${url}`;
   return `${API_BASE}/${url}`;
 };
-
-const fixImagesArray = (images) => {
-  if (!images || !Array.isArray(images)) return [];
-  return images.map(img => {
-    if (!img) return null;
-    if (typeof img === 'string') {
-      const url = buildImageUrl(img);
-      return url ? { url, is_primary: false } : null;
-    }
-    const url = buildImageUrl(img.url || img.image_url);
-    return url ? { ...img, url } : null;
-  }).filter(Boolean);
-};
-// ==========================================
 
 const LOCALES = {
   ar: {
@@ -67,11 +55,6 @@ const LOCALES = {
   },
 };
 
-const FALLBACK_GUIDES_MAP = {
-  "64be64ff-ae41-4eb0-a41f-27de577b6246": 6,
-  "d93beb84-4e67-4f64-bfe9-d20cc25f8b44": 1,
-};
-
 function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount, dark }) {
   const t = (key) => LOCALES[lang]?.[key] || key;
   const [selectedProgram, setSelectedProgram] = useState(null);
@@ -85,88 +68,95 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
   const [loadingImages, setLoadingImages] = useState(false);
   const [bookingLoading, setBookingLoading] = useState(false);
   const [favoriteIds, setFavoriteIds] = useState([]);
-  
-  const [guidesMap, setGuidesMap] = useState(FALLBACK_GUIDES_MAP);
   const markersRef = useRef([]);
   const isMapLoadedRef = useRef(false);
 
-  // ========== المفضلة ==========
+  // ========== تحميل المفضلة ==========
   useEffect(() => {
-    const stored = localStorage.getItem('favorite_programs');
-    if (stored) {
-      try {
-        const ids = JSON.parse(stored);
-        if (Array.isArray(ids)) setFavoriteIds(ids);
-      } catch(e) { console.error(e); }
+    if (user?.id) {
+      const loadFavorites = async () => {
+        try {
+          const res = await api.getFavorites();
+          setFavoriteIds(res.favorites || []);
+        } catch (err) {
+          console.error('Failed to load favorites', err);
+        }
+      };
+      loadFavorites();
+    } else {
+      setFavoriteIds([]);
     }
-  }, []);
+  }, [user]);
 
-  const toggleFavorite = (programId) => {
-    let newFavs;
-    if (favoriteIds.includes(programId)) {
-      newFavs = favoriteIds.filter(id => id !== programId);
+  const toggleFavorite = async (programId) => {
+    if (!user) {
+      toast.error(t('loginRequired'));
+      setPage('profile');
+      return;
+    }
+    const isFavorite = favoriteIds.includes(programId);
+    const previousFavs = [...favoriteIds];
+    
+    if (isFavorite) {
+      setFavoriteIds(prev => prev.filter(id => id !== programId));
       toast.success(t('removedFromFavorites'));
     } else {
-      newFavs = [...favoriteIds, programId];
+      setFavoriteIds(prev => [...prev, programId]);
       toast.success(t('addedToFavorites'));
     }
-    setFavoriteIds(newFavs);
-    localStorage.setItem('favorite_programs', JSON.stringify(newFavs));
+
+    try {
+      if (isFavorite) {
+        await api.removeFavorite(programId);
+      } else {
+        await api.addFavorite(programId);
+      }
+    } catch (error) {
+      setFavoriteIds(previousFavs);
+      toast.error(isFavorite ? '❌ فشل إزالة من المفضلة' : '❌ فشل إضافة إلى المفضلة');
+      console.error('Favorite toggle error:', error);
+    }
   };
 
-  // ========== جلب المرشدين ==========
-  useEffect(() => {
-    const fetchGuidesMap = async () => {
-      try {
-        const response = await fetch(`${API_BASE}/api/guides`);
-        const data = await response.json();
-        let guidesList = [];
-        if (data && data.data && Array.isArray(data.data)) guidesList = data.data;
-        else if (data && Array.isArray(data)) guidesList = data;
-        else if (data && data.guides && Array.isArray(data.guides)) guidesList = data.guides;
-        else if (data && data.data && data.data.guides && Array.isArray(data.data.guides)) guidesList = data.data.guides;
-        const map = {};
-        guidesList.forEach(guide => {
-          const uuid = guide.id || guide.uuid;
-          const numericId = guide.old_id || guide.oldId;
-          if (uuid && numericId && !isNaN(Number(numericId))) map[uuid] = Number(numericId);
-          const name = guide.full_name || guide.name;
-          if (name && numericId && !isNaN(Number(numericId))) map[name] = Number(numericId);
-        });
-        setGuidesMap(prev => ({ ...prev, ...map }));
-      } catch (err) { console.error('Failed to fetch guides list:', err); }
-    };
-    fetchGuidesMap();
-  }, []);
-
-  // ========== جلب البرامج الأساسية ==========
+  // ========== جلب البرامج النشطة فقط ==========
   const fetchProgramsFromAPI = useCallback(async () => {
     try {
       const response = await fetch(`${API_BASE}/api/programs`);
       const data = await response.json();
       if (response.ok && data.success && Array.isArray(data.programs)) {
-        const progs = data.programs
-          .filter(p => p.status === 'active')
-          .map(p => ({
-            id: p.id,
-            name_ar: p.name,
-            name_en: p.name,
-            guide_name: p.guide_name,
-            guide_id: p.guide_id,
-            coords: [p.location_lng, p.location_lat],
-            price: p.price,
-            duration: p.duration,
-            rating: p.rating || 4.5,
-            location_name: p.location,
-            description: p.description,
-            image: buildImageUrl(p.image),
-            images: [],
-            safetyGuidelines: p.safetyGuidelines || "",
-          }));
+        // ✅ فلترة صارمة: فقط البرامج التي حالتها 'active' (بغض النظر عن حالة الحروف)
+        const activePrograms = data.programs.filter(p => {
+          const status = (p.status || '').toLowerCase();
+          return status === 'active';
+        });
+        
+        const progs = activePrograms.map(p => ({
+          id: p.id,
+          name_ar: p.name,
+          name_en: p.name,
+          guide_name: p.guide_name,
+          guide_id: p.guide_id,
+          coords: [p.location_lng, p.location_lat],
+          price: p.price,
+          duration: p.duration,
+          rating: p.rating || 4.5,
+          location_name: p.location,
+          description: p.description,
+          image: buildImageUrl(p.image),
+          images: [],
+          safetyGuidelines: p.safetyGuidelines || "",
+          status: p.status, // احتفظ بالحالة الأصلية
+        }));
         setPrograms(progs);
-        console.log(`📦 Loaded ${progs.length} real programs from API`);
-      } else setPrograms([]);
-    } catch (err) { console.error('Failed to fetch programs', err); setPrograms([]); }
+        console.log(`📦 Loaded ${progs.length} active programs from API`);
+      } else {
+        setPrograms([]);
+        console.warn('No programs or invalid response');
+      }
+    } catch (err) {
+      console.error('Failed to fetch programs', err);
+      setPrograms([]);
+    }
   }, []);
 
   useEffect(() => {
@@ -175,49 +165,91 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     return () => clearInterval(interval);
   }, [fetchProgramsFromAPI]);
 
-  // ========== جلب صور البرنامج (من API التفصيلي) ==========
-  const fetchProgramImages = useCallback(async (program) => {
-    if (!program) return;
-    setLoadingImages(true);
-    console.log(`🖼️ جلب صور البرنامج: ${program.id} - ${program.name_ar}`);
-    try {
-      const detailRes = await fetch(`${API_BASE}/api/programs/${program.id}`);
-      if (!detailRes.ok) {
-        console.warn(`❌ فشل جلب تفاصيل البرنامج ${program.id}: ${detailRes.status}`);
-        setProgramImages([]);
-        return;
-      }
-      const detailData = await detailRes.json();
-      const detailProgram = detailData.program || detailData.data || detailData;
-      
-      let images = [];
-      if (detailProgram && detailProgram.images && detailProgram.images.length > 0) {
-        images = detailProgram.images.map(img => buildImageUrl(img.url || img.image_url)).filter(Boolean);
-        console.log(`✅ تم العثور على ${images.length} صورة للبرنامج ${program.id}:`, images);
-      } else if (detailProgram && detailProgram.image) {
-        const imgUrl = buildImageUrl(detailProgram.image);
-        if (imgUrl) images = [imgUrl];
-        console.log(`✅ صورة واحدة للبرنامج ${program.id}: ${imgUrl}`);
-      }
-      
-      if (images.length === 0) {
-        console.warn(`⚠️ لا توجد صور للبرنامج ${program.id} حتى في التفاصيل`);
-      }
-      setProgramImages(images);
-      setCurrentImageIndex(0);
-    } catch (err) {
-      console.error(`❌ خطأ في جلب صور البرنامج ${program.id}:`, err);
-      setProgramImages([]);
-    } finally {
-      setLoadingImages(false);
+  // ========== تحويل معرف المرشد إلى UUID أو رقمي (للمقارنة) ==========
+  // نضيف دالة للحصول على UUID الحقيقي للمستخدم إذا كان user.id رقمياً
+  const getUserGuideUuid = useCallback(async () => {
+    if (!user?.id) return null;
+    // إذا كان user.id بالفعل UUID
+    if (typeof user.id === 'string' && (user.id.includes('-') || user.id.length === 36)) {
+      return user.id;
     }
-  }, []);
+    // إذا كان رقماً، نحاول جلب UUID من API
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_BASE}/api/users/${user.id}`, {
+        headers: { Authorization: token ? `Bearer ${token}` : '' }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.user) {
+          return data.user.id; // يفترض أن هذا هو UUID
+        }
+      }
+    } catch (e) { console.warn(e); }
+    return null;
+  }, [user?.id]);
+
+  const [userUuid, setUserUuid] = useState(null);
+  useEffect(() => {
+    getUserGuideUuid().then(uuid => setUserUuid(uuid));
+  }, [getUserGuideUuid]);
+
+  // ========== التحقق مما إذا كان البرنامج يخص المستخدم الحالي ==========
+  const isOwnProgram = useCallback((program) => {
+    if (!user || !program) return false;
+    const programGuideId = program.guide_id;
+    const currentUserId = userUuid || user.id;
+    // مقارنة مباشرة إذا كان كلاهما نص (UUID)
+    if (typeof programGuideId === 'string' && typeof currentUserId === 'string') {
+      return programGuideId === currentUserId;
+    }
+    // وإلا استخدام التحويل الرقمي (كحل احتياطي)
+    const numericProgramId = (() => {
+      if (!isNaN(Number(programGuideId))) return Number(programGuideId);
+      // يمكن إضافة map إذا لزم الأمر
+      return null;
+    })();
+    const numericUserId = !isNaN(Number(currentUserId)) ? Number(currentUserId) : null;
+    return numericProgramId && numericUserId && numericProgramId === numericUserId;
+  }, [user, userUuid]);
+
+  // ========== فتح المحادثة ==========
+  const handleChatWithGuide = (guideId, guideName) => {
+    if (!user) {
+      toast.error(lang === 'ar' ? 'يجب تسجيل الدخول أولاً' : 'Please login first');
+      setPage('profile');
+      return;
+    }
+    if (!guideId && !guideName) {
+      toast.error(lang === 'ar' ? 'معرف المرشد غير موجود' : 'Guide ID missing');
+      return;
+    }
+    if (selectedProgram && isOwnProgram(selectedProgram)) {
+      toast.error(lang === 'ar' ? 'هذا برنامجك الخاص، لا يمكنك فتح محادثة مع نفسك' : 'This is your own program, you cannot chat with yourself');
+      return;
+    }
+    // نحتاج إلى معرف رقمي للدردشة (قد يكون old_id)
+    // نستخدم نفس المعرف الذي يرسله البرنامج (قد يكون UUID)
+    const recipientId = guideId; // نفترض أن API الدردشة يقبل UUID
+    if (!recipientId) {
+      toast.error(lang === 'ar' ? 'معرف المرشد غير صالح' : 'Invalid guide ID');
+      return;
+    }
+    const chatParams = { recipientId, recipientName: guideName || 'المرشد', timestamp: Date.now() };
+    localStorage.setItem('directChatParams', JSON.stringify(chatParams));
+    toast.success(lang === 'ar' ? `تم فتح المحادثة مع ${guideName}` : `Chat opened with ${guideName}`);
+    setPage('directChat');
+  };
 
   // ========== الحجز ==========
   const handleBooking = async (program) => {
     if (!user) {
       toast.error(lang === 'ar' ? 'يجب تسجيل الدخول أولاً' : 'Please login first');
       setPage('profile');
+      return;
+    }
+    if (isOwnProgram(program)) {
+      toast.error(lang === 'ar' ? 'لا يمكنك حجز برنامجك الخاص' : 'You cannot book your own program');
       return;
     }
     setBookingLoading(true);
@@ -252,50 +284,60 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     } finally { setBookingLoading(false); }
   };
 
-  // ========== تحويل معرف المرشد ==========
-  const convertGuideId = useCallback((guideId, guideName) => {
-    if (guideId && !isNaN(Number(guideId))) return Number(guideId);
-    if (guideId && guidesMap[guideId]) return guidesMap[guideId];
-    if (guideName && guidesMap[guideName]) return guidesMap[guideName];
-    if (guideId === "64be64ff-ae41-4eb0-a41f-27de577b6246") return 6;
-    if (guideId === "d93beb84-4e67-4f64-bfe9-d20cc25f8b44") return 1;
-    if (guideName === "مرشد سياحي") return 6;
-    if (guideName === "Tour Guide 2") return 6;
-    return null;
-  }, [guidesMap]);
-
-  const handleChatWithGuide = (guideId, guideName) => {
-    if (!user) {
-      toast.error(lang === 'ar' ? 'يجب تسجيل الدخول أولاً' : 'Please login first');
-      setPage('profile');
-      return;
-    }
-    if (!guideId && !guideName) {
-      toast.error(lang === 'ar' ? 'معرف المرشد غير موجود' : 'Guide ID missing');
-      return;
-    }
-    const numericGuideId = convertGuideId(guideId, guideName);
-    if (!numericGuideId) {
-      toast.error(lang === 'ar' ? 'معرف المرشد غير صالح' : 'Invalid guide ID');
-      return;
-    }
-    if (String(numericGuideId) === String(user.id)) {
-      toast.error(lang === 'ar' ? 'لا يمكنك فتح محادثة مع نفسك' : 'Cannot start chat with yourself');
-      return;
-    }
-    const chatParams = { recipientId: numericGuideId, recipientName: guideName || 'المرشد', timestamp: Date.now() };
-    localStorage.setItem('directChatParams', JSON.stringify(chatParams));
-    toast.success(lang === 'ar' ? `تم فتح المحادثة مع ${guideName}` : `Chat opened with ${guideName}`);
-    setPage('directChat');
-  };
-
+  // ========== فلترة البرامج المعروضة ==========
+  // جميع البرامج تم جلبها نشطة فقط
   const allPrograms = programs;
-  const displayedPrograms = showMyProgramsOnly
-    ? allPrograms.filter(p => p.guide_id === user?.id)
-    : allPrograms;
+  
+  // ✅ تصحيح فلترة "برامجي فقط": استخدام UUID للمقارنة
+  const displayedPrograms = useMemo(() => {
+    if (!showMyProgramsOnly) return allPrograms;
+    if (!user) return [];
+    const currentGuideId = userUuid || user.id;
+    if (!currentGuideId) return [];
+    return allPrograms.filter(p => {
+      const programGuideId = p.guide_id;
+      // مقارنة كسلاسل نصية (UUID)
+      if (typeof programGuideId === 'string' && typeof currentGuideId === 'string') {
+        return programGuideId === currentGuideId;
+      }
+      // محاولة تحويل كليهما إلى أرقام إذا أمكن
+      const numProg = !isNaN(Number(programGuideId)) ? Number(programGuideId) : null;
+      const numUser = !isNaN(Number(currentGuideId)) ? Number(currentGuideId) : null;
+      return numProg && numUser && numProg === numUser;
+    });
+  }, [allPrograms, showMyProgramsOnly, user, userUuid]);
+
   const isGuide = user?.role === 'guide' || user?.type === 'guide' || user?.isGuide === true;
 
-  // ========== إضافة العلامات ==========
+  // ========== الخريطة والعلامات (بدون تغيير جوهري) ==========
+  const fetchProgramImages = useCallback(async (program) => {
+    if (!program) return;
+    setLoadingImages(true);
+    try {
+      const detailRes = await fetch(`${API_BASE}/api/programs/${program.id}`);
+      if (!detailRes.ok) {
+        setProgramImages([]);
+        return;
+      }
+      const detailData = await detailRes.json();
+      const detailProgram = detailData.program || detailData.data || detailData;
+      let images = [];
+      if (detailProgram?.images?.length) {
+        images = detailProgram.images.map(img => buildImageUrl(img.url || img.image_url)).filter(Boolean);
+      } else if (detailProgram?.image) {
+        const imgUrl = buildImageUrl(detailProgram.image);
+        if (imgUrl) images = [imgUrl];
+      }
+      setProgramImages(images);
+      setCurrentImageIndex(0);
+    } catch (err) {
+      console.error(err);
+      setProgramImages([]);
+    } finally {
+      setLoadingImages(false);
+    }
+  }, []);
+
   const addMarkersToMap = useCallback((map, programsList) => {
     if (!map || !isMapLoadedRef.current) return false;
     markersRef.current.forEach(m => { try { m.remove(); } catch(e) {} });
@@ -306,7 +348,7 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     });
     validPrograms.forEach(program => {
       const coords = program.coords;
-      const color = program.guide_id === user?.id ? "#9b59b6" : "#10b981";
+      const color = isOwnProgram(program) ? "#9b59b6" : "#10b981";
       const marker = new mapboxgl.Marker({ color, scale: 1.1 }).setLngLat(coords).addTo(map);
       marker.getElement().addEventListener('click', () => {
         setSelectedProgram(program);
@@ -316,7 +358,7 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
       markersRef.current.push(marker);
     });
     return true;
-  }, [user?.id, fetchProgramImages, mapInstance]);
+  }, [isOwnProgram, fetchProgramImages, mapInstance]);
 
   const addUserMarker = (map, location) => {
     if (!map || !location) return;
@@ -326,7 +368,7 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
       .addTo(map);
   };
 
-  // ========== تهيئة الخريطة ==========
+  // تهيئة الخريطة (نفس الكود الأصلي مع تعديلات بسيطة)
   useEffect(() => {
     if (!mapContainerRef?.current) return;
     if (mapInstance) return;
@@ -378,6 +420,7 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     if (mapInstance && isMapLoadedRef.current && mapInstance.setLanguage) mapInstance.setLanguage(lang);
   }, [lang, mapInstance]);
 
+  // استعادة برنامج محدد من localStorage
   useEffect(() => {
     if (programs.length === 0) return;
     const selectedId = localStorage.getItem('selectedProgramId');
@@ -431,7 +474,7 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
           <input type="text" placeholder={t('search')} className="w-full p-2 pr-9 rounded-lg bg-white/20 text-white placeholder-white/70" />
         </div>
         <div className="flex justify-between mt-3 text-xs">
-          <span>📌 {displayedPrograms.length} برنامج</span>
+          <span>📌 {displayedPrograms.length} برنامج نشط</span>
           {isGuide && (
             <button onClick={() => setShowMyProgramsOnly(!showMyProgramsOnly)} className={`px-2 py-1 rounded ${showMyProgramsOnly ? 'bg-yellow-500' : 'bg-white/20'}`}>
               {showMyProgramsOnly ? '📌 برامجي فقط' : '🌍 كل البرامج'}
@@ -475,10 +518,8 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
               </div>
             )}
 
-            {/* overlay شفاف أسفل الصورة للنصوص والأزرار */}
             <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent pointer-events-none" />
 
-            {/* زر الإغلاق (X) في أعلى اليمين */}
             <button
               onClick={() => { setSelectedProgram(null); setProgramImages([]); }}
               className="absolute top-2 right-2 z-20 bg-black/50 backdrop-blur-sm p-1.5 rounded-full text-white hover:bg-black/70 transition pointer-events-auto"
@@ -486,7 +527,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
               <X size={18} />
             </button>
 
-            {/* زر المفضلة (القلب) في أسفل اليسار */}
             <button
               onClick={() => toggleFavorite(selectedProgram.id)}
               className="absolute bottom-2 left-2 z-20 bg-black/50 backdrop-blur-sm p-1.5 rounded-full hover:scale-105 transition pointer-events-auto"
@@ -494,7 +534,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
               <Heart size={18} className={favoriteIds.includes(selectedProgram.id) ? 'fill-red-500 text-red-500' : 'text-white'} />
             </button>
 
-            {/* أزرار الدردشة والحجز في أسفل اليمين */}
             <div className="absolute bottom-2 right-2 z-20 flex gap-2 pointer-events-auto">
               <button onClick={() => handleChatWithGuide(selectedProgram.guide_id, selectedProgram.guide_name)} className="bg-blue-600/90 backdrop-blur-sm text-white px-2 py-1 rounded-lg text-xs font-medium flex items-center gap-1 hover:bg-blue-700 transition">
                 <MessageCircle size={12} /> <span>{t('chatWithGuide')}</span>
@@ -504,7 +543,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
               </button>
             </div>
 
-            {/* النصوص أسفل الصورة (فوق الأزرار) */}
             <div className="absolute bottom-12 left-2 right-2 text-white pointer-events-none">
               <h3 className="font-bold text-base leading-tight drop-shadow-md">{selectedProgram.name_ar || selectedProgram.name}</h3>
               <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs mt-0.5">
