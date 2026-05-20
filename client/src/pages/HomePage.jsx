@@ -1,19 +1,73 @@
 // client/src/pages/HomePage.jsx
-// ✅ تحديث الموقع كل 5 ثوانٍ مع إمكانية إيقاف التتبع
+// ✅ إصلاح كامل: استخدام نفس منطق FavoritesPage الناجح
+// ✅ عرض جميع البرامج النشطة بنفس التصميم والأزرار
+// ✅ دعم تحديد الموقع وعرض المسافة
+// ✅ تحديث تلقائي كل 5 ثوانٍ
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { 
+import {
   FaMapMarkedAlt, FaUserTie, FaWallet, FaComments,
   FaStar, FaArrowLeft, FaShieldAlt, FaClock,
   FaSun, FaMoon, FaUserCircle, FaMapMarkerAlt, FaBoxOpen,
   FaSpinner, FaLocationArrow, FaRedoAlt
 } from 'react-icons/fa';
 import { motion } from 'framer-motion';
+import toast from 'react-hot-toast';
+import { Navigation, MessageCircle, CalendarCheck, MapPin, Image as ImageIcon } from 'lucide-react';
 
-// إعدادات صلاحية الموقع للتخزين
-const LOCATION_CACHE_KEY = 'cached_user_location';
-const LOCATION_CACHE_HOURS = 1; // صلاحية الموقع لمدة ساعة
+const API_BASE = 'https://tourist-app-api.onrender.com';
 
+// ========== دوال معالجة الصور (مطابقة لـ FavoritesPage) ==========
+const buildImageUrl = (url) => {
+  if (!url || typeof url !== 'string') return null;
+  if (url.startsWith('blob:') || url.startsWith('data:')) return url;
+  if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  if (url.startsWith('/')) return `${API_BASE}${url}`;
+  return `${API_BASE}/${url}`;
+};
+
+const fixImagesArray = (images) => {
+  if (!images || !Array.isArray(images)) return [];
+  return images.map(img => {
+    if (!img) return null;
+    if (typeof img === 'string') {
+      const url = buildImageUrl(img);
+      return url ? { url, is_primary: false } : null;
+    }
+    const url = buildImageUrl(img.url || img.image_url);
+    if (!url) return null;
+    return { ...img, url };
+  }).filter(Boolean);
+};
+
+// ========== دالة حساب المسافة ==========
+const getDistance = (lat1, lon1, lat2, lon2) => {
+  if (!lat1 || !lon1 || !lat2 || !lon2) return null;
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat/2) ** 2 +
+            Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) *
+            Math.sin(dLon/2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
+};
+
+// ========== تحديد نوع النشاط ==========
+const getActivityType = (program, lang) => {
+  const text = ((program.name || '') + ' ' + (program.description || '')).toLowerCase();
+  if (text.includes('بحر') || text.includes('بحري') || text.includes('marine') || text.includes('sea'))
+    return { ar: 'رحلات بحرية', en: 'Marine trips', icon: '🌊' };
+  if (text.includes('تسلق') || text.includes('جبل') || text.includes('mountain') || text.includes('climb'))
+    return { ar: 'تسلق جبال', en: 'Mountain climbing', icon: '⛰️' };
+  if (text.includes('سفاري') || text.includes('safari') || text.includes('براري'))
+    return { ar: 'رحلات سفاري', en: 'Safari trips', icon: '🦁' };
+  if (text.includes('براشوت') || text.includes('مظلة') || text.includes('parachute') || text.includes('skydive'))
+    return { ar: 'رحلات براشوت', en: 'Parachute trips', icon: '🪂' };
+  return { ar: 'برنامج سياحي', en: 'Tour program', icon: '🏞️' };
+};
+
+// ========== الترجمة ==========
 const LOCALES = {
   ar: {
     appName: 'تطبيق السائح',
@@ -26,14 +80,14 @@ const LOCALES = {
     stats: { guides: 'مرشد سياحي', trips: 'رحلة مكتملة', rating: 'تقييم إيجابي', support: 'دعم فني' },
     featuresTitle: 'مميزات التطبيق',
     featuresSub: 'كل ما تحتاجه في منصة واحدة لتجربة سياحية مميزة',
-    nearbyTitle: 'برامج قريبة منك',
-    nearbySub: 'اكتشف البرامج السياحية القريبة من موقعك الحالي (أقل من 45 كم)',
-    loading: 'جاري تحميل البرامج القريبة...',
-    noNearby: 'لا توجد برامج قريبة ضمن نطاق 45 كم حالياً',
-    enableLocation: 'يُرجى تفعيل خدمة الموقع لعرض البرامج القريبة',
+    nearbyTitle: 'البرامج السياحية',
+    nearbySub: 'اكتشف البرامج السياحية النشطة القريبة منك',
+    loading: 'جاري تحميل البرامج...',
+    noNearby: 'لا توجد برامج سياحية نشطة',
+    enableLocation: 'يُرجى تفعيل خدمة الموقع لحساب المسافة',
     enableLocationBtn: 'تفعيل الموقع',
     viewOnMap: 'عرض على الخريطة',
-    refreshNearby: 'تحديث الموقع والبرامج',
+    refreshNearby: 'تحديث البرامج',
     retry: 'إعادة المحاولة',
     locationPermissionDenied: 'تم رفض إذن الموقع. يرجى السماح يدوياً من إعدادات المتصفح.',
     locationTimeout: 'انتهت مهلة الحصول على الموقع، حاول مرة أخرى.',
@@ -80,14 +134,14 @@ const LOCALES = {
     stats: { guides: 'Tour Guides', trips: 'Completed Trips', rating: 'Positive Rating', support: '24/7 Support' },
     featuresTitle: 'Features',
     featuresSub: 'Everything you need in one platform for an exceptional tourism experience',
-    nearbyTitle: 'Nearby Programs',
-    nearbySub: 'Discover tour programs near your current location (within 45 km)',
-    loading: 'Loading nearby programs...',
-    noNearby: 'No nearby programs within 45 km at the moment',
-    enableLocation: 'Please enable location to see nearby programs',
+    nearbyTitle: 'Tour Programs',
+    nearbySub: 'Discover active tour programs near you',
+    loading: 'Loading programs...',
+    noNearby: 'No active tour programs available',
+    enableLocation: 'Please enable location to see distance',
     enableLocationBtn: 'Enable location',
     viewOnMap: 'View on map',
-    refreshNearby: 'Refresh location & programs',
+    refreshNearby: 'Refresh programs',
     retry: 'Retry',
     locationPermissionDenied: 'Location permission denied. Please allow manually from browser settings.',
     locationTimeout: 'Location request timeout, please try again.',
@@ -125,204 +179,171 @@ const LOCALES = {
   }
 };
 
-const API_BASE = 'https://tourist-app-api.onrender.com';
-
 const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLocationEnabled }) => {
   const t = (key) => LOCALES[lang]?.[key] || key;
 
-  const [nearbyPrograms, setNearbyPrograms] = useState([]);
-  const [loadingNearby, setLoadingNearby] = useState(false);
-  const [locationError, setLocationError] = useState(null);
+  const [programs, setPrograms] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
-  const [isLocating, setIsLocating] = useState(false);
   const [isAutoTracking, setIsAutoTracking] = useState(true);
   const intervalRef = useRef(null);
 
-  // دوال التخزين المؤقت للموقع
-  const saveLocationToCache = (lat, lng) => {
-    const locationData = { lat, lng, timestamp: Date.now() };
-    localStorage.setItem(LOCATION_CACHE_KEY, JSON.stringify(locationData));
-  };
-
-  const loadLocationFromCache = () => {
-    const cached = localStorage.getItem(LOCATION_CACHE_KEY);
-    if (!cached) return null;
+  // ========== جلب تفاصيل البرنامج (مطابق لـ FavoritesPage) ==========
+  const fetchFullProgram = async (programId) => {
     try {
-      const data = JSON.parse(cached);
-      const now = Date.now();
-      const hoursPassed = (now - data.timestamp) / (1000 * 60 * 60);
-      if (hoursPassed > LOCATION_CACHE_HOURS) {
-        localStorage.removeItem(LOCATION_CACHE_KEY);
-        return null;
+      const res = await fetch(`${API_BASE}/api/programs/${programId}`);
+      const data = await res.json();
+      const programData = data.program || data.data || data;
+      if (programData) {
+        return {
+          ...programData,
+          images: fixImagesArray(programData.images || []),
+          image: buildImageUrl(programData.image)
+        };
       }
-      return { lat: data.lat, lng: data.lng };
-    } catch (e) {
-      return null;
-    }
+    } catch (err) { console.error(`Failed to fetch details for program ${programId}`, err); }
+    return null;
   };
 
-  // حساب المسافة
-  const getDistance = useCallback((lat1, lon1, lat2, lon2) => {
-    const R = 6371;
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = Math.sin(dLat/2) ** 2 +
-              Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) *
-              Math.sin(dLon/2) ** 2;
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    return R * c;
-  }, []);
-
-  // جلب البرامج القريبة
-  const fetchNearbyPrograms = useCallback(async (lat, lng) => {
-    if (!lat || !lng) return;
-    setLoadingNearby(true);
-    setLocationError(null);
+  // ========== جلب جميع البرامج النشطة ==========
+  const fetchAllActivePrograms = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     try {
       const res = await fetch(`${API_BASE}/api/programs`);
       const data = await res.json();
       if (!res.ok) throw new Error('API error');
-      
+
       let programsArray = [];
       if (data.success && Array.isArray(data.programs)) programsArray = data.programs;
       else if (Array.isArray(data)) programsArray = data;
       else if (data.data && Array.isArray(data.data)) programsArray = data.data;
       else programsArray = [];
 
-      const activePrograms = programsArray.filter(p => 
-        p.status === 'active' && 
-        p.location_lat && p.location_lng &&
-        typeof p.location_lat === 'number' && 
-        typeof p.location_lng === 'number'
-      );
+      // تصفية البرامج النشطة
+      const activePrograms = programsArray.filter(p => {
+        const status = (p.status || '').toLowerCase();
+        return status === 'active';
+      });
 
       if (activePrograms.length === 0) {
-        setNearbyPrograms([]);
+        setPrograms([]);
         return;
       }
 
-      const withDistance = activePrograms.map(p => ({
-        id: p.id,
-        name: p.name,
-        guide_name: p.guide_name || (lang === 'ar' ? 'مرشد' : 'Guide'),
-        guide_id: p.guide_id,
-        price: p.price,
-        image: p.image && (p.image.startsWith('http') ? p.image : (p.image ? `${API_BASE}${p.image}` : null)),
-        distance: getDistance(lat, lng, p.location_lat, p.location_lng)
-      })).filter(p => p.distance <= 45)
-        .sort((a,b) => a.distance - b.distance)
-        .slice(0, 8);
+      // جلب التفاصيل الكاملة لكل برنامج (للحصول على الصور والبيانات الكاملة)
+      const detailedPrograms = await Promise.all(
+        activePrograms.map(async (prog) => {
+          const detailed = await fetchFullProgram(prog.id);
+          if (detailed) return detailed;
+          return {
+            ...prog,
+            images: fixImagesArray(prog.images || []),
+            image: buildImageUrl(prog.image)
+          };
+        })
+      );
 
-      setNearbyPrograms(withDistance);
+      // حساب المسافة لكل برنامج إذا كان الموقع متاحاً
+      const withDistance = detailedPrograms.map(p => {
+        let distance = null;
+        if (userLocation && p.location_lat && p.location_lng) {
+          distance = getDistance(
+            userLocation.lat, userLocation.lng,
+            p.location_lat, p.location_lng
+          );
+        }
+        return { ...p, distance };
+      });
+
+      setPrograms(withDistance);
+      console.log(`✅ HomePage loaded ${withDistance.length} active programs`);
     } catch (err) {
-      console.error('Fetch nearby error:', err);
-      setLocationError(err.message);
+      console.error('Fetch programs error:', err);
+      setError(err.message);
+      toast.error(lang === 'ar' ? 'فشل تحميل البرامج' : 'Failed to load programs');
     } finally {
-      setLoadingNearby(false);
+      setLoading(false);
     }
-  }, [getDistance, lang]);
+  }, [userLocation, lang]);
 
-  // طلب الموقع
-  const requestLocation = useCallback((forceFresh = false) => {
-    if (isLocating) return;
+  // ========== طلب موقع المستخدم ==========
+  const requestLocation = useCallback(() => {
     if (!navigator.geolocation) {
-      setLocationError(t('locationGeneralError'));
+      setError(t('locationGeneralError'));
       return;
     }
-    setIsLocating(true);
-    setLocationError(null);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        const { latitude, longitude } = pos.coords;
-        setUserLocation({ lat: latitude, lng: longitude });
+        setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
         setLocationEnabled(true);
-        saveLocationToCache(latitude, longitude);
-        setIsLocating(false);
-        fetchNearbyPrograms(latitude, longitude);
+        localStorage.setItem('cached_user_location', JSON.stringify({ lat: pos.coords.latitude, lng: pos.coords.longitude, timestamp: Date.now() }));
       },
       (err) => {
-        setIsLocating(false);
-        let errorMsg = '';
+        let msg = '';
         switch(err.code) {
-          case err.PERMISSION_DENIED:
-            errorMsg = t('locationPermissionDenied');
-            break;
-          case err.TIMEOUT:
-            errorMsg = t('locationTimeout');
-            break;
-          default:
-            errorMsg = t('locationGeneralError');
+          case err.PERMISSION_DENIED: msg = t('locationPermissionDenied'); break;
+          case err.TIMEOUT: msg = t('locationTimeout'); break;
+          default: msg = t('locationGeneralError');
         }
-        setLocationError(errorMsg);
+        setError(msg);
         setLocationEnabled(false);
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      { enableHighAccuracy: true, timeout: 10000 }
     );
-  }, [fetchNearbyPrograms, setLocationEnabled, t, isLocating]);
+  }, [setLocationEnabled, t]);
 
-  // تحديث يدوي
-  const handleRefresh = () => {
-    requestLocation(true);
-  };
-
-  // الانتقال للخريطة
-  const handleViewProgramOnMap = (programId) => {
-    localStorage.setItem('highlightProgramId', String(programId));
-    setPage('explore');
-  };
-
-  // تحميل الموقع المخزن عند البداية
+  // تحميل الموقع المخزن
   useEffect(() => {
-    const cachedLocation = loadLocationFromCache();
-    if (cachedLocation) {
-      setUserLocation(cachedLocation);
-      setLocationEnabled(true);
-      fetchNearbyPrograms(cachedLocation.lat, cachedLocation.lng);
-    } else {
-      if (locationEnabled && !userLocation && !isLocating) {
-        requestLocation();
-      }
+    const cached = localStorage.getItem('cached_user_location');
+    if (cached) {
+      try {
+        const data = JSON.parse(cached);
+        const hoursPassed = (Date.now() - data.timestamp) / (1000 * 60 * 60);
+        if (hoursPassed < 1) {
+          setUserLocation({ lat: data.lat, lng: data.lng });
+          setLocationEnabled(true);
+        }
+      } catch(e) {}
     }
   }, []);
 
-  // مزامنة تفعيل الموقع مع props
+  // تحميل أولي للبرامج
   useEffect(() => {
-    if (locationEnabled && !userLocation && !isLocating) {
-      const cached = loadLocationFromCache();
-      if (cached) {
-        setUserLocation(cached);
-        fetchNearbyPrograms(cached.lat, cached.lng);
-      } else {
-        requestLocation();
-      }
-    }
-  }, [locationEnabled, userLocation, isLocating, requestLocation, fetchNearbyPrograms]);
+    fetchAllActivePrograms();
+    if (locationEnabled && !userLocation) requestLocation();
+  }, []);
 
-  // التحديث الدوري كل 5 ثوانٍ
+  // تحديث البرامج عندما يتغير الموقع
+  useEffect(() => {
+    fetchAllActivePrograms();
+  }, [userLocation]);
+
+  // تحديث دوري كل 5 ثوانٍ
   useEffect(() => {
     if (!isAutoTracking) {
       if (intervalRef.current) clearInterval(intervalRef.current);
       return;
     }
-    if (!locationEnabled && !userLocation) return;
-    
     if (intervalRef.current) clearInterval(intervalRef.current);
     intervalRef.current = setInterval(() => {
-      if (isLocating) return;
-      if (userLocation) {
-        // تحديث البرامج بناءً على الموقع الحالي دون طلب موقع جديد
-        fetchNearbyPrograms(userLocation.lat, userLocation.lng);
-      } else if (locationEnabled) {
-        requestLocation();
-      }
-    }, 5000); // 5 ثوان
+      fetchAllActivePrograms();
+    }, 5000);
+    return () => clearInterval(intervalRef.current);
+  }, [isAutoTracking, fetchAllActivePrograms]);
 
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-  }, [isAutoTracking, locationEnabled, userLocation, isLocating, fetchNearbyPrograms, requestLocation]);
+  const handleRefresh = () => {
+    fetchAllActivePrograms();
+    if (locationEnabled && !userLocation) requestLocation();
+  };
 
-  // بقية البيانات الثابتة
+  const handleViewProgramOnMap = (programId) => {
+    localStorage.setItem('highlightProgramId', String(programId));
+    setPage('explore');
+  };
+
+  // بيانات ثابتة (الميزات، الإحصائيات، آراء المستخدمين)
   const features = [
     { icon: <FaMapMarkedAlt size={40} />, title: 'اكتشف الأماكن', desc: 'استكشف أفضل الوجهات السياحية والأماكن المميزة في جميع أنحاء المملكة', primary: true },
     { icon: <FaUserTie size={40} />, title: 'مرشدين محترفين', desc: 'احجز مع مرشدين سياحيين معتمدين ومتميزين بخبرة عالية', primary: false },
@@ -349,7 +370,7 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
 
   return (
     <div className={`${bgColor} ${textColor} min-h-screen`} dir="rtl">
-      {/* شريط التنقل */}
+      {/* شريط التنقل العلوي */}
       <nav className={`sticky top-0 z-50 ${cardBg} border-b ${borderColor} shadow-sm`}>
         <div className="container mx-auto px-4 py-3 flex justify-between items-center">
           <button onClick={() => setPage('home')} className="text-2xl font-bold">{t('appName')}</button>
@@ -422,7 +443,7 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
         </div>
       </section>
 
-      {/* قسم البرامج القريبة مع زر تبديل التتبع التلقائي */}
+      {/* قسم البرامج السياحية – بنفس تصميم FavoritesPage */}
       <section className={`py-16 ${cardBg}`}>
         <div className="container mx-auto px-4">
           <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
@@ -441,84 +462,147 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
             <button
               onClick={() => setIsAutoTracking(!isAutoTracking)}
               className={`px-3 py-1.5 rounded-lg text-sm flex items-center gap-1 transition ${
-                isAutoTracking 
-                  ? 'bg-red-500 hover:bg-red-600 text-white' 
-                  : 'bg-green-600 hover:bg-green-700 text-white'
+                isAutoTracking ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-green-600 hover:bg-green-700 text-white'
               }`}
             >
               {isAutoTracking ? '🔴 ' + t('stopTracking') : '🟢 ' + t('startTracking')}
             </button>
           </div>
 
-          {loadingNearby && (
+          {loading && (
             <div className="text-center py-8">
               <FaSpinner className="animate-spin h-8 w-8 text-green-600 mx-auto" />
               <p className="mt-2">{t('loading')}</p>
             </div>
           )}
 
-          {locationError && !loadingNearby && (
+          {error && !loading && (
             <div className="text-center py-8 bg-red-50 dark:bg-red-900/20 rounded-xl">
-              <p className="text-red-600 dark:text-red-400 mb-3">{locationError}</p>
+              <p className="text-red-600 dark:text-red-400 mb-3">{error}</p>
               <button onClick={handleRefresh} className="bg-green-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 mx-auto">
                 <FaLocationArrow size={14} /> {t('enableLocationBtn')}
               </button>
             </div>
           )}
 
-          {!loadingNearby && !locationError && nearbyPrograms.length === 0 && (
+          {!loading && !error && programs.length === 0 && (
             <div className="text-center py-8 bg-gray-50 dark:bg-gray-800 rounded-xl">
               <FaBoxOpen size={48} className="mx-auto text-gray-400 mb-2" />
-              <p>{locationEnabled && userLocation ? t('noNearby') : t('enableLocation')}</p>
-              {!locationEnabled && !userLocation && (
-                <button onClick={handleRefresh} className="mt-4 bg-green-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 mx-auto">
-                  <FaLocationArrow size={14} /> {t('enableLocationBtn')}
-                </button>
-              )}
-              {locationEnabled && userLocation && (
-                <button onClick={handleRefresh} className="mt-4 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 px-4 py-2 rounded-lg flex items-center gap-2 mx-auto">
-                  <FaRedoAlt size={14} /> {t('refreshNearby')}
-                </button>
-              )}
+              <p>{t('noNearby')}</p>
+              <button onClick={handleRefresh} className="mt-4 bg-green-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 mx-auto">
+                <FaRedoAlt size={14} /> {t('refreshNearby')}
+              </button>
             </div>
           )}
 
-          {!loadingNearby && !locationError && nearbyPrograms.length > 0 && (
-            <>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                {nearbyPrograms.map(prog => (
-                  <div key={prog.id} className={`flex gap-4 p-4 rounded-xl shadow-md ${cardBg} border ${borderColor}`}>
-                    <div className="w-20 h-20 rounded-lg overflow-hidden bg-gray-100 flex-shrink-0">
-                      {prog.image ? (
-                        <img src={prog.image} alt={prog.name} className="w-full h-full object-cover" onError={(e) => e.target.style.display = 'none'} />
+          {!loading && !error && programs.length > 0 && (
+            <div className="space-y-5">
+              {programs.map(program => {
+                const images = (program.images || []).map(img => img.url);
+                const currentImgIndex = 0;
+                const currentImg = images.length > 0 ? images[0] : (program.image ? buildImageUrl(program.image) : null);
+                const distance = program.distance !== null ? program.distance.toFixed(1) : null;
+                const activity = getActivityType(program, lang);
+                const activityLabel = lang === 'ar' ? activity.ar : activity.en;
+
+                return (
+                  <div key={program.id} className="bg-white dark:bg-gray-800 rounded-xl shadow-md hover:shadow-lg transition overflow-hidden relative">
+                    <div className="relative w-full h-64 md:h-72 bg-gray-200">
+                      {currentImg ? (
+                        <img
+                          src={currentImg}
+                          alt={program.name}
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            e.target.onerror = null;
+                            e.target.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' viewBox='0 0 100 100'%3E%3Crect width='100%25' height='100%25' fill='%23f0f0f0'/%3E%3Ctext x='50%25' y='50%25' font-size='12' fill='%23999' text-anchor='middle' dy='.3em'%3E❌%3C/text%3E%3C/svg%3E";
+                          }}
+                        />
                       ) : (
-                        <div className="w-full h-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
-                          <FaMapMarkerAlt className="text-gray-400 text-2xl" />
+                        <div className="w-full h-full flex flex-col items-center justify-center text-gray-400">
+                          <ImageIcon size={40} />
+                          <span className="text-sm mt-1">لا توجد صورة</span>
                         </div>
                       )}
-                    </div>
-                    <div className="flex-1">
-                      <h3 className="font-bold text-base line-clamp-1">{prog.name}</h3>
-                      <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">👤 {prog.guide_name}</p>
-                      <div className="flex items-center gap-3 mt-2">
-                        <span className="text-green-600 font-bold text-sm">{prog.price} {lang === 'ar' ? 'ريال' : 'SAR'}</span>
-                        <span className="text-xs bg-green-100 dark:bg-green-900/30 text-green-700 px-2 py-0.5 rounded-full">
-                          🚶 {prog.distance.toFixed(1)} km
-                        </span>
+
+                      {images.length > 1 && (
+                        <>
+                          <button className="absolute left-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full text-sm hover:bg-black/70 transition z-10">❮</button>
+                          <button className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full text-sm hover:bg-black/70 transition z-10">❯</button>
+                          <span className="absolute bottom-2 right-2 bg-black/60 text-white text-xs px-2 py-1 rounded-full z-10">1/{images.length}</span>
+                        </>
+                      )}
+
+                      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/50 to-transparent p-4 text-white">
+                        <div className="flex justify-between items-end">
+                          <div>
+                            <h3 className="font-bold text-lg leading-tight">{program.name}</h3>
+                            <div className="flex items-center gap-2 mt-1 flex-wrap">
+                              <span className="text-xs bg-purple-500/80 backdrop-blur-sm px-2 py-0.5 rounded-full">
+                                {activity.icon} {activityLabel}
+                              </span>
+                              {distance && (
+                                <span className="text-xs bg-blue-500/80 backdrop-blur-sm px-2 py-0.5 rounded-full flex items-center gap-1">
+                                  <Navigation size={12} /> {distance} كم
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="text-left">
+                            <div className="text-sm font-semibold">{program.guide_name || 'مرشد سياحي'}</div>
+                            <div className="text-xs flex items-center gap-1 mt-0.5">
+                              <MapPin size={12} />
+                              <span className="truncate max-w-[120px]">{program.location || 'موقع البرنامج'}</span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex justify-between items-center mt-2">
+                          <div className="flex items-center gap-2">
+                            <Star size={14} className="text-yellow-400 fill-current" />
+                            <span className="text-sm">{program.rating || 4.5}</span>
+                            <span className="text-sm font-bold bg-green-600/80 px-2 py-0.5 rounded-full">
+                              {program.price} ريال
+                            </span>
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => {
+                                if (!user) {
+                                  toast.error(lang === 'ar' ? 'يجب تسجيل الدخول أولاً' : 'Please login first');
+                                  setPage('profile');
+                                  return;
+                                }
+                                // فتح المحادثة (يمكن إضافة منطق المحادثة لاحقاً)
+                                toast.info(lang === 'ar' ? 'سيتم تفعيل الدردشة قريباً' : 'Chat feature coming soon');
+                              }}
+                              className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-sm flex items-center gap-1 transition"
+                            >
+                              <MessageCircle size={14} />
+                              {lang === 'ar' ? 'دردشة' : 'Chat'}
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (!user) {
+                                  toast.error(lang === 'ar' ? 'يجب تسجيل الدخول أولاً' : 'Please login first');
+                                  setPage('profile');
+                                  return;
+                                }
+                                // حجز البرنامج (يمكن إضافة منطق الحجز لاحقاً)
+                                toast.info(lang === 'ar' ? 'سيتم تفعيل الحجز قريباً' : 'Booking feature coming soon');
+                              }}
+                              className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1.5 rounded-lg text-sm flex items-center gap-1 transition"
+                            >
+                              <CalendarCheck size={14} />
+                              {lang === 'ar' ? 'احجز' : 'Book'}
+                            </button>
+                          </div>
+                        </div>
                       </div>
-                      <button onClick={() => handleViewProgramOnMap(prog.id)} className="mt-3 text-xs bg-green-600 text-white px-3 py-1.5 rounded-lg hover:bg-green-700 transition flex items-center gap-1">
-                        <FaMapMarkerAlt size={10} /> {t('viewOnMap')}
-                      </button>
                     </div>
                   </div>
-                ))}
-              </div>
-              <div className="text-center mt-4">
-                <button onClick={handleRefresh} className="text-sm text-green-600 hover:text-green-700 flex items-center gap-1 mx-auto">
-                  <FaRedoAlt size={12} /> {t('refreshNearby')}
-                </button>
-              </div>
-            </>
+                );
+              })}
+            </div>
           )}
         </div>
       </section>
