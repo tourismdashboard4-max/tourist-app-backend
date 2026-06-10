@@ -1,5 +1,5 @@
 // server.js - النسخة النهائية مع دعم safety_guidelines وإشعارات المرشدين
-// ✅ تم إصلاح اتصال قاعدة البيانات باستخدام اسم المستخدم الصحيح "postgres"
+// ✅ تم إصلاح اتصال قاعدة البيانات باستخدام sslmode=verify-full وإعادة المحاولة
 
 import express from 'express';
 import cors from 'cors';
@@ -150,15 +150,15 @@ io.on('connection', (socket) => {
 });
 
 // ===================== إعداد PostgreSQL السحابي (Supabase) =====================
-// ✅ استخدام رابط قاعدة البيانات الصحيح (بدون نقطة في اسم المستخدم)
-const DATABASE_URL = 'postgresql://postgres:1Z8EorhYqsAClmLn@db.sqcdxhmnrbazrzeswxmv.supabase.co:5432/postgres?sslmode=require';
+// ✅ استخدام رابط قاعدة البيانات مع sslmode=verify-full
+const DATABASE_URL = 'postgresql://postgres:1Z8EorhYqsAClmLn@db.sqcdxhmnrbazrzeswxmv.supabase.co:5432/postgres?sslmode=verify-full';
 
-console.log('✅ Connecting to Supabase Cloud via DATABASE_URL (correct username)');
+console.log('✅ Connecting to Supabase Cloud via DATABASE_URL with sslmode=verify-full');
 console.log(`🔗 Connection string (hidden password): ${DATABASE_URL.replace(/:[^:]*@/, ':****@')}`);
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  // لا نضبط ssl يدوياً لأن pg سيستخلص الإعدادات من السلسلة (verify-full يتطلب rejectUnauthorized: true)
   max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 30000,
@@ -182,33 +182,43 @@ async function getUUIDFromNumericId(numericId) {
   return uuid;
 }
 
-const connectDB = async () => {
-  try {
-    const client = await pool.connect();
-    const hostMatch = DATABASE_URL.match(/@([^:]+)/);
-    const host = hostMatch ? hostMatch[1] : 'db.supabase.co';
-    console.log(`
+// دالة الاتصال بقاعدة البيانات مع إعادة المحاولة
+const connectDB = async (retries = 5, delay = 5000) => {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const client = await pool.connect();
+      const hostMatch = DATABASE_URL.match(/@([^:]+)/);
+      const host = hostMatch ? hostMatch[1] : 'db.supabase.co';
+      console.log(`
     ╔══════════════════════════════════════════╗
     ║   ✅ Supabase PostgreSQL Connected       ║
     ╠══════════════════════════════════════════╣
     ║  Host: ${host.padEnd(30)}║
     ║  Database: postgres                      ║
     ║  Type: Cloud (Supabase Direct)          ║
-    ║  SSL: Enabled ✅ (rejectUnauthorized)    ║
+    ║  SSL: verify-full (Full verification)    ║
     ║  Pool Size: 20                           ║
     ╚══════════════════════════════════════════╝
-    `);
-    client.release();
+      `);
+      client.release();
 
-    pool.on('error', (err) => console.error('❌ Supabase error:', err));
-    pool.on('connect', () => console.log('🔄 New client connected'));
-    pool.on('remove', () => console.log('🔄 Client removed from pool'));
+      pool.on('error', (err) => console.error('❌ Supabase error:', err));
+      pool.on('connect', () => console.log('🔄 New client connected'));
+      pool.on('remove', () => console.log('🔄 Client removed from pool'));
 
-    return true;
-  } catch (error) {
-    console.error('❌ Supabase Connection Failed:', error.message);
-    return false;
+      return true;
+    } catch (error) {
+      console.error(`❌ Supabase Connection Failed (attempt ${attempt}/${retries}):`, error.message);
+      if (attempt < retries) {
+        console.log(`⏳ Retrying in ${delay/1000} seconds...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      } else {
+        console.error('❌ All connection attempts failed. Exiting...');
+        return false;
+      }
+    }
   }
+  return false;
 };
 
 // ===================== Middleware =====================
@@ -692,7 +702,14 @@ app.get('/api/test', (req, res) => {
 });
 
 app.get('/health', async (req, res) => {
-  const dbConnected = await connectDB().catch(() => false);
+  let dbConnected = false;
+  try {
+    const client = await pool.connect();
+    dbConnected = true;
+    client.release();
+  } catch (e) {
+    dbConnected = false;
+  }
   let dbInfo = {};
   if (dbConnected) {
     try {
@@ -1029,10 +1046,10 @@ app.put('/api/admin/notifications/:id/archive', async (req, res) => {
 
 // ===================== تشغيل الخادم =====================
 const startServer = async () => {
-  console.log('🚀 Starting server with Supabase Cloud connection...');
+  console.log('🚀 Starting server with Supabase Cloud connection (sslmode=verify-full)...');
   const dbConnected = await connectDB();
   if (!dbConnected) {
-    console.error('❌ Failed to connect to Supabase database. Exiting...');
+    console.error('❌ Failed to connect to Supabase database after multiple retries. Exiting...');
     process.exit(1);
   }
   
@@ -1064,7 +1081,7 @@ const startServer = async () => {
   ║  ▶ Database:    ✅ Supabase Cloud (Direct)   
   ║  ▶ WebSocket:   ✅ Enabled                   
   ║  ▶ CORS:        ✅ Open (origin: *)          
-  ║  ▶ SSL:         ✅ Enabled (rejectUnauthorized)
+  ║  ▶ SSL:         ✅ verify-full (Full verification)
   ║  ▶ Notifications: ✅ Guide & User           
   ║  ▶ Timezone:    UTC                          
   ║  ▶ Test API:    /api/test                    
@@ -1072,7 +1089,7 @@ const startServer = async () => {
   ╚══════════════════════════════════════════════╝
       `);
       console.log(`🕐 Server started at: ${new Date().toISOString()}`);
-      console.log(`☁️ Connected to Supabase Cloud PostgreSQL via Direct Connection`);
+      console.log(`☁️ Connected to Supabase Cloud PostgreSQL via Direct Connection (verify-full SSL)`);
       if (!isRender) {
         console.log(`📱 Access from mobile: http://${localIP}:${PORT}`);
       }
