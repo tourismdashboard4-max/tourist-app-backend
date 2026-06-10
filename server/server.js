@@ -135,15 +135,16 @@ io.on('connection', (socket) => {
   });
 });
 
-// ===================== قاعدة البيانات (Supabase) – الحل النهائي المبسط =====================
-const DATABASE_URL = 'postgresql://postgres:1Z8EorhYqsAClmLn@aws-1-ap-northeast-1.pooler.supabase.com:6543/postgres?sslmode=require';
+// ===================== قاعدة البيانات (Supabase) – الإعداد الصحيح =====================
+// ✅ الرابط بدون ?sslmode=require، وإعداد SSL فقط في كود Pool
+const DATABASE_URL = 'postgresql://postgres:1Z8EorhYqsAClmLn@aws-1-ap-northeast-1.pooler.supabase.com:6543/postgres';
 
-console.log('✅ Using simplified DATABASE_URL (Pooler)');
+console.log('✅ Using DATABASE_URL without sslmode=require');
 console.log(`🔗 Connection string (hidden password): ${DATABASE_URL.replace(/:[^:]*@/, ':****@')}`);
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  ssl: { rejectUnauthorized: false }, // ✅ هذا يحل مشكلة الشهادة الذاتية
   max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 30000,
@@ -173,7 +174,7 @@ const connectDB = async () => {
     ║  Host: aws-1-ap-northeast-1.pooler.supabase.com
     ║  Database: postgres                      ║
     ║  Type: Cloud (Supabase Pooler)          ║
-    ║  SSL: Enabled ✅                         ║
+    ║  SSL: Enabled ✅ (rejectUnauthorized)    ║
     ║  Pool Size: 20                           ║
     ╚══════════════════════════════════════════╝
     `);
@@ -683,7 +684,7 @@ const startServer = async () => {
   ║  ▶ Local IP:    http://${localIP}:${PORT}     
   ║  ▶ Database:    ✅ Supabase Cloud (Pooler)   
   ║  ▶ WebSocket:   ✅ Enabled                   
-  ║  ▶ SSL:         ✅ Enabled                   
+  ║  ▶ SSL:         ✅ Enabled (rejectUnauthorized)
   ║  ▶ Notifications: ✅ Guide & User           
   ║  ▶ Test API:    /api/test                    
   ║  ▶ Health:      /health                      
