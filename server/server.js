@@ -1,6 +1,5 @@
 // server.js - النسخة النهائية مع دعم safety_guidelines وإشعارات المرشدين
-// ✅ إصلاح اتصال قاعدة البيانات: استخدام رابط Pooler الصحيح مع SSL المناسب
-
+// ✅ إصلاح اتصال قاعدة البيانات: استخدام معلمات منفصلة لتجنب مشكلة النقطة في اسم المستخدم
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -150,28 +149,27 @@ io.on('connection', (socket) => {
 });
 
 // ===================== إعداد PostgreSQL السحابي (Supabase) =====================
-let pool;
-let poolConfig;
+// ✅ استخدام معلمات اتصال منفصلة لتجنب مشكلة النقطة في اسم المستخدم
+const DB_CONFIG = {
+  host: 'aws-1-ap-northeast-1.pooler.supabase.com',
+  port: 6543,
+  user: 'postgres.sqcdxhmnrbazrzeswxmv',
+  password: '1Z8EorhYqsAClmLn',
+  database: 'postgres',
+  ssl: { rejectUnauthorized: false }
+};
 
-// ✅ الرابط الصحيح لقاعدة البيانات (Pooler) – يعمل من Render
-const CORRECT_DATABASE_URL = 'postgresql://postgres.sqcdxhmnrbazrzeswxmv:1Z8EorhYqsAClmLn@aws-1-ap-northeast-1.pooler.supabase.com:6543/postgres';
+console.log('✅ Using explicit DB_CONFIG (Pooler)');
+console.log(`🔗 Host: ${DB_CONFIG.host}, User: ${DB_CONFIG.user}, Port: ${DB_CONFIG.port}`);
 
-// تجاهل أي متغير بيئة قديم واستخدام الرابط الثابت الصحيح مباشرة
-const connectionString = CORRECT_DATABASE_URL;
-console.log('✅ Using hardcoded CORRECT_DATABASE_URL (Pooler)');
-console.log(`🔗 Connection string (hidden password): ${connectionString.replace(/:[^:]*@/, ':****@')}`);
-
-poolConfig = {
-  connectionString: connectionString,
-  ssl: { rejectUnauthorized: false }, // ✅ يمنع خطأ "self-signed certificate"
+const pool = new Pool({
+  ...DB_CONFIG,
   max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 30000,
   keepAlive: true,
   keepAliveInitialDelayMillis: 10000
-};
-
-pool = new Pool(poolConfig);
+});
 
 // دالة مساعدة لتحويل المعرف الرقمي إلى UUID
 async function getUUIDFromNumericId(numericId) {
@@ -192,14 +190,12 @@ async function getUUIDFromNumericId(numericId) {
 const connectDB = async () => {
   try {
     const client = await pool.connect();
-    const hostMatch = connectionString.match(/@([^:]+)/);
-    const host = hostMatch ? hostMatch[1] : 'pooler.supabase.com';
     console.log(`
     ╔══════════════════════════════════════════╗
     ║   ✅ Supabase PostgreSQL Connected       ║
     ╠══════════════════════════════════════════╣
-    ║  Host: ${host.padEnd(30)}║
-    ║  Database: ${connectionString.split('/').pop().split('?')[0].padEnd(30)}║
+    ║  Host: ${DB_CONFIG.host.padEnd(30)}║
+    ║  Database: ${DB_CONFIG.database.padEnd(30)}║
     ║  Type: Cloud (Supabase Pooler)          ║
     ║  SSL: Enabled ✅ (rejectUnauthorized)    ║
     ║  Pool Size: 20                           ║
