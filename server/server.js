@@ -1,6 +1,6 @@
 // server.js - النسخة النهائية مع دعم safety_guidelines وإشعارات المرشدين
-// ✅ تم إضافة دعم كامل لنظام التذاكر عبر استيراد supportRoutes
-// ✅ دوال إرسال الإشعارات (sendNotification, notifyGuideNewTicket, notifyGuideNewMessage) جاهزة للاستخدام في مسارات الدعم
+// ✅ تم إصلاح اتصال قاعدة البيانات باستخدام رابط Pooler الصحيح
+// ✅ دوال إرسال الإشعارات (sendNotification, notifyGuideNewTicket, notifyGuideNewMessage) جاهزة للاستخدام
 
 import express from 'express';
 import cors from 'cors';
@@ -154,15 +154,22 @@ io.on('connection', (socket) => {
 let pool;
 let poolConfig;
 
-if (!process.env.DATABASE_URL) {
-  console.error('❌ DATABASE_URL is required for cloud connection!');
-  console.error('⚠️ Please add DATABASE_URL to your environment variables');
-  process.exit(1);
-}
+// ✅ الرابط الصحيح لقاعدة البيانات (Pooler) – يعمل من Render
+const CORRECT_DATABASE_URL = 'postgresql://postgres.sqcdxhmnrbazrzeswxmv:1Z8EorhYqsAClmLn@aws-1-ap-northeast-1.pooler.supabase.com:6543/postgres?sslmode=require';
 
-console.log('☁️ Connecting to Supabase Cloud via DATABASE_URL');
+// استخدام الرابط الصحيح إما من متغير البيئة (إذا كان صحيحاً) أو الرابط الثابت
+let connectionString;
+if (process.env.DATABASE_URL && process.env.DATABASE_URL.includes('pooler.supabase.com')) {
+  connectionString = process.env.DATABASE_URL;
+  console.log('✅ Using DATABASE_URL from environment (Pooler)');
+} else {
+  connectionString = CORRECT_DATABASE_URL;
+  console.log('⚠️ Using hardcoded CORRECT_DATABASE_URL (Pooler)');
+}
+console.log(`🔗 Connection string (hidden password): ${connectionString.replace(/:[^:]*@/, ':****@')}`);
+
 poolConfig = {
-  connectionString: process.env.DATABASE_URL,
+  connectionString: connectionString,
   ssl: { rejectUnauthorized: false },
   max: 20,
   idleTimeoutMillis: 30000,
@@ -192,15 +199,15 @@ async function getUUIDFromNumericId(numericId) {
 const connectDB = async () => {
   try {
     const client = await pool.connect();
-    const hostMatch = process.env.DATABASE_URL.match(/@([^:]+)/);
+    const hostMatch = connectionString.match(/@([^:]+)/);
     const host = hostMatch ? hostMatch[1] : 'supabase.co';
     console.log(`
     ╔══════════════════════════════════════════╗
     ║   ✅ Supabase PostgreSQL Connected       ║
     ╠══════════════════════════════════════════╣
     ║  Host: ${host.padEnd(30)}║
-    ║  Database: ${poolConfig.connectionString.split('/').pop().split('?')[0].padEnd(30)}║
-    ║  Type: Cloud (Supabase)                 ║
+    ║  Database: ${connectionString.split('/').pop().split('?')[0].padEnd(30)}║
+    ║  Type: Cloud (Supabase Pooler)          ║
     ║  SSL: Enabled ✅                         ║
     ║  Pool Size: 20                           ║
     ╚══════════════════════════════════════════╝
@@ -720,7 +727,7 @@ app.get('/health', async (req, res) => {
     uptime: process.uptime(),
     port: PORT,
     database: dbConnected ? 'connected' : 'disconnected',
-    databaseType: 'Supabase Cloud',
+    databaseType: 'Supabase Cloud (Pooler)',
     databaseVersion: dbInfo.version || 'Unknown',
     websocket: 'active',
     onlineUsers: onlineUsers.size,
@@ -1073,7 +1080,7 @@ const startServer = async () => {
   ║  ▶ Port:        ${PORT}                         
   ║  ▶ Environment: ${isRender ? 'Render Cloud' : 'Local Development'}            
   ║  ▶ Local IP:    http://${localIP}:${PORT}     
-  ║  ▶ Database:    ✅ Supabase Cloud            
+  ║  ▶ Database:    ✅ Supabase Cloud (Pooler)   
   ║  ▶ WebSocket:   ✅ Enabled                   
   ║  ▶ SSL:         ✅ Enabled                   
   ║  ▶ Notifications: ✅ Guide & User           
@@ -1083,7 +1090,7 @@ const startServer = async () => {
   ╚══════════════════════════════════════════════╝
       `);
       console.log(`🕐 Server started at: ${new Date().toISOString()}`);
-      console.log(`☁️ Connected to Supabase Cloud PostgreSQL`);
+      console.log(`☁️ Connected to Supabase Cloud PostgreSQL via Pooler`);
       if (!isRender) {
         console.log(`📱 Access from mobile: http://${localIP}:${PORT}`);
       }
