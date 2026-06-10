@@ -1,5 +1,5 @@
 // server.js - النسخة النهائية مع دعم safety_guidelines وإشعارات المرشدين
-// ✅ تم إصلاح اتصال قاعدة البيانات باستخدام sslmode=verify-full وإعادة المحاولة
+// ✅ تم إصلاح اتصال قاعدة البيانات لـ Render (فرض IPv4 + SSL متوافق)
 
 import express from 'express';
 import cors from 'cors';
@@ -150,15 +150,19 @@ io.on('connection', (socket) => {
 });
 
 // ===================== إعداد PostgreSQL السحابي (Supabase) =====================
-// ✅ استخدام رابط قاعدة البيانات مع sslmode=verify-full
-const DATABASE_URL = 'postgresql://postgres:1Z8EorhYqsAClmLn@db.sqcdxhmnrbazrzeswxmv.supabase.co:5432/postgres?sslmode=verify-full';
+// ✅ استخدام متغير البيئة DATABASE_URL (يفضل استخدام رابط Session Pooler مع family=4)
+const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://postgres:1Z8EorhYqsAClmLn@db.sqcdxhmnrbazrzeswxmv.supabase.co:5432/postgres?sslmode=require';
 
-console.log('✅ Connecting to Supabase Cloud via DATABASE_URL with sslmode=verify-full');
+console.log('✅ Connecting to Supabase Cloud via DATABASE_URL with sslmode=require');
 console.log(`🔗 Connection string (hidden password): ${DATABASE_URL.replace(/:[^:]*@/, ':****@')}`);
 
+// إعدادات Pool المتوافقة مع Render (فرض IPv4 + SSL مرن)
 const pool = new Pool({
   connectionString: DATABASE_URL,
-  // لا نضبط ssl يدوياً لأن pg سيستخلص الإعدادات من السلسلة (verify-full يتطلب rejectUnauthorized: true)
+  ssl: {
+    rejectUnauthorized: false,   // ✅ ضروري لـ Render مع Supabase
+  },
+  family: 4,                     // ✅ فرض استخدام IPv4 (حل مشكلة ENETUNREACH)
   max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 30000,
@@ -182,7 +186,7 @@ async function getUUIDFromNumericId(numericId) {
   return uuid;
 }
 
-// دالة الاتصال بقاعدة البيانات مع إعادة المحاولة
+// دالة الاتصال بقاعدة البيانات مع إعادة المحاولة ومعالجة أخطاء IPv6
 const connectDB = async (retries = 5, delay = 5000) => {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -196,7 +200,8 @@ const connectDB = async (retries = 5, delay = 5000) => {
     ║  Host: ${host.padEnd(30)}║
     ║  Database: postgres                      ║
     ║  Type: Cloud (Supabase Direct)          ║
-    ║  SSL: verify-full (Full verification)    ║
+    ║  SSL: require (flexible)                 ║
+    ║  IPv4: enforced (family=4)               ║
     ║  Pool Size: 20                           ║
     ╚══════════════════════════════════════════╝
       `);
@@ -209,6 +214,9 @@ const connectDB = async (retries = 5, delay = 5000) => {
       return true;
     } catch (error) {
       console.error(`❌ Supabase Connection Failed (attempt ${attempt}/${retries}):`, error.message);
+      if (error.message.includes('ENETUNREACH') || error.message.includes('IPv6')) {
+        console.log('⚠️ IPv6 connectivity issue detected - family=4 should resolve this.');
+      }
       if (attempt < retries) {
         console.log(`⏳ Retrying in ${delay/1000} seconds...`);
         await new Promise(resolve => setTimeout(resolve, delay));
@@ -1046,7 +1054,7 @@ app.put('/api/admin/notifications/:id/archive', async (req, res) => {
 
 // ===================== تشغيل الخادم =====================
 const startServer = async () => {
-  console.log('🚀 Starting server with Supabase Cloud connection (sslmode=verify-full)...');
+  console.log('🚀 Starting server with Supabase Cloud connection (IPv4 + SSL flexible)...');
   const dbConnected = await connectDB();
   if (!dbConnected) {
     console.error('❌ Failed to connect to Supabase database after multiple retries. Exiting...');
@@ -1078,10 +1086,11 @@ const startServer = async () => {
   ║  ▶ Port:        ${PORT}                         
   ║  ▶ Environment: ${isRender ? 'Render Cloud' : 'Local Development'}            
   ║  ▶ Local IP:    http://${localIP}:${PORT}     
-  ║  ▶ Database:    ✅ Supabase Cloud (Direct)   
+  ║  ▶ Database:    ✅ Supabase Cloud (IPv4)     
   ║  ▶ WebSocket:   ✅ Enabled                   
   ║  ▶ CORS:        ✅ Open (origin: *)          
-  ║  ▶ SSL:         ✅ verify-full (Full verification)
+  ║  ▶ SSL:         ✅ require (flexible)        
+  ║  ▶ IPv4:        ✅ forced (family=4)         
   ║  ▶ Notifications: ✅ Guide & User           
   ║  ▶ Timezone:    UTC                          
   ║  ▶ Test API:    /api/test                    
@@ -1089,7 +1098,7 @@ const startServer = async () => {
   ╚══════════════════════════════════════════════╝
       `);
       console.log(`🕐 Server started at: ${new Date().toISOString()}`);
-      console.log(`☁️ Connected to Supabase Cloud PostgreSQL via Direct Connection (verify-full SSL)`);
+      console.log(`☁️ Connected to Supabase Cloud PostgreSQL via Direct Connection with IPv4 enforcement.`);
       if (!isRender) {
         console.log(`📱 Access from mobile: http://${localIP}:${PORT}`);
       }
