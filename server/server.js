@@ -1,4 +1,4 @@
-// server.js - النسخة النهائية المُبسّطة
+// server.js - النسخة النهائية (Direct Connection)
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -135,16 +135,16 @@ io.on('connection', (socket) => {
   });
 });
 
-// ===================== قاعدة البيانات (Supabase) – الإعداد الصحيح =====================
-// ✅ الرابط بدون ?sslmode=require، وإعداد SSL فقط في كود Pool
-const DATABASE_URL = 'postgresql://postgres:1Z8EorhYqsAClmLn@aws-1-ap-northeast-1.pooler.supabase.com:6543/postgres';
+// ===================== قاعدة البيانات (Supabase) – الرابط المباشر =====================
+// ✅ استخدام الرابط المباشر (Direct Connection) على منفذ 5432 مع SSL إجباري
+const DATABASE_URL = 'postgresql://postgres.sqcdxhmnrbazrzeswxmv:1Z8EorhYqsAClmLn@db.sqcdxhmnrbazrzeswxmv.supabase.co:5432/postgres?sslmode=require';
 
-console.log('✅ Using DATABASE_URL without sslmode=require');
+console.log('✅ Using DIRECT DATABASE_URL (Port 5432)');
 console.log(`🔗 Connection string (hidden password): ${DATABASE_URL.replace(/:[^:]*@/, ':****@')}`);
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
-  ssl: { rejectUnauthorized: false }, // ✅ هذا يحل مشكلة الشهادة الذاتية
+  ssl: { rejectUnauthorized: false }, // ضروري لتجنب خطأ الشهادة الذاتية
   max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 30000,
@@ -171,9 +171,9 @@ const connectDB = async () => {
     ╔══════════════════════════════════════════╗
     ║   ✅ Supabase PostgreSQL Connected       ║
     ╠══════════════════════════════════════════╣
-    ║  Host: aws-1-ap-northeast-1.pooler.supabase.com
+    ║  Host: db.sqcdxhmnrbazrzeswxmv.supabase.co
     ║  Database: postgres                      ║
-    ║  Type: Cloud (Supabase Pooler)          ║
+    ║  Type: Direct Connection                 ║
     ║  SSL: Enabled ✅ (rejectUnauthorized)    ║
     ║  Pool Size: 20                           ║
     ╚══════════════════════════════════════════╝
@@ -682,7 +682,7 @@ const startServer = async () => {
   ║  ▶ Port:        ${PORT}                         
   ║  ▶ Environment: ${isRender ? 'Render Cloud' : 'Local Development'}            
   ║  ▶ Local IP:    http://${localIP}:${PORT}     
-  ║  ▶ Database:    ✅ Supabase Cloud (Pooler)   
+  ║  ▶ Database:    ✅ Supabase Cloud (Direct)   
   ║  ▶ WebSocket:   ✅ Enabled                   
   ║  ▶ SSL:         ✅ Enabled (rejectUnauthorized)
   ║  ▶ Notifications: ✅ Guide & User           
