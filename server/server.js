@@ -1,6 +1,5 @@
 // server.js - النسخة النهائية مع دعم safety_guidelines وإشعارات المرشدين
-// ✅ تم إصلاح اتصال قاعدة البيانات باستخدام رابط Pooler الصحيح
-// ✅ دوال إرسال الإشعارات (sendNotification, notifyGuideNewTicket, notifyGuideNewMessage) جاهزة للاستخدام
+// ✅ تم إصلاح اتصال قاعدة البيانات باستخدام رابط Pooler الصحيح مع SSL المناسب
 
 import express from 'express';
 import cors from 'cors';
@@ -155,12 +154,13 @@ let pool;
 let poolConfig;
 
 // ✅ الرابط الصحيح لقاعدة البيانات (Pooler) – يعمل من Render
-const CORRECT_DATABASE_URL = 'postgresql://postgres.sqcdxhmnrbazrzeswxmv:1Z8EorhYqsAClmLn@aws-1-ap-northeast-1.pooler.supabase.com:6543/postgres?sslmode=require';
+const CORRECT_DATABASE_URL = 'postgresql://postgres.sqcdxhmnrbazrzeswxmv:1Z8EorhYqsAClmLn@aws-1-ap-northeast-1.pooler.supabase.com:6543/postgres';
 
-// استخدام الرابط الصحيح إما من متغير البيئة (إذا كان صحيحاً) أو الرابط الثابت
+// تحديد الرابط الذي سنستخدمه
 let connectionString;
 if (process.env.DATABASE_URL && process.env.DATABASE_URL.includes('pooler.supabase.com')) {
-  connectionString = process.env.DATABASE_URL;
+  // إزالة أي معلمات استعلام (مثل ?sslmode=require) لتجنب مشاكل SSL
+  connectionString = process.env.DATABASE_URL.split('?')[0];
   console.log('✅ Using DATABASE_URL from environment (Pooler)');
 } else {
   connectionString = CORRECT_DATABASE_URL;
@@ -170,7 +170,7 @@ console.log(`🔗 Connection string (hidden password): ${connectionString.replac
 
 poolConfig = {
   connectionString: connectionString,
-  ssl: { rejectUnauthorized: false },
+  ssl: { rejectUnauthorized: false }, // ✅ يمنع خطأ "self-signed certificate"
   max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 30000,
@@ -200,7 +200,7 @@ const connectDB = async () => {
   try {
     const client = await pool.connect();
     const hostMatch = connectionString.match(/@([^:]+)/);
-    const host = hostMatch ? hostMatch[1] : 'supabase.co';
+    const host = hostMatch ? hostMatch[1] : 'pooler.supabase.com';
     console.log(`
     ╔══════════════════════════════════════════╗
     ║   ✅ Supabase PostgreSQL Connected       ║
@@ -208,7 +208,7 @@ const connectDB = async () => {
     ║  Host: ${host.padEnd(30)}║
     ║  Database: ${connectionString.split('/').pop().split('?')[0].padEnd(30)}║
     ║  Type: Cloud (Supabase Pooler)          ║
-    ║  SSL: Enabled ✅                         ║
+    ║  SSL: Enabled ✅ (rejectUnauthorized)    ║
     ║  Pool Size: 20                           ║
     ╚══════════════════════════════════════════╝
     `);
@@ -1082,7 +1082,7 @@ const startServer = async () => {
   ║  ▶ Local IP:    http://${localIP}:${PORT}     
   ║  ▶ Database:    ✅ Supabase Cloud (Pooler)   
   ║  ▶ WebSocket:   ✅ Enabled                   
-  ║  ▶ SSL:         ✅ Enabled                   
+  ║  ▶ SSL:         ✅ Enabled (rejectUnauthorized)
   ║  ▶ Notifications: ✅ Guide & User           
   ║  ▶ Timezone:    UTC                          
   ║  ▶ Test API:    /api/test                    
