@@ -151,7 +151,7 @@ io.on('connection', (socket) => {
 
 // ===================== إعداد PostgreSQL السحابي (Supabase) =====================
 // ✅ استخدام متغير البيئة DATABASE_URL (يفضل استخدام رابط Session Pooler مع family=4)
-const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://postgres:1Z8EorhYqsAClmLn@db.sqcdxhmnrbazrzeswxmv.supabase.co:5432/postgres?sslmode=require';
+const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://postgres.sqcdxhmnrbazrzeswxmv:1Z8EorhYqsAClmLn@aws-1-ap-northeast-1.pooler.supabase.com:6543/postgres?sslmode=require';
 
 console.log('✅ Connecting to Supabase Cloud via DATABASE_URL with sslmode=require');
 console.log(`🔗 Connection string (hidden password): ${DATABASE_URL.replace(/:[^:]*@/, ':****@')}`);
@@ -1121,3 +1121,4 @@ export {
   notifyGuideNewMessage,
   sendNotificationToAllAdmins
 };
+
