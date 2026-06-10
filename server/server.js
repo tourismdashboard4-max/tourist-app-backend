@@ -1,4 +1,6 @@
-// server.js - النسخة النهائية مع CORS مفتوح واتصال قاعدة البيانات الصحيح
+// server.js - النسخة النهائية مع دعم safety_guidelines وإشعارات المرشدين
+// ✅ تم إصلاح اتصال قاعدة البيانات باستخدام اسم المستخدم الصحيح "postgres"
+
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -37,6 +39,7 @@ const app = express();
 const server = createServer(app);
 const PORT = process.env.PORT || 5002;
 
+// الحصول على عنوان IP المحلي تلقائياً لدعم الجوال
 function getLocalIP() {
   const nets = os.networkInterfaces();
   for (const name of Object.keys(nets)) {
@@ -51,9 +54,10 @@ function getLocalIP() {
 
 const localIP = getLocalIP();
 const isRender = !!process.env.RENDER;
+
 console.log(`📡 Local IP: ${localIP}, Render: ${isRender}`);
 
-// ===================== WebSocket =====================
+// ===================== إعداد WebSocket (يدعم الجوال) =====================
 const io = new Server(server, {
   cors: {
     origin: true,
@@ -91,7 +95,7 @@ io.on('connection', (socket) => {
     socket.to(`chat:${chatId}`).emit('typing', { userId: socket.userId, isTyping });
   });
 
-  // مستمع لإشعارات المرشدين
+  // ✅ مستمع لإشعارات المرشدين
   socket.on('notify_guide', async (data) => {
     const { guideId, userId, userName, message, ticketId, type } = data;
     console.log(`📢 Socket notify_guide received for guide ${guideId}`);
@@ -108,6 +112,7 @@ io.on('connection', (socket) => {
       });
       console.log(`✅ Guide ${guideId} notified via socket (online)`);
     } else {
+      // تخزين الإشعار في قاعدة البيانات للمرشد غير المتصل
       try {
         await pool.query(`
           INSERT INTO app.notifications 
@@ -144,19 +149,83 @@ io.on('connection', (socket) => {
   });
 });
 
-// ===================== إعداد CORS (مفتوح بالكامل) =====================
+// ===================== إعداد PostgreSQL السحابي (Supabase) =====================
+// ✅ استخدام رابط قاعدة البيانات الصحيح (بدون نقطة في اسم المستخدم)
+const DATABASE_URL = 'postgresql://postgres:1Z8EorhYqsAClmLn@db.sqcdxhmnrbazrzeswxmv.supabase.co:5432/postgres?sslmode=require';
+
+console.log('✅ Connecting to Supabase Cloud via DATABASE_URL (correct username)');
+console.log(`🔗 Connection string (hidden password): ${DATABASE_URL.replace(/:[^:]*@/, ':****@')}`);
+
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 30000,
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 10000
+});
+
+// دالة مساعدة لتحويل المعرف الرقمي إلى UUID
+async function getUUIDFromNumericId(numericId) {
+  console.log(`🔍 Looking for UUID with old_id = ${numericId}`);
+  const result = await pool.query(
+    'SELECT id FROM public.users WHERE old_id = $1',
+    [parseInt(numericId)]
+  );
+  if (result.rows.length === 0) {
+    console.warn(`⚠️ No user found with old_id = ${numericId}`);
+    return null;
+  }
+  const uuid = result.rows[0].id;
+  console.log(`✅ Found UUID: ${uuid} for old_id: ${numericId}`);
+  return uuid;
+}
+
+const connectDB = async () => {
+  try {
+    const client = await pool.connect();
+    const hostMatch = DATABASE_URL.match(/@([^:]+)/);
+    const host = hostMatch ? hostMatch[1] : 'db.supabase.co';
+    console.log(`
+    ╔══════════════════════════════════════════╗
+    ║   ✅ Supabase PostgreSQL Connected       ║
+    ╠══════════════════════════════════════════╣
+    ║  Host: ${host.padEnd(30)}║
+    ║  Database: postgres                      ║
+    ║  Type: Cloud (Supabase Direct)          ║
+    ║  SSL: Enabled ✅ (rejectUnauthorized)    ║
+    ║  Pool Size: 20                           ║
+    ╚══════════════════════════════════════════╝
+    `);
+    client.release();
+
+    pool.on('error', (err) => console.error('❌ Supabase error:', err));
+    pool.on('connect', () => console.log('🔄 New client connected'));
+    pool.on('remove', () => console.log('🔄 Client removed from pool'));
+
+    return true;
+  } catch (error) {
+    console.error('❌ Supabase Connection Failed:', error.message);
+    return false;
+  }
+};
+
+// ===================== Middleware =====================
+app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
+
 app.use(cors({
-  origin: '*', // السماح لأي نطاق – يحل مشكلة CORS فوراً
+  origin: '*', // ✅ السماح لأي نطاق (حل فوري لمشكلة CORS)
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
 
-app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 app.use((req, res, next) => {
-  console.log(`🕐 [${new Date().toISOString()}] ${req.method} ${req.url}`);
+  console.log(`🕐 [${new Date().toISOString()}] ${req.method} ${req.url} from ${req.headers.origin || 'unknown'}`);
   next();
 });
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(morgan('dev'));
@@ -216,105 +285,31 @@ const upload = multer({
 
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// ===================== إعداد PostgreSQL السحابي (Supabase) =====================
-// ✅ استخدام رابط Pooler الصحيح مع إعداد SSL المناسب
-const DATABASE_URL = 'postgresql://postgres.sqcdxhmnrbazrzeswxmv:1Z8EorhYqsAClmLn@aws-1-ap-northeast-1.pooler.supabase.com:6543/postgres';
-
-console.log('✅ Using DATABASE_URL (Pooler)');
-console.log(`🔗 Connection string (hidden password): ${DATABASE_URL.replace(/:[^:]*@/, ':****@')}`);
-
-const pool = new Pool({
-  connectionString: DATABASE_URL,
-  ssl: { rejectUnauthorized: false }, // يتجنب خطأ الشهادة الذاتية
-  max: 20,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 30000,
-  keepAlive: true,
-  keepAliveInitialDelayMillis: 10000
+// ===================== Routes الرئيسية =====================
+app.get('/', (req, res) => {
+  res.json({ 
+    success: true, 
+    message: 'Tourist App API is running on Supabase Cloud',
+    docs: '/api/test',
+    health: '/health',
+    environment: isRender ? 'Render Cloud' : 'Local Development',
+    localIP: localIP,
+    endpoints: {
+      auth: '/api/auth',
+      guides: '/api/guides',
+      programs: '/api/programs',
+      wallet: '/api/wallet',
+      bookings: '/api/bookings',
+      chats: '/api/chats',
+      notifications: '/api/notifications',
+      support: '/api/support',
+      upgrade: '/api/upgrade',
+      users: '/api/users'
+    }
+  });
 });
 
-// دالة مساعدة لتحويل المعرف الرقمي إلى UUID
-async function getUUIDFromNumericId(numericId) {
-  console.log(`🔍 Looking for UUID with old_id = ${numericId}`);
-  const result = await pool.query(
-    'SELECT id FROM public.users WHERE old_id = $1',
-    [parseInt(numericId)]
-  );
-  if (result.rows.length === 0) {
-    console.warn(`⚠️ No user found with old_id = ${numericId}`);
-    return null;
-  }
-  const uuid = result.rows[0].id;
-  console.log(`✅ Found UUID: ${uuid} for old_id: ${numericId}`);
-  return uuid;
-}
-
-const connectDB = async () => {
-  try {
-    const client = await pool.connect();
-    console.log(`
-    ╔══════════════════════════════════════════╗
-    ║   ✅ Supabase PostgreSQL Connected       ║
-    ╠══════════════════════════════════════════╣
-    ║  Host: aws-1-ap-northeast-1.pooler.supabase.com
-    ║  Database: postgres                      ║
-    ║  Type: Cloud (Supabase Pooler)          ║
-    ║  SSL: Enabled ✅ (rejectUnauthorized)    ║
-    ║  Pool Size: 20                           ║
-    ╚══════════════════════════════════════════╝
-    `);
-    client.release();
-
-    pool.on('error', (err) => console.error('❌ Supabase error:', err));
-    pool.on('connect', () => console.log('🔄 New client connected'));
-    pool.on('remove', () => console.log('🔄 Client removed from pool'));
-
-    return true;
-  } catch (error) {
-    console.error('❌ Supabase Connection Failed:', error.message);
-    return false;
-  }
-};
-
-// ===================== مسارات المستخدمين والصورة الشخصية =====================
-app.get('/api/users/:userId', async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const result = await pool.query(
-      `SELECT id, email, full_name, phone, avatar_url, created_at FROM app.users WHERE id = $1`,
-      [userId]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'المستخدم غير موجود.' });
-    res.json({ success: true, user: result.rows[0] });
-  } catch (error) {
-    console.error('❌ Error fetching user:', error);
-    res.status(500).json({ success: false, message: 'خطأ في الخادم.' });
-  }
-});
-
-app.put('/api/users/:userId/profile', async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const { full_name, phone, email } = req.body;
-    const updates = [];
-    const values = [];
-    let paramIndex = 1;
-    if (full_name !== undefined) { updates.push(`full_name = $${paramIndex++}`); values.push(full_name); }
-    if (phone !== undefined) { updates.push(`phone = $${paramIndex++}`); values.push(phone); }
-    if (email !== undefined) { updates.push(`email = $${paramIndex++}`); values.push(email); }
-    if (updates.length === 0) return res.status(400).json({ success: false, message: 'لا توجد بيانات للتحديث.' });
-    updates.push(`updated_at = NOW()`);
-    values.push(userId);
-    const query = `UPDATE app.users SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING id, full_name, phone, email, avatar_url`;
-    const result = await pool.query(query, values);
-    if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'المستخدم غير موجود.' });
-    res.json({ success: true, user: result.rows[0] });
-  } catch (error) {
-    console.error('❌ Error updating profile:', error);
-    res.status(500).json({ success: false, message: 'خطأ في الخادم.' });
-  }
-});
-
+// ===================== مسارات رفع الصور الشخصية =====================
 app.post('/api/users/:userId/avatar', upload.single('avatar'), async (req, res) => {
   try {
     const { userId } = req.params;
@@ -356,6 +351,44 @@ app.delete('/api/users/:userId/avatar', async (req, res) => {
   } catch (error) {
     console.error('❌ Error deleting avatar:', error);
     res.status(500).json({ success: false, message: 'خطأ في الخادم أثناء حذف الصورة.' });
+  }
+});
+
+app.get('/api/users/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const result = await pool.query(
+      `SELECT id, email, full_name, phone, avatar_url, created_at FROM app.users WHERE id = $1`,
+      [userId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'المستخدم غير موجود.' });
+    res.json({ success: true, user: result.rows[0] });
+  } catch (error) {
+    console.error('❌ Error fetching user:', error);
+    res.status(500).json({ success: false, message: 'خطأ في الخادم.' });
+  }
+});
+
+app.put('/api/users/:userId/profile', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { full_name, phone, email } = req.body;
+    const updates = [];
+    const values = [];
+    let paramIndex = 1;
+    if (full_name !== undefined) { updates.push(`full_name = $${paramIndex++}`); values.push(full_name); }
+    if (phone !== undefined) { updates.push(`phone = $${paramIndex++}`); values.push(phone); }
+    if (email !== undefined) { updates.push(`email = $${paramIndex++}`); values.push(email); }
+    if (updates.length === 0) return res.status(400).json({ success: false, message: 'لا توجد بيانات للتحديث.' });
+    updates.push(`updated_at = NOW()`);
+    values.push(userId);
+    const query = `UPDATE app.users SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING id, full_name, phone, email, avatar_url`;
+    const result = await pool.query(query, values);
+    if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'المستخدم غير موجود.' });
+    res.json({ success: true, user: result.rows[0] });
+  } catch (error) {
+    console.error('❌ Error updating profile:', error);
+    res.status(500).json({ success: false, message: 'خطأ في الخادم.' });
   }
 });
 
@@ -675,7 +708,7 @@ app.get('/health', async (req, res) => {
     uptime: process.uptime(),
     port: PORT,
     database: dbConnected ? 'connected' : 'disconnected',
-    databaseType: 'Supabase Cloud (Pooler)',
+    databaseType: 'Supabase Cloud',
     databaseVersion: dbInfo.version || 'Unknown',
     websocket: 'active',
     onlineUsers: onlineUsers.size,
@@ -683,7 +716,7 @@ app.get('/health', async (req, res) => {
   });
 });
 
-// ===================== ADMIN NOTIFICATIONS API (إذا كانت موجودة) =====================
+// ===================== ADMIN NOTIFICATIONS API =====================
 async function sendAdminNotification(adminId, type, title, message, relatedId = null, priority = 'normal', actionUrl = null, metadata = {}) {
   try {
     const result = await pool.query(
@@ -716,6 +749,8 @@ async function sendNotificationToAllAdmins(type, title, message, relatedId = nul
 }
 
 // ===================== إشعارات المستخدمين والمرشدين =====================
+
+// إرسال إشعار لمستخدم عادي أو مرشد
 async function sendNotification(userId, type, title, message, actionUrl = null, metadata = {}) {
   try {
     const result = await pool.query(
@@ -727,6 +762,7 @@ async function sendNotification(userId, type, title, message, actionUrl = null, 
     );
     console.log(`📨 Notification sent to user ${userId}: ${title}`);
     
+    // إرسال إشعار فوري عبر Socket إذا كان المستخدم متصلاً
     const userSocketId = onlineUsers.get(userId);
     if (userSocketId && io) {
       io.to(userSocketId).emit('new_notification', {
@@ -748,6 +784,7 @@ async function sendNotification(userId, type, title, message, actionUrl = null, 
   }
 }
 
+// إرسال إشعار للمرشد عند إنشاء تذكرة محادثة جديدة
 async function notifyGuideNewTicket(guideId, userName, ticketId, message) {
   return sendNotification(
     guideId,
@@ -759,6 +796,7 @@ async function notifyGuideNewTicket(guideId, userName, ticketId, message) {
   );
 }
 
+// إرسال إشعار للمرشد عند وصول رسالة جديدة
 async function notifyGuideNewMessage(guideId, userName, message, ticketId) {
   return sendNotification(
     guideId,
@@ -1023,7 +1061,7 @@ const startServer = async () => {
   ║  ▶ Port:        ${PORT}                         
   ║  ▶ Environment: ${isRender ? 'Render Cloud' : 'Local Development'}            
   ║  ▶ Local IP:    http://${localIP}:${PORT}     
-  ║  ▶ Database:    ✅ Supabase Cloud (Pooler)   
+  ║  ▶ Database:    ✅ Supabase Cloud (Direct)   
   ║  ▶ WebSocket:   ✅ Enabled                   
   ║  ▶ CORS:        ✅ Open (origin: *)          
   ║  ▶ SSL:         ✅ Enabled (rejectUnauthorized)
@@ -1034,7 +1072,7 @@ const startServer = async () => {
   ╚══════════════════════════════════════════════╝
       `);
       console.log(`🕐 Server started at: ${new Date().toISOString()}`);
-      console.log(`☁️ Connected to Supabase Cloud PostgreSQL via Pooler`);
+      console.log(`☁️ Connected to Supabase Cloud PostgreSQL via Direct Connection`);
       if (!isRender) {
         console.log(`📱 Access from mobile: http://${localIP}:${PORT}`);
       }
