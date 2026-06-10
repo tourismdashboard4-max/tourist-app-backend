@@ -1,4 +1,4 @@
-// server.js - النسخة النهائية (Direct Connection)
+// server.js - النسخة النهائية (باستخدام النطاق العام db.supabase.co)
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -135,16 +135,16 @@ io.on('connection', (socket) => {
   });
 });
 
-// ===================== قاعدة البيانات (Supabase) – الرابط المباشر =====================
-// ✅ استخدام الرابط المباشر (Direct Connection) على منفذ 5432 مع SSL إجباري
-const DATABASE_URL = 'postgresql://postgres.sqcdxhmnrbazrzeswxmv:1Z8EorhYqsAClmLn@db.sqcdxhmnrbazrzeswxmv.supabase.co:5432/postgres?sslmode=require';
+// ===================== قاعدة البيانات (Supabase) – النطاق العام =====================
+// ✅ استخدام النطاق العام db.supabase.co الذي يعمل عالمياً
+const DATABASE_URL = 'postgresql://postgres.sqcdxhmnrbazrzeswxmv:1Z8EorhYqsAClmLn@db.supabase.co:5432/postgres?sslmode=require';
 
-console.log('✅ Using DIRECT DATABASE_URL (Port 5432)');
+console.log('✅ Using public DATABASE_URL (db.supabase.co)');
 console.log(`🔗 Connection string (hidden password): ${DATABASE_URL.replace(/:[^:]*@/, ':****@')}`);
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
-  ssl: { rejectUnauthorized: false }, // ضروري لتجنب خطأ الشهادة الذاتية
+  ssl: { rejectUnauthorized: false },
   max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 30000,
@@ -171,9 +171,9 @@ const connectDB = async () => {
     ╔══════════════════════════════════════════╗
     ║   ✅ Supabase PostgreSQL Connected       ║
     ╠══════════════════════════════════════════╣
-    ║  Host: db.sqcdxhmnrbazrzeswxmv.supabase.co
+    ║  Host: db.supabase.co (Public)          ║
     ║  Database: postgres                      ║
-    ║  Type: Direct Connection                 ║
+    ║  Type: Direct Connection (Global DNS)    ║
     ║  SSL: Enabled ✅ (rejectUnauthorized)    ║
     ║  Pool Size: 20                           ║
     ╚══════════════════════════════════════════╝
@@ -449,6 +449,7 @@ app.put('/api/programs/:programId', async (req, res) => {
     const realId = await getUUIDFromNumericId(userId);
     if (!realId) return res.status(404).json({ success: false, message: 'المستخدم غير موجود' });
     userUuid = realId;
+    userUuid = realId;
   }
   try {
     const checkOwner = await pool.query('SELECT guide_id FROM programs WHERE id = $1', [programId]);
@@ -682,7 +683,7 @@ const startServer = async () => {
   ║  ▶ Port:        ${PORT}                         
   ║  ▶ Environment: ${isRender ? 'Render Cloud' : 'Local Development'}            
   ║  ▶ Local IP:    http://${localIP}:${PORT}     
-  ║  ▶ Database:    ✅ Supabase Cloud (Direct)   
+  ║  ▶ Database:    ✅ Supabase Cloud (db.supabase.co)
   ║  ▶ WebSocket:   ✅ Enabled                   
   ║  ▶ SSL:         ✅ Enabled (rejectUnauthorized)
   ║  ▶ Notifications: ✅ Guide & User           
