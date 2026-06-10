@@ -1,5 +1,5 @@
 // server.js - النسخة النهائية مع دعم safety_guidelines وإشعارات المرشدين
-// ✅ تم إصلاح اتصال قاعدة البيانات باستخدام رابط Pooler الصحيح مع SSL المناسب
+// ✅ إصلاح اتصال قاعدة البيانات: استخدام رابط Pooler الصحيح مع SSL المناسب
 
 import express from 'express';
 import cors from 'cors';
@@ -156,16 +156,9 @@ let poolConfig;
 // ✅ الرابط الصحيح لقاعدة البيانات (Pooler) – يعمل من Render
 const CORRECT_DATABASE_URL = 'postgresql://postgres.sqcdxhmnrbazrzeswxmv:1Z8EorhYqsAClmLn@aws-1-ap-northeast-1.pooler.supabase.com:6543/postgres';
 
-// تحديد الرابط الذي سنستخدمه
-let connectionString;
-if (process.env.DATABASE_URL && process.env.DATABASE_URL.includes('pooler.supabase.com')) {
-  // إزالة أي معلمات استعلام (مثل ?sslmode=require) لتجنب مشاكل SSL
-  connectionString = process.env.DATABASE_URL.split('?')[0];
-  console.log('✅ Using DATABASE_URL from environment (Pooler)');
-} else {
-  connectionString = CORRECT_DATABASE_URL;
-  console.log('⚠️ Using hardcoded CORRECT_DATABASE_URL (Pooler)');
-}
+// تجاهل أي متغير بيئة قديم واستخدام الرابط الثابت الصحيح مباشرة
+const connectionString = CORRECT_DATABASE_URL;
+console.log('✅ Using hardcoded CORRECT_DATABASE_URL (Pooler)');
 console.log(`🔗 Connection string (hidden password): ${connectionString.replace(/:[^:]*@/, ':****@')}`);
 
 poolConfig = {
