@@ -17,7 +17,6 @@ import { Navigation, MessageCircle, CalendarCheck, MapPin, Image as ImageIcon } 
 
 const API_BASE = 'https://tourist-app-api.onrender.com';
 
-// ========== دوال معالجة الصور (مطابقة لـ FavoritesPage) ==========
 const buildImageUrl = (url) => {
   if (!url || typeof url !== 'string') return null;
   if (url.startsWith('blob:') || url.startsWith('data:')) return url;
@@ -40,7 +39,6 @@ const fixImagesArray = (images) => {
   }).filter(Boolean);
 };
 
-// ========== دالة حساب المسافة ==========
 const getDistance = (lat1, lon1, lat2, lon2) => {
   if (!lat1 || !lon1 || !lat2 || !lon2) return null;
   const R = 6371;
@@ -53,7 +51,6 @@ const getDistance = (lat1, lon1, lat2, lon2) => {
   return R * c;
 };
 
-// ========== تحديد نوع النشاط ==========
 const getActivityType = (program, lang) => {
   const text = ((program.name || '') + ' ' + (program.description || '')).toLowerCase();
   if (text.includes('بحر') || text.includes('بحري') || text.includes('marine') || text.includes('sea'))
@@ -67,7 +64,6 @@ const getActivityType = (program, lang) => {
   return { ar: 'برنامج سياحي', en: 'Tour program', icon: '🏞️' };
 };
 
-// ========== الترجمة ==========
 const LOCALES = {
   ar: {
     appName: 'تطبيق السائح',
@@ -189,7 +185,6 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
   const [isAutoTracking, setIsAutoTracking] = useState(true);
   const intervalRef = useRef(null);
 
-  // ========== جلب تفاصيل البرنامج (مطابق لـ FavoritesPage) ==========
   const fetchFullProgram = async (programId) => {
     try {
       const res = await fetch(`${API_BASE}/api/programs/${programId}`);
@@ -206,7 +201,6 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
     return null;
   };
 
-  // ========== جلب جميع البرامج النشطة ==========
   const fetchAllActivePrograms = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -221,7 +215,6 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
       else if (data.data && Array.isArray(data.data)) programsArray = data.data;
       else programsArray = [];
 
-      // تصفية البرامج النشطة
       const activePrograms = programsArray.filter(p => {
         const status = (p.status || '').toLowerCase();
         return status === 'active';
@@ -232,7 +225,6 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
         return;
       }
 
-      // جلب التفاصيل الكاملة لكل برنامج (للحصول على الصور والبيانات الكاملة)
       const detailedPrograms = await Promise.all(
         activePrograms.map(async (prog) => {
           const detailed = await fetchFullProgram(prog.id);
@@ -245,7 +237,6 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
         })
       );
 
-      // حساب المسافة لكل برنامج إذا كان الموقع متاحاً
       const withDistance = detailedPrograms.map(p => {
         let distance = null;
         if (userLocation && p.location_lat && p.location_lng) {
@@ -268,7 +259,6 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
     }
   }, [userLocation, lang]);
 
-  // ========== طلب موقع المستخدم ==========
   const requestLocation = useCallback(() => {
     if (!navigator.geolocation) {
       setError(t('locationGeneralError'));
@@ -294,7 +284,6 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
     );
   }, [setLocationEnabled, t]);
 
-  // تحميل الموقع المخزن
   useEffect(() => {
     const cached = localStorage.getItem('cached_user_location');
     if (cached) {
@@ -309,18 +298,15 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
     }
   }, []);
 
-  // تحميل أولي للبرامج
   useEffect(() => {
     fetchAllActivePrograms();
     if (locationEnabled && !userLocation) requestLocation();
   }, []);
 
-  // تحديث البرامج عندما يتغير الموقع
   useEffect(() => {
     fetchAllActivePrograms();
   }, [userLocation]);
 
-  // تحديث دوري كل 5 ثوانٍ
   useEffect(() => {
     if (!isAutoTracking) {
       if (intervalRef.current) clearInterval(intervalRef.current);
@@ -343,7 +329,6 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
     setPage('explore');
   };
 
-  // بيانات ثابتة (الميزات، الإحصائيات، آراء المستخدمين)
   const features = [
     { icon: <FaMapMarkedAlt size={40} />, title: 'اكتشف الأماكن', desc: 'استكشف أفضل الوجهات السياحية والأماكن المميزة في جميع أنحاء المملكة', primary: true },
     { icon: <FaUserTie size={40} />, title: 'مرشدين محترفين', desc: 'احجز مع مرشدين سياحيين معتمدين ومتميزين بخبرة عالية', primary: false },
@@ -370,7 +355,6 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
 
   return (
     <div className={`${bgColor} ${textColor} min-h-screen`} dir="rtl">
-      {/* شريط التنقل العلوي */}
       <nav className={`sticky top-0 z-50 ${cardBg} border-b ${borderColor} shadow-sm`}>
         <div className="container mx-auto px-4 py-3 flex justify-between items-center">
           <button onClick={() => setPage('home')} className="text-2xl font-bold">{t('appName')}</button>
@@ -390,7 +374,6 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
         </div>
       </nav>
 
-      {/* Hero section */}
       <section className="relative overflow-hidden bg-gradient-to-r from-green-600 to-emerald-600 text-white">
         <div className="absolute inset-0 bg-black/20" style={{ backgroundImage: 'url(https://images.unsplash.com/photo-1469474968028-56623f02e42e?ixlib=rb-4.0.3)', backgroundSize: 'cover', backgroundPosition: 'center', opacity: dark ? 0.1 : 0.2 }}></div>
         <div className="relative container mx-auto px-4 py-24 md:py-32 text-center">
@@ -410,7 +393,6 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
         <div className="absolute bottom-0 left-0 right-0"><svg viewBox="0 0 1440 120" fill="none"><path d="M0 120L60 105C120 90 240 60 360 45C480 30 600 30 720 37.5C840 45 960 60 1080 67.5C1200 75 1320 75 1380 75L1440 75V120H0Z" fill={dark ? '#1f2937' : 'white'} /></svg></div>
       </section>
 
-      {/* الإحصائيات */}
       <section className={`py-12 ${cardBg}`}>
         <div className="container mx-auto px-4">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
@@ -424,7 +406,6 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
         </div>
       </section>
 
-      {/* الميزات */}
       <section className={`py-16 ${dark ? 'bg-gray-900' : 'bg-gray-50'}`}>
         <div className="container mx-auto px-4">
           <div className="text-center mb-12">
@@ -443,7 +424,6 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
         </div>
       </section>
 
-      {/* قسم البرامج السياحية – بنفس تصميم FavoritesPage */}
       <section className={`py-16 ${cardBg}`}>
         <div className="container mx-auto px-4">
           <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
@@ -499,7 +479,6 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
             <div className="space-y-5">
               {programs.map(program => {
                 const images = (program.images || []).map(img => img.url);
-                const currentImgIndex = 0;
                 const currentImg = images.length > 0 ? images[0] : (program.image ? buildImageUrl(program.image) : null);
                 const distance = program.distance !== null ? program.distance.toFixed(1) : null;
                 const activity = getActivityType(program, lang);
@@ -572,13 +551,12 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
                                   setPage('profile');
                                   return;
                                 }
-                                // فتح المحادثة (يمكن إضافة منطق المحادثة لاحقاً)
-                                toast.info(lang === 'ar' ? 'سيتم تفعيل الدردشة قريباً' : 'Chat feature coming soon');
+                                handleViewProgramOnMap(program.id);
                               }}
                               className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-sm flex items-center gap-1 transition"
                             >
-                              <MessageCircle size={14} />
-                              {lang === 'ar' ? 'دردشة' : 'Chat'}
+                              <MapPin size={14} />
+                              {lang === 'ar' ? 'خريطة' : 'Map'}
                             </button>
                             <button
                               onClick={() => {
@@ -587,7 +565,6 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
                                   setPage('profile');
                                   return;
                                 }
-                                // حجز البرنامج (يمكن إضافة منطق الحجز لاحقاً)
                                 toast.info(lang === 'ar' ? 'سيتم تفعيل الحجز قريباً' : 'Booking feature coming soon');
                               }}
                               className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1.5 rounded-lg text-sm flex items-center gap-1 transition"
@@ -607,7 +584,6 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
         </div>
       </section>
 
-      {/* كيف يعمل */}
       <section className={`py-16 ${dark ? 'bg-gray-900' : 'bg-gray-50'}`}>
         <div className="container mx-auto px-4">
           <div className="text-center mb-12">
@@ -631,7 +607,6 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
         </div>
       </section>
 
-      {/* آراء المستخدمين */}
       <section className={`py-16 ${cardBg}`}>
         <div className="container mx-auto px-4">
           <div className="text-center mb-12">
@@ -653,7 +628,6 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
         </div>
       </section>
 
-      {/* CTA */}
       <section className="py-16 bg-gradient-to-r from-green-600 to-emerald-600 text-white">
         <div className="container mx-auto px-4 text-center">
           <h2 className="text-3xl font-bold mb-4">{t('ctaTitle')}</h2>
@@ -670,7 +644,6 @@ const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLoca
         </div>
       </section>
 
-      {/* Footer */}
       <footer className={`py-12 bg-gray-800 text-gray-300`}>
         <div className="container mx-auto px-4">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
