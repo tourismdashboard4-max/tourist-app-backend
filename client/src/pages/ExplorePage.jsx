@@ -1,13 +1,14 @@
 // client/src/pages/ExplorePage.jsx
-// ✅ إصلاح: عرض البرامج النشطة فقط للمستخدمين
-// ✅ إصلاح: فلترة "برامجي فقط" للمرشد باستخدام UUID
-// ✅ منع فتح المحادثة أو الحجز عند عرض برنامج خاص بالمرشد نفسه
+// ✅ إصلاح كامل: عرض الخريطة مع موقع المستخدم والبرامج القريبة
+// ✅ عرض البرامج النشطة فقط
+// ✅ حساب المسافة وعرضها
+// ✅ منع فتح المحادثة أو الحجز للبرامج الخاصة بالمرشد نفسه
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import mapboxgl from "mapbox-gl";
 import { 
   Home, Bell, User, MapPin, Search, MessageCircle, 
-  CalendarCheck, AlertTriangle, Heart, X, Star, Image as ImageIcon 
+  CalendarCheck, AlertTriangle, Heart, X, Star, Image as ImageIcon, Navigation
 } from "lucide-react";
 import toast from "react-hot-toast";
 import api from '../services/api';
@@ -24,6 +25,19 @@ const buildImageUrl = (url) => {
   return `${API_BASE}/${url}`;
 };
 
+// حساب المسافة بين نقطتين (km)
+const getDistance = (lat1, lng1, lat2, lng2) => {
+  if (!lat1 || !lng1 || !lat2 || !lng2) return null;
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat/2) ** 2 +
+            Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) *
+            Math.sin(dLon/2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
+};
+
 const LOCALES = {
   ar: {
     search: "ابحث عن وجهة...",
@@ -38,6 +52,8 @@ const LOCALES = {
     addedToFavorites: "✅ تمت الإضافة إلى المفضلة",
     removedFromFavorites: "🗑️ تمت الإزالة من المفضلة",
     duration: "المدة",
+    nearbyPrograms: "البرامج القريبة",
+    distance: "المسافة",
   },
   en: {
     search: "Search...",
@@ -52,6 +68,8 @@ const LOCALES = {
     addedToFavorites: "✅ Added to favorites",
     removedFromFavorites: "🗑️ Removed from favorites",
     duration: "Duration",
+    nearbyPrograms: "Nearby Programs",
+    distance: "Distance",
   },
 };
 
@@ -68,8 +86,10 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
   const [loadingImages, setLoadingImages] = useState(false);
   const [bookingLoading, setBookingLoading] = useState(false);
   const [favoriteIds, setFavoriteIds] = useState([]);
+  const [locationError, setLocationError] = useState(false);
   const markersRef = useRef([]);
   const isMapLoadedRef = useRef(false);
+  const mapContainer = useRef(null);
 
   // ========== تحميل المفضلة ==========
   useEffect(() => {
@@ -124,7 +144,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
       const response = await fetch(`${API_BASE}/api/programs`);
       const data = await response.json();
       if (response.ok && data.success && Array.isArray(data.programs)) {
-        // ✅ فلترة صارمة: فقط البرامج التي حالتها 'active' (بغض النظر عن حالة الحروف)
         const activePrograms = data.programs.filter(p => {
           const status = (p.status || '').toLowerCase();
           return status === 'active';
@@ -137,6 +156,8 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
           guide_name: p.guide_name,
           guide_id: p.guide_id,
           coords: [p.location_lng, p.location_lat],
+          lat: p.location_lat,
+          lng: p.location_lng,
           price: p.price,
           duration: p.duration,
           rating: p.rating || 4.5,
@@ -145,10 +166,10 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
           image: buildImageUrl(p.image),
           images: [],
           safetyGuidelines: p.safetyGuidelines || "",
-          status: p.status, // احتفظ بالحالة الأصلية
+          status: p.status,
         }));
         setPrograms(progs);
-        console.log(`📦 Loaded ${progs.length} active programs from API`);
+        console.log(`📦 Loaded ${progs.length} active programs`);
       } else {
         setPrograms([]);
         console.warn('No programs or invalid response');
@@ -165,151 +186,78 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     return () => clearInterval(interval);
   }, [fetchProgramsFromAPI]);
 
-  // ========== تحويل معرف المرشد إلى UUID أو رقمي (للمقارنة) ==========
-  // نضيف دالة للحصول على UUID الحقيقي للمستخدم إذا كان user.id رقمياً
-  const getUserGuideUuid = useCallback(async () => {
-    if (!user?.id) return null;
-    // إذا كان user.id بالفعل UUID
-    if (typeof user.id === 'string' && (user.id.includes('-') || user.id.length === 36)) {
-      return user.id;
-    }
-    // إذا كان رقماً، نحاول جلب UUID من API
-    try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`${API_BASE}/api/users/${user.id}`, {
-        headers: { Authorization: token ? `Bearer ${token}` : '' }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.user) {
-          return data.user.id; // يفترض أن هذا هو UUID
-        }
-      }
-    } catch (e) { console.warn(e); }
-    return null;
-  }, [user?.id]);
-
-  const [userUuid, setUserUuid] = useState(null);
+  // ========== الحصول على موقع المستخدم ==========
   useEffect(() => {
-    getUserGuideUuid().then(uuid => setUserUuid(uuid));
-  }, [getUserGuideUuid]);
+    if (!navigator.geolocation) {
+      setLocationError(true);
+      console.warn("Geolocation not supported");
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const coords = [pos.coords.longitude, pos.coords.latitude];
+        setUserLocation({ lng: pos.coords.longitude, lat: pos.coords.latitude });
+        setLocationError(false);
+        console.log("📍 User location obtained:", coords);
+        if (mapInstance && isMapLoadedRef.current) {
+          mapInstance.flyTo({ center: coords, zoom: 13 });
+          // إضافة علامة المستخدم
+          new mapboxgl.Marker({ color: "#3b82f6" })
+            .setLngLat(coords)
+            .setPopup(new mapboxgl.Popup().setText(lang === "ar" ? "📍 موقعك" : "📍 Your location"))
+            .addTo(mapInstance);
+        }
+      },
+      (err) => {
+        console.error("Geolocation error:", err);
+        setLocationError(true);
+        // استخدام موقع افتراضي (الرياض)
+        const defaultCoords = [46.713, 24.774];
+        setUserLocation({ lng: 46.713, lat: 24.774 });
+        if (mapInstance && isMapLoadedRef.current) {
+          mapInstance.flyTo({ center: defaultCoords, zoom: 10 });
+        }
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  }, [mapInstance, lang]);
 
-  // ========== التحقق مما إذا كان البرنامج يخص المستخدم الحالي ==========
-  const isOwnProgram = useCallback((program) => {
-    if (!user || !program) return false;
-    const programGuideId = program.guide_id;
-    const currentUserId = userUuid || user.id;
-    // مقارنة مباشرة إذا كان كلاهما نص (UUID)
-    if (typeof programGuideId === 'string' && typeof currentUserId === 'string') {
-      return programGuideId === currentUserId;
-    }
-    // وإلا استخدام التحويل الرقمي (كحل احتياطي)
-    const numericProgramId = (() => {
-      if (!isNaN(Number(programGuideId))) return Number(programGuideId);
-      // يمكن إضافة map إذا لزم الأمر
-      return null;
-    })();
-    const numericUserId = !isNaN(Number(currentUserId)) ? Number(currentUserId) : null;
-    return numericProgramId && numericUserId && numericProgramId === numericUserId;
-  }, [user, userUuid]);
-
-  // ========== فتح المحادثة ==========
-  const handleChatWithGuide = (guideId, guideName) => {
-    if (!user) {
-      toast.error(lang === 'ar' ? 'يجب تسجيل الدخول أولاً' : 'Please login first');
-      setPage('profile');
-      return;
-    }
-    if (!guideId && !guideName) {
-      toast.error(lang === 'ar' ? 'معرف المرشد غير موجود' : 'Guide ID missing');
-      return;
-    }
-    if (selectedProgram && isOwnProgram(selectedProgram)) {
-      toast.error(lang === 'ar' ? 'هذا برنامجك الخاص، لا يمكنك فتح محادثة مع نفسك' : 'This is your own program, you cannot chat with yourself');
-      return;
-    }
-    // نحتاج إلى معرف رقمي للدردشة (قد يكون old_id)
-    // نستخدم نفس المعرف الذي يرسله البرنامج (قد يكون UUID)
-    const recipientId = guideId; // نفترض أن API الدردشة يقبل UUID
-    if (!recipientId) {
-      toast.error(lang === 'ar' ? 'معرف المرشد غير صالح' : 'Invalid guide ID');
-      return;
-    }
-    const chatParams = { recipientId, recipientName: guideName || 'المرشد', timestamp: Date.now() };
-    localStorage.setItem('directChatParams', JSON.stringify(chatParams));
-    toast.success(lang === 'ar' ? `تم فتح المحادثة مع ${guideName}` : `Chat opened with ${guideName}`);
-    setPage('directChat');
-  };
-
-  // ========== الحجز ==========
-  const handleBooking = async (program) => {
-    if (!user) {
-      toast.error(lang === 'ar' ? 'يجب تسجيل الدخول أولاً' : 'Please login first');
-      setPage('profile');
-      return;
-    }
-    if (isOwnProgram(program)) {
-      toast.error(lang === 'ar' ? 'لا يمكنك حجز برنامجك الخاص' : 'You cannot book your own program');
-      return;
-    }
-    setBookingLoading(true);
-    try {
-      const token = localStorage.getItem('token');
-      const ticketData = {
-        user_id: user.id,
-        subject: `طلب حجز برنامج: ${program.name_ar || program.name}`,
-        type: 'booking',
-        priority: 'normal',
-        message: `أود حجز البرنامج "${program.name_ar || program.name}" الذي يقدمه المرشد ${program.guide_name}.`
-      };
-      const response = await fetch(`${API_BASE}/api/support/tickets`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          ...(token && { 'Authorization': `Bearer ${token}` })
-        },
-        body: JSON.stringify(ticketData)
-      });
-      if (response.status === 401) {
-        toast.error(lang === 'ar' ? 'انتهت الجلسة، يرجى تسجيل الدخول مرة أخرى' : 'Session expired, please login again');
-        setPage('profile');
-        return;
-      }
-      const result = await response.json();
-      if (result.success) toast.success(t('requestSent'));
-      else toast.error(result.message || (lang === 'ar' ? 'فشل إرسال طلب الحجز' : 'Booking failed'));
-    } catch (err) {
-      console.error('Booking error:', err);
-      toast.error(lang === 'ar' ? 'حدث خطأ أثناء إرسال الطلب' : 'Error sending request');
-    } finally { setBookingLoading(false); }
-  };
-
-  // ========== فلترة البرامج المعروضة ==========
-  // جميع البرامج تم جلبها نشطة فقط
-  const allPrograms = programs;
-  
-  // ✅ تصحيح فلترة "برامجي فقط": استخدام UUID للمقارنة
-  const displayedPrograms = useMemo(() => {
-    if (!showMyProgramsOnly) return allPrograms;
-    if (!user) return [];
-    const currentGuideId = userUuid || user.id;
-    if (!currentGuideId) return [];
-    return allPrograms.filter(p => {
-      const programGuideId = p.guide_id;
-      // مقارنة كسلاسل نصية (UUID)
-      if (typeof programGuideId === 'string' && typeof currentGuideId === 'string') {
-        return programGuideId === currentGuideId;
-      }
-      // محاولة تحويل كليهما إلى أرقام إذا أمكن
-      const numProg = !isNaN(Number(programGuideId)) ? Number(programGuideId) : null;
-      const numUser = !isNaN(Number(currentGuideId)) ? Number(currentGuideId) : null;
-      return numProg && numUser && numProg === numUser;
+  // ========== إضافة علامات البرامج على الخريطة ==========
+  const addMarkersToMap = useCallback((map, programsList) => {
+    if (!map || !isMapLoadedRef.current) return false;
+    // إزالة العلامات القديمة
+    markersRef.current.forEach(m => {
+      try { m.remove(); } catch(e) {}
     });
-  }, [allPrograms, showMyProgramsOnly, user, userUuid]);
+    markersRef.current = [];
 
-  const isGuide = user?.role === 'guide' || user?.type === 'guide' || user?.isGuide === true;
+    const validPrograms = programsList.filter(p => {
+      return p.coords && p.coords[0] && p.coords[1] && !isNaN(p.coords[0]) && !isNaN(p.coords[1]);
+    });
 
-  // ========== الخريطة والعلامات (بدون تغيير جوهري) ==========
+    validPrograms.forEach(program => {
+      const coords = program.coords;
+      // إذا كان البرنامج يخص المستخدم الحالي، لون مختلف
+      const isOwn = (user && (program.guide_id === user.id || program.guide_id === user?.uuid));
+      const color = isOwn ? "#9b59b6" : "#10b981";
+      
+      const marker = new mapboxgl.Marker({ color, scale: 1.1 })
+        .setLngLat(coords)
+        .addTo(map);
+      
+      marker.getElement().addEventListener('click', () => {
+        setSelectedProgram(program);
+        fetchProgramImages(program);
+        if (mapInstance && program.coords) {
+          mapInstance.flyTo({ center: program.coords, zoom: 14 });
+        }
+      });
+      markersRef.current.push(marker);
+    });
+    return true;
+  }, [user, mapInstance]);
+
+  // ========== جلب صور البرنامج ==========
   const fetchProgramImages = useCallback(async (program) => {
     if (!program) return;
     setLoadingImages(true);
@@ -338,73 +286,144 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     }
   }, []);
 
-  const addMarkersToMap = useCallback((map, programsList) => {
-    if (!map || !isMapLoadedRef.current) return false;
-    markersRef.current.forEach(m => { try { m.remove(); } catch(e) {} });
-    markersRef.current = [];
-    const validPrograms = programsList.filter(p => {
-      const coords = p.coords || (p.location_lng && p.location_lat ? [p.location_lng, p.location_lat] : null);
-      return coords && coords[0] && coords[1] && !isNaN(coords[0]) && !isNaN(coords[1]);
-    });
-    validPrograms.forEach(program => {
-      const coords = program.coords;
-      const color = isOwnProgram(program) ? "#9b59b6" : "#10b981";
-      const marker = new mapboxgl.Marker({ color, scale: 1.1 }).setLngLat(coords).addTo(map);
-      marker.getElement().addEventListener('click', () => {
-        setSelectedProgram(program);
-        fetchProgramImages(program);
-        if (mapInstance && program.coords) mapInstance.flyTo({ center: program.coords, zoom: 14 });
-      });
-      markersRef.current.push(marker);
-    });
-    return true;
-  }, [isOwnProgram, fetchProgramImages, mapInstance]);
+  // ========== التحقق مما إذا كان البرنامج يخص المستخدم الحالي ==========
+  const isOwnProgram = useCallback((program) => {
+    if (!user || !program) return false;
+    const programGuideId = program.guide_id;
+    const currentUserId = user.id;
+    return String(programGuideId) === String(currentUserId);
+  }, [user]);
 
-  const addUserMarker = (map, location) => {
-    if (!map || !location) return;
-    new mapboxgl.Marker({ color: "#3b82f6" })
-      .setLngLat(location)
-      .setPopup(new mapboxgl.Popup().setText(lang === "ar" ? "📍 موقعك" : "📍 Your location"))
-      .addTo(map);
+  // ========== فتح المحادثة ==========
+  const handleChatWithGuide = (guideId, guideName) => {
+    if (!user) {
+      toast.error(t('loginRequired'));
+      setPage('profile');
+      return;
+    }
+    if (!guideId && !guideName) {
+      toast.error(lang === 'ar' ? 'معرف المرشد غير موجود' : 'Guide ID missing');
+      return;
+    }
+    if (selectedProgram && isOwnProgram(selectedProgram)) {
+      toast.error(lang === 'ar' ? 'هذا برنامجك الخاص، لا يمكنك فتح محادثة مع نفسك' : 'This is your own program, you cannot chat with yourself');
+      return;
+    }
+    const recipientId = guideId;
+    if (!recipientId) {
+      toast.error(lang === 'ar' ? 'معرف المرشد غير صالح' : 'Invalid guide ID');
+      return;
+    }
+    const chatParams = { recipientId, recipientName: guideName || 'المرشد', timestamp: Date.now() };
+    localStorage.setItem('directChatParams', JSON.stringify(chatParams));
+    toast.success(lang === 'ar' ? `تم فتح المحادثة مع ${guideName}` : `Chat opened with ${guideName}`);
+    setPage('directChat');
   };
 
-  // تهيئة الخريطة (نفس الكود الأصلي مع تعديلات بسيطة)
-  useEffect(() => {
-    if (!mapContainerRef?.current) return;
-    if (mapInstance) return;
-    const initMap = (center, zoom = 12) => {
-      const map = new mapboxgl.Map({
-        container: mapContainerRef.current,
-        style: dark ? "mapbox://styles/mapbox/dark-v11" : "mapbox://styles/mapbox/streets-v12",
-        center,
-        zoom,
-      });
-      map.addControl(new mapboxgl.NavigationControl(), "top-right");
-      map.on('load', () => {
-        isMapLoadedRef.current = true;
-        setMapInstance(map);
-        if (map.setLanguage) map.setLanguage(lang);
-        if (userLocation) addUserMarker(map, userLocation);
-        if (displayedPrograms.length) addMarkersToMap(map, displayedPrograms);
-      });
-      return map;
-    };
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const coords = [pos.coords.longitude, pos.coords.latitude];
-          setUserLocation(coords);
-          initMap(coords, 13);
+  // ========== الحجز ==========
+  const handleBooking = async (program) => {
+    if (!user) {
+      toast.error(t('loginRequired'));
+      setPage('profile');
+      return;
+    }
+    if (isOwnProgram(program)) {
+      toast.error(t('cannotBookOwn'));
+      return;
+    }
+    setBookingLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const ticketData = {
+        user_id: user.id,
+        subject: `طلب حجز برنامج: ${program.name_ar || program.name}`,
+        type: 'booking',
+        priority: 'normal',
+        message: `أود حجز البرنامج "${program.name_ar || program.name}" الذي يقدمه المرشد ${program.guide_name}.`
+      };
+      const response = await fetch(`${API_BASE}/api/support/tickets`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          ...(token && { 'Authorization': `Bearer ${token}` })
         },
-        () => initMap([46.713, 24.774], 10)
-      );
-    } else initMap([46.713, 24.774], 10);
-  }, [mapContainerRef]);
+        body: JSON.stringify(ticketData)
+      });
+      if (response.status === 401) {
+        toast.error(lang === 'ar' ? 'انتهت الجلسة، يرجى تسجيل الدخول مرة أخرى' : 'Session expired, please login again');
+        setPage('profile');
+        return;
+      }
+      const result = await response.json();
+      if (result.success) toast.success(t('requestSent'));
+      else toast.error(result.message || t('bookingFailed'));
+    } catch (err) {
+      console.error('Booking error:', err);
+      toast.error(lang === 'ar' ? 'حدث خطأ أثناء إرسال الطلب' : 'Error sending request');
+    } finally {
+      setBookingLoading(false);
+    }
+  };
 
+  // ========== فلترة البرامج المعروضة ==========
+  const allPrograms = programs;
+  const displayedPrograms = useMemo(() => {
+    if (!showMyProgramsOnly) return allPrograms;
+    if (!user) return [];
+    const currentUserId = user.id;
+    return allPrograms.filter(p => String(p.guide_id) === String(currentUserId));
+  }, [allPrograms, showMyProgramsOnly, user]);
+
+  // ========== تهيئة الخريطة ==========
   useEffect(() => {
-    if (mapInstance && isMapLoadedRef.current) addMarkersToMap(mapInstance, displayedPrograms);
+    if (!mapContainerRef?.current && !mapContainer.current) return;
+    if (mapInstance) return;
+
+    const container = mapContainerRef?.current || mapContainer.current;
+    const defaultCenter = userLocation ? [userLocation.lng, userLocation.lat] : [46.713, 24.774];
+    const defaultZoom = userLocation ? 13 : 10;
+
+    const map = new mapboxgl.Map({
+      container: container,
+      style: dark ? "mapbox://styles/mapbox/dark-v11" : "mapbox://styles/mapbox/streets-v12",
+      center: defaultCenter,
+      zoom: defaultZoom,
+    });
+
+    map.addControl(new mapboxgl.NavigationControl(), "top-right");
+
+    map.on('load', () => {
+      isMapLoadedRef.current = true;
+      setMapInstance(map);
+      if (map.setLanguage) map.setLanguage(lang);
+      
+      // إضافة علامات المستخدم إذا كان موجوداً
+      if (userLocation) {
+        new mapboxgl.Marker({ color: "#3b82f6" })
+          .setLngLat([userLocation.lng, userLocation.lat])
+          .setPopup(new mapboxgl.Popup().setText(lang === "ar" ? "📍 موقعك" : "📍 Your location"))
+          .addTo(map);
+      }
+      
+      // إضافة علامات البرامج
+      if (displayedPrograms.length) {
+        addMarkersToMap(map, displayedPrograms);
+      }
+    });
+
+    return () => {
+      map.remove();
+    };
+  }, [mapContainerRef, dark, lang, userLocation, displayedPrograms, addMarkersToMap]);
+
+  // تحديث العلامات عند تغير البرامج أو الموقع
+  useEffect(() => {
+    if (mapInstance && isMapLoadedRef.current) {
+      addMarkersToMap(mapInstance, displayedPrograms);
+    }
   }, [displayedPrograms, mapInstance, addMarkersToMap]);
 
+  // تغيير نمط الخريطة عند تبديل الوضع الليلي/النهاري
   useEffect(() => {
     if (!mapInstance || !isMapLoadedRef.current) return;
     const newStyle = dark ? "mapbox://styles/mapbox/dark-v11" : "mapbox://styles/mapbox/streets-v12";
@@ -412,12 +431,20 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     mapInstance.setStyle(newStyle);
     mapInstance.once('style.load', () => {
       addMarkersToMap(mapInstance, displayedPrograms);
-      if (userLocation) addUserMarker(mapInstance, userLocation);
+      if (userLocation) {
+        new mapboxgl.Marker({ color: "#3b82f6" })
+          .setLngLat([userLocation.lng, userLocation.lat])
+          .setPopup(new mapboxgl.Popup().setText(lang === "ar" ? "📍 موقعك" : "📍 Your location"))
+          .addTo(mapInstance);
+      }
     });
-  }, [dark, mapInstance, displayedPrograms, userLocation, addMarkersToMap]);
+  }, [dark, mapInstance, displayedPrograms, userLocation, addMarkersToMap, lang]);
 
+  // تحديث لغة الخريطة
   useEffect(() => {
-    if (mapInstance && isMapLoadedRef.current && mapInstance.setLanguage) mapInstance.setLanguage(lang);
+    if (mapInstance && isMapLoadedRef.current && mapInstance.setLanguage) {
+      mapInstance.setLanguage(lang);
+    }
   }, [lang, mapInstance]);
 
   // استعادة برنامج محدد من localStorage
@@ -429,11 +456,17 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
       if (program) {
         setSelectedProgram(program);
         fetchProgramImages(program);
-        if (mapInstance && program.coords) mapInstance.flyTo({ center: program.coords, zoom: 14 });
+        if (mapInstance && program.coords) {
+          mapInstance.flyTo({ center: program.coords, zoom: 14 });
+        }
         localStorage.removeItem('selectedProgramId');
-      } else localStorage.removeItem('selectedProgramId');
+      } else {
+        localStorage.removeItem('selectedProgramId');
+      }
     }
   }, [programs, mapInstance, fetchProgramImages]);
+
+  const isGuide = user?.role === 'guide' || user?.type === 'guide' || user?.isGuide === true;
 
   if (!user) {
     return (
@@ -471,19 +504,44 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
         </div>
         <div className="relative">
           <Search className="absolute right-3 top-2.5 text-gray-400" size={16} />
-          <input type="text" placeholder={t('search')} className="w-full p-2 pr-9 rounded-lg bg-white/20 text-white placeholder-white/70" />
+          <input 
+            type="text" 
+            placeholder={t('search')} 
+            className="w-full p-2 pr-9 rounded-lg bg-white/20 text-white placeholder-white/70"
+            onChange={(e) => {
+              const term = e.target.value.toLowerCase();
+              if (!mapInstance) return;
+              const matchingProgram = displayedPrograms.find(p => 
+                (p.name_ar || p.name).toLowerCase().includes(term) ||
+                (p.location_name || '').toLowerCase().includes(term)
+              );
+              if (matchingProgram && matchingProgram.coords) {
+                mapInstance.flyTo({ center: matchingProgram.coords, zoom: 14 });
+                setSelectedProgram(matchingProgram);
+                fetchProgramImages(matchingProgram);
+              }
+            }}
+          />
         </div>
         <div className="flex justify-between mt-3 text-xs">
           <span>📌 {displayedPrograms.length} برنامج نشط</span>
           {isGuide && (
-            <button onClick={() => setShowMyProgramsOnly(!showMyProgramsOnly)} className={`px-2 py-1 rounded ${showMyProgramsOnly ? 'bg-yellow-500' : 'bg-white/20'}`}>
+            <button 
+              onClick={() => setShowMyProgramsOnly(!showMyProgramsOnly)} 
+              className={`px-2 py-1 rounded ${showMyProgramsOnly ? 'bg-yellow-500' : 'bg-white/20'}`}
+            >
               {showMyProgramsOnly ? '📌 برامجي فقط' : '🌍 كل البرامج'}
             </button>
           )}
         </div>
+        {locationError && (
+          <div className="text-xs bg-yellow-500/80 p-1 rounded mt-1 text-center">
+            {lang === 'ar' ? '⚠️ تعذر تحديد موقعك بدقة، تم تعيين موقع افتراضي.' : '⚠️ Could not determine your location precisely.'}
+          </div>
+        )}
       </div>
 
-      <div ref={mapContainerRef} className="flex-1 w-full min-h-0" />
+      <div ref={mapContainerRef || mapContainer} className="flex-1 w-full min-h-0" />
 
       {selectedProgram && (
         <div className="absolute bottom-20 left-4 right-4 z-20 rounded-xl shadow-lg overflow-hidden border-2 border-green-500 bg-transparent">
@@ -505,16 +563,28 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
                 />
                 {programImages.length > 1 && (
                   <>
-                    <button onClick={(e) => { e.stopPropagation(); setCurrentImageIndex((prev) => (prev - 1 + programImages.length) % programImages.length); }} className="absolute left-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full">❮</button>
-                    <button onClick={(e) => { e.stopPropagation(); setCurrentImageIndex((prev) => (prev + 1) % programImages.length); }} className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full">❯</button>
-                    <div className="absolute top-2 right-2 bg-black/60 text-white text-xs px-2 py-1 rounded-full">{currentImageIndex+1}/{programImages.length}</div>
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); setCurrentImageIndex((prev) => (prev - 1 + programImages.length) % programImages.length); }} 
+                      className="absolute left-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full hover:bg-black/70 transition z-10"
+                    >
+                      ❮
+                    </button>
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); setCurrentImageIndex((prev) => (prev + 1) % programImages.length); }} 
+                      className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full hover:bg-black/70 transition z-10"
+                    >
+                      ❯
+                    </button>
+                    <div className="absolute top-2 right-2 bg-black/60 text-white text-xs px-2 py-1 rounded-full z-10">
+                      {currentImageIndex+1}/{programImages.length}
+                    </div>
                   </>
                 )}
               </>
             ) : (
-              <div className="flex justify-center items-center h-full bg-gray-200">
+              <div className="flex justify-center items-center h-full bg-gray-200 dark:bg-gray-700">
                 <ImageIcon size={32} className="text-gray-400" />
-                <span className="mr-2 text-gray-600">لا توجد صورة</span>
+                <span className="mr-2 text-gray-600 dark:text-gray-300">لا توجد صورة</span>
               </div>
             )}
 
@@ -535,10 +605,17 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
             </button>
 
             <div className="absolute bottom-2 right-2 z-20 flex gap-2 pointer-events-auto">
-              <button onClick={() => handleChatWithGuide(selectedProgram.guide_id, selectedProgram.guide_name)} className="bg-blue-600/90 backdrop-blur-sm text-white px-2 py-1 rounded-lg text-xs font-medium flex items-center gap-1 hover:bg-blue-700 transition">
+              <button 
+                onClick={() => handleChatWithGuide(selectedProgram.guide_id, selectedProgram.guide_name)} 
+                className="bg-blue-600/90 backdrop-blur-sm text-white px-2 py-1 rounded-lg text-xs font-medium flex items-center gap-1 hover:bg-blue-700 transition"
+              >
                 <MessageCircle size={12} /> <span>{t('chatWithGuide')}</span>
               </button>
-              <button onClick={() => handleBooking(selectedProgram)} disabled={bookingLoading} className="bg-purple-600/90 backdrop-blur-sm text-white px-2 py-1 rounded-lg text-xs font-medium flex items-center gap-1 hover:bg-purple-700 transition disabled:opacity-50">
+              <button 
+                onClick={() => handleBooking(selectedProgram)} 
+                disabled={bookingLoading || isOwnProgram(selectedProgram)} 
+                className={`bg-purple-600/90 backdrop-blur-sm text-white px-2 py-1 rounded-lg text-xs font-medium flex items-center gap-1 transition ${(bookingLoading || isOwnProgram(selectedProgram)) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-purple-700'}`}
+              >
                 <CalendarCheck size={12} /> <span>{t('bookNow')}</span>
               </button>
             </div>
@@ -550,13 +627,18 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
                 <span className="bg-black/40 backdrop-blur-sm px-1.5 py-0.5 rounded-full">💰 {selectedProgram.price} ريال</span>
                 <span className="bg-black/40 backdrop-blur-sm px-1.5 py-0.5 rounded-full flex items-center gap-0.5"><Star size={10} className="fill-yellow-400 text-yellow-400" /> {selectedProgram.rating || 4.5}</span>
                 <span className="bg-black/40 backdrop-blur-sm px-1.5 py-0.5 rounded-full">⏱ {selectedProgram.duration}</span>
+                {userLocation && selectedProgram.lat && selectedProgram.lng && (
+                  <span className="bg-blue-500/70 backdrop-blur-sm px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
+                    <Navigation size={10} /> {getDistance(userLocation.lat, userLocation.lng, selectedProgram.lat, selectedProgram.lng)?.toFixed(1)} {t('distance')}
+                  </span>
+                )}
               </div>
               {selectedProgram.description && (
                 <p className="text-xs text-white/80 line-clamp-1 mt-0.5 drop-shadow-md">{selectedProgram.description}</p>
               )}
               {selectedProgram.safetyGuidelines && (
                 <div className="flex items-center gap-1 text-[10px] bg-orange-500/50 backdrop-blur-sm rounded-full px-1.5 py-0.5 w-fit mt-0.5">
-                  <AlertTriangle size={10} /> <span>إرشادات السلامة</span>
+                  <AlertTriangle size={10} /> <span>{t('safetyGuidelines')}</span>
                 </div>
               )}
             </div>
@@ -570,11 +652,23 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
             <img src={programImages[currentImageIndex]} className="max-w-full max-h-screen object-contain" alt="Gallery" />
             {programImages.length > 1 && (
               <>
-                <button onClick={(e) => { e.stopPropagation(); setCurrentImageIndex((prev) => (prev - 1 + programImages.length) % programImages.length); }} className="absolute left-4 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-3 rounded-full">❮</button>
-                <button onClick={(e) => { e.stopPropagation(); setCurrentImageIndex((prev) => (prev + 1) % programImages.length); }} className="absolute right-4 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-3 rounded-full">❯</button>
+                <button 
+                  onClick={(e) => { e.stopPropagation(); setCurrentImageIndex((prev) => (prev - 1 + programImages.length) % programImages.length); }} 
+                  className="absolute left-4 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-3 rounded-full hover:bg-black/70 transition"
+                >
+                  ❮
+                </button>
+                <button 
+                  onClick={(e) => { e.stopPropagation(); setCurrentImageIndex((prev) => (prev + 1) % programImages.length); }} 
+                  className="absolute right-4 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-3 rounded-full hover:bg-black/70 transition"
+                >
+                  ❯
+                </button>
               </>
             )}
-            <button onClick={() => setShowGallery(false)} className="absolute top-4 right-4 bg-black/50 text-white p-2 rounded-full">✕</button>
+            <button onClick={() => setShowGallery(false)} className="absolute top-4 right-4 bg-black/50 text-white p-2 rounded-full hover:bg-black/70 transition">
+              ✕
+            </button>
           </div>
         </div>
       )}
