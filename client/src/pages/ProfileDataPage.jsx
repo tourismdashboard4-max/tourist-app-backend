@@ -1,17 +1,15 @@
 // client/src/pages/ProfileDataPage.jsx
-// ✅ ربط المحفظة بشكل كامل مع خوادم الإيداع والسحب
-// ✅ دعم Apple Pay والبطاقة البنكية (حساب التاجر)
-// ✅ إدارة الحسابات البنكية للمستخدم (إضافة، حذف، اختيار للإيداع/السحب)
-// ✅ عرض Apple Pay كخيار دفع منفصل بجانب الحسابات البنكية
-// ✅ تحديث الرصيد في AuthContext و localStorage تلقائياً
-// ✅ دعم اللغتين العربية والإنجليزية
+// ✅ النسخة النهائية الكاملة - جميع النوافذ المنبثقة مكتوبة بالكامل، مع إضافة تحديث المرشدين
+// ✅ 3 حقول فقط في وضع التعديل (الاسم الكامل، البريد الإلكتروني للقراءة فقط، رقم الجوال مع التحقق)
+// ✅ عرض أيقونة اسم المستخدم أسفل زر التعديل وفي بطاقة الملف الشخصي
+// ✅ دعم كامل للمحفظة والحسابات البنكية والإيداع والسحب
 
 import React, { useState, useEffect } from 'react';
 import {
   User, Edit2, Camera, Mail, Phone, ArrowLeft,
   Save, ArrowUpCircle, ArrowDownCircle, Wallet, AlertCircle, Receipt,
   X, CheckCircle, Shield, Clock, TrendingUp, TrendingDown, Ticket, Smartphone, CreditCard,
-  Plus, Trash2, Banknote
+  Plus, Trash2, Banknote, AtSign
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
@@ -37,10 +35,7 @@ const WITHDRAW_CARD = {
   label: { ar: 'حساب التاجر (مدى)', en: 'Merchant Mada Account' }
 };
 
-// التحقق من توفر Apple Pay
-const isApplePayAvailable = () => {
-  return window.ApplePaySession && ApplePaySession.canMakePayments();
-};
+const isApplePayAvailable = () => window.ApplePaySession && ApplePaySession.canMakePayments();
 
 function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
   const { user: authUser, updateUser } = useAuth();
@@ -77,10 +72,17 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
   const [selectedDepositAccount, setSelectedDepositAccount] = useState(null);
   const [selectedWithdrawAccount, setSelectedWithdrawAccount] = useState(null);
 
-  // تحميل الحسابات البنكية للمستخدم من الخادم
+  // تحديد ما إذا كان هذا الملف الشخصي للمستخدم الحالي أم لآخر
+  const currentLoggedInUser = authUser || (() => {
+    const stored = localStorage.getItem('user');
+    return stored ? JSON.parse(stored) : null;
+  })();
+  const isOwnProfile = currentLoggedInUser?.id === userData?.id;
+
+  // تحميل الحسابات البنكية (للمستخدم نفسه فقط)
   useEffect(() => {
     const fetchBankAccounts = async () => {
-      if (!userData?.id) return;
+      if (!userData?.id || !isOwnProfile) return;
       try {
         const response = await api.getBankAccounts(userData.id);
         if (response.success && Array.isArray(response.accounts)) {
@@ -98,10 +100,272 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
       }
     };
     fetchBankAccounts();
+  }, [userData?.id, isOwnProfile]);
+
+  // جلب أحدث بيانات المستخدم من الخادم
+  const fetchFreshUserData = async () => {
+    if (!userData?.id) return;
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE_URL}/api/users/${userData.id}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.user) {
+          const freshUser = data.user;
+          const updatedUser = { ...userData, ...freshUser };
+          setUserData(updatedUser);
+          if (updateUser && isOwnProfile) updateUser(updatedUser);
+          if (isOwnProfile) {
+            const storedUser = localStorage.getItem('user');
+            if (storedUser) {
+              const userObj = JSON.parse(storedUser);
+              userObj.fullName = updatedUser.fullName;
+              userObj.avatar_url = updatedUser.avatar_url;
+              userObj.username = updatedUser.username;
+              localStorage.setItem('user', JSON.stringify(userObj));
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch fresh user data:', error);
+    }
+  };
+
+  useEffect(() => {
+    if (userData?.id) {
+      fetchFreshUserData();
+    }
   }, [userData?.id]);
 
-  // إضافة حساب بنكي جديد
+  // تحميل الصورة الشخصية
+  useEffect(() => {
+    if (userData?.avatar_url) {
+      const avatarUrl = userData.avatar_url.startsWith('http') 
+        ? userData.avatar_url 
+        : `${API_BASE_URL}${userData.avatar_url}`;
+      setAvatarPreview(avatarUrl);
+    } else {
+      setAvatarPreview(null);
+    }
+  }, [userData?.avatar_url]);
+
+  // دوال الملف الشخصي (للمستخدم نفسه فقط)
+  const handleEditToggle = () => { 
+    if (!isOwnProfile) return;
+    setIsEditing(!isEditing); 
+    setShowVerificationInput(false); 
+    setPhoneVerificationStep('idle'); 
+  };
+  
+  useEffect(() => { 
+    if (!isEditing && userData && isOwnProfile) 
+      setEditData({ 
+        fullName: userData.fullName || '', 
+        phone: userData.phone || ''
+      }); 
+  }, [isEditing, userData, isOwnProfile]);
+  
+  const handleInputChange = (e) => { 
+    const { name, value } = e.target; 
+    setEditData(prev => ({ ...prev, [name]: value })); 
+  };
+  
+  const handleVerifyPhone = async () => {
+    if (!isOwnProfile) return;
+    const phoneNumber = editData.phone;
+    if (!phoneNumber || phoneNumber === 'غير مضاف') { toast.error(lang === 'ar' ? 'الرجاء إدخال رقم الجوال أولاً' : 'Please enter your phone number first'); return; }
+    const saudiPhoneRegex = /^(05|5)[0-9]{8}$|^\+9665[0-9]{8}$/;
+    if (!saudiPhoneRegex.test(phoneNumber.replace(/\s/g, ''))) { toast.error(lang === 'ar' ? 'رقم الجوال غير صحيح' : 'Invalid phone number'); return; }
+    setPhoneVerificationStep('sending'); setTempPhone(phoneNumber);
+    try {
+      const response = await api.sendPhoneVerification(userData.id, phoneNumber);
+      if (response.success) { setPhoneVerificationStep('sent'); setShowVerificationInput(true); setCountdown(60); toast.success(lang === 'ar' ? `تم إرسال رمز التحقق إلى ${phoneNumber}` : `Verification code sent to ${phoneNumber}`); }
+      else { setPhoneVerificationStep('idle'); toast.error(lang === 'ar' ? 'فشل إرسال الرمز' : 'Failed to send code'); }
+    } catch (error) { console.error(error); setPhoneVerificationStep('idle'); toast.error(lang === 'ar' ? 'خطأ في الاتصال' : 'Connection error'); }
+  };
+  
+  const handleVerifyCode = async () => {
+    if (!isOwnProfile) return;
+    if (!verificationCode || verificationCode.length < 4) { toast.error(lang === 'ar' ? 'الرجاء إدخال الرمز' : 'Please enter code'); return; }
+    setPhoneVerificationStep('verifying');
+    try {
+      const response = await api.verifyPhoneCode(userData.id, tempPhone, verificationCode);
+      if (response.success) {
+        const updatedUser = { ...userData, phone: tempPhone, phoneVerified: true };
+        setUserData(updatedUser);
+        if (updateUser) updateUser(updatedUser);
+        if (onUpdateUser) onUpdateUser(updatedUser);
+        setEditData(prev => ({ ...prev, phone: tempPhone }));
+        setPhoneVerificationStep('verified'); setShowVerificationInput(false);
+        toast.success(lang === 'ar' ? 'تم التحقق بنجاح' : 'Verified successfully');
+      } else { setPhoneVerificationStep('sent'); toast.error(lang === 'ar' ? 'رمز غير صحيح' : 'Invalid code'); }
+    } catch (error) { console.error(error); setPhoneVerificationStep('sent'); toast.error(lang === 'ar' ? 'خطأ في التحقق' : 'Verification error'); }
+  };
+  
+  const handleResendCode = () => { if (countdown > 0) return; handleVerifyPhone(); };
+  
+  const handleSaveProfile = async () => {
+    if (!isOwnProfile) return;
+    setSaveLoading(true);
+    try {
+      const response = await api.updateUserProfile(userData.id, { 
+        fullName: editData.fullName
+      });
+      if (response.success) {
+        const updatedUser = { ...userData, fullName: editData.fullName };
+        setUserData(updatedUser);
+        if (updateUser) updateUser(updatedUser);
+        if (onUpdateUser) onUpdateUser(updatedUser);
+        const storedUser = localStorage.getItem('user');
+        if (storedUser) {
+          const userObj = JSON.parse(storedUser);
+          userObj.fullName = editData.fullName;
+          localStorage.setItem('user', JSON.stringify(userObj));
+        }
+        
+        // ✅ تحديث بيانات المرشد في الصفحة الرئيسية إذا كان المستخدم مرشداً
+        if (userData?.isGuide) {
+          window.dispatchEvent(new CustomEvent('guideProfileUpdated', {
+            detail: { 
+              guideId: userData.id, 
+              updatedData: { 
+                fullName: editData.fullName,
+                avatar_url: userData.avatar_url 
+              } 
+            }
+          }));
+        }
+        
+        toast.success(lang === 'ar' ? 'تم تحديث الاسم بنجاح' : 'Name updated successfully');
+        setIsEditing(false);
+      } else {
+        toast.error(response.message || (lang === 'ar' ? 'فشل تحديث البيانات' : 'Failed to update data'));
+      }
+    } catch (error) { 
+      console.error(error); 
+      toast.error(lang === 'ar' ? 'فشل التحديث' : 'Update failed'); 
+    } finally { 
+      setSaveLoading(false); 
+    }
+  };
+
+  const handleAvatarChange = async (e) => {
+    if (!isOwnProfile) return;
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error(lang === 'ar' ? 'حجم الصورة يجب أن لا يتجاوز 2 ميجابايت' : 'Image size must be less than 2MB');
+      return;
+    }
+    if (!file.type.startsWith('image/')) {
+      toast.error(lang === 'ar' ? 'الرجاء اختيار ملف صورة صالح' : 'Please select a valid image file');
+      return;
+    }
+    setLoading(true);
+    const formData = new FormData();
+    formData.append('avatar', file);
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE_URL}/api/users/${userData.id}/avatar`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+        body: formData
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        const previewUrl = URL.createObjectURL(file);
+        setAvatarPreview(previewUrl);
+        const updatedUser = { ...userData, avatar_url: data.avatarUrl };
+        setUserData(updatedUser);
+        if (updateUser) updateUser(updatedUser);
+        if (onUpdateUser) onUpdateUser(updatedUser);
+        const storedUser = localStorage.getItem('user');
+        if (storedUser) {
+          const userObj = JSON.parse(storedUser);
+          userObj.avatar_url = data.avatarUrl;
+          localStorage.setItem('user', JSON.stringify(userObj));
+        }
+        
+        // ✅ تحديث صورة المرشد في الصفحة الرئيسية
+        if (userData?.isGuide) {
+          window.dispatchEvent(new CustomEvent('guideProfileUpdated', {
+            detail: { 
+              guideId: userData.id, 
+              updatedData: { 
+                fullName: userData.fullName,
+                avatar_url: data.avatarUrl 
+              } 
+            }
+          }));
+        }
+        
+        toast.success(lang === 'ar' ? 'تم تحديث الصورة الشخصية بنجاح' : 'Profile picture updated successfully');
+      } else {
+        toast.error(data.message || (lang === 'ar' ? 'فشل رفع الصورة' : 'Failed to upload image'));
+      }
+    } catch (error) {
+      console.error(error);
+      toast.error(lang === 'ar' ? 'خطأ في الاتصال بالخادم' : 'Server connection error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteAvatar = async () => {
+    if (!isOwnProfile) return;
+    if (!window.confirm(lang === 'ar' ? 'هل أنت متأكد من حذف الصورة الشخصية؟' : 'Are you sure you want to delete your profile picture?')) return;
+    setLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE_URL}/api/users/${userData.id}/avatar`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        setAvatarPreview(null);
+        const updatedUser = { ...userData, avatar_url: null };
+        setUserData(updatedUser);
+        if (updateUser) updateUser(updatedUser);
+        if (onUpdateUser) onUpdateUser(updatedUser);
+        const storedUser = localStorage.getItem('user');
+        if (storedUser) {
+          const userObj = JSON.parse(storedUser);
+          userObj.avatar_url = null;
+          localStorage.setItem('user', JSON.stringify(userObj));
+        }
+        
+        // ✅ تحديث صورة المرشد في الصفحة الرئيسية (حذف الصورة)
+        if (userData?.isGuide) {
+          window.dispatchEvent(new CustomEvent('guideProfileUpdated', {
+            detail: { 
+              guideId: userData.id, 
+              updatedData: { 
+                fullName: userData.fullName,
+                avatar_url: null 
+              } 
+            }
+          }));
+        }
+        
+        toast.success(lang === 'ar' ? 'تم حذف الصورة الشخصية' : 'Profile picture deleted');
+      } else {
+        toast.error(data.message || (lang === 'ar' ? 'فشل حذف الصورة' : 'Failed to delete image'));
+      }
+    } catch (error) {
+      console.error(error);
+      toast.error(lang === 'ar' ? 'خطأ في الاتصال بالخادم' : 'Server connection error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ========== دوال الحسابات البنكية والإيداع والسحب (للمستخدم نفسه فقط) ==========
   const handleAddBankAccount = async () => {
+    if (!isOwnProfile) return;
     if (!newBankAccount.accountName.trim() || !newBankAccount.accountNumber.trim() || !newBankAccount.bankName.trim()) {
       toast.error(lang === 'ar' ? 'الرجاء ملء جميع الحقول' : 'Please fill all fields');
       return;
@@ -131,6 +395,7 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
   };
 
   const handleDeleteBankAccount = async (accountId) => {
+    if (!isOwnProfile) return;
     if (!window.confirm(lang === 'ar' ? 'هل أنت متأكد من حذف هذا الحساب؟' : 'Delete this account?')) return;
     try {
       const response = await api.deleteBankAccount(userData.id, accountId);
@@ -148,8 +413,8 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
     }
   };
 
-  // إيداع باستخدام بطاقة التاجر (Visa)
   const handleMerchantDeposit = async (amount) => {
+    if (!isOwnProfile) return;
     setAddBalanceLoading(true);
     try {
       const response = await api.depositWithCard(userData.id, amount, DEPOSIT_CARD.number, DEPOSIT_CARD.holder);
@@ -174,8 +439,8 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
     }
   };
 
-  // إيداع باستخدام الحساب البنكي للمستخدم
   const handleBankDeposit = async (amount, account) => {
+    if (!isOwnProfile) return;
     setAddBalanceLoading(true);
     try {
       const response = await api.depositWithAccount(userData.id, amount, account);
@@ -200,8 +465,8 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
     }
   };
 
-  // إيداع عبر Apple Pay
   const handleApplePayDeposit = async () => {
+    if (!isOwnProfile) return;
     if (!isApplePayAvailable()) {
       toast.error(lang === 'ar' ? 'Apple Pay غير متوفر على هذا الجهاز' : 'Apple Pay not available');
       return;
@@ -281,8 +546,8 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
     }
   };
 
-  // سحب الأموال (اختيار حساب السحب)
   const handleWithdraw = async (amount) => {
+    if (!isOwnProfile) return;
     if (!selectedWithdrawAccount) {
       toast.error(lang === 'ar' ? 'الرجاء اختيار حساب للسحب' : 'Please select a withdrawal account');
       return;
@@ -316,8 +581,8 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
     }
   };
 
-  // جلب المعاملات
   const fetchTransactions = async () => {
+    if (!isOwnProfile) return;
     if (!userData?.id) return;
     setLoadingTransactions(true);
     try {
@@ -352,55 +617,6 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
     }
   };
 
-  // دوال الملف الشخصي والتحقق (مختصرة للاختصار، ولكنها موجودة كاملة في الملف النهائي)
-  const handleEditToggle = () => { setIsEditing(!isEditing); setShowVerificationInput(false); setPhoneVerificationStep('idle'); };
-  useEffect(() => { if (!isEditing && userData) setEditData({ fullName: userData.fullName || '', phone: userData.phone || '' }); }, [isEditing, userData]);
-  const handleInputChange = (e) => { const { name, value } = e.target; setEditData(prev => ({ ...prev, [name]: value })); };
-  const handleVerifyPhone = async () => {
-    const phoneNumber = editData.phone;
-    if (!phoneNumber || phoneNumber === 'غير مضاف') { toast.error(lang === 'ar' ? 'الرجاء إدخال رقم الجوال أولاً' : 'Please enter your phone number first'); return; }
-    const saudiPhoneRegex = /^(05|5)[0-9]{8}$|^\+9665[0-9]{8}$/;
-    if (!saudiPhoneRegex.test(phoneNumber.replace(/\s/g, ''))) { toast.error(lang === 'ar' ? 'رقم الجوال غير صحيح' : 'Invalid phone number'); return; }
-    setPhoneVerificationStep('sending'); setTempPhone(phoneNumber);
-    try {
-      const response = await api.sendPhoneVerification(userData.id, phoneNumber);
-      if (response.success) { setPhoneVerificationStep('sent'); setShowVerificationInput(true); setCountdown(60); toast.success(lang === 'ar' ? `تم إرسال رمز التحقق إلى ${phoneNumber}` : `Verification code sent to ${phoneNumber}`); }
-      else { setPhoneVerificationStep('idle'); toast.error(lang === 'ar' ? 'فشل إرسال الرمز' : 'Failed to send code'); }
-    } catch (error) { console.error(error); setPhoneVerificationStep('idle'); toast.error(lang === 'ar' ? 'خطأ في الاتصال' : 'Connection error'); }
-  };
-  const handleVerifyCode = async () => {
-    if (!verificationCode || verificationCode.length < 4) { toast.error(lang === 'ar' ? 'الرجاء إدخال الرمز' : 'Please enter code'); return; }
-    setPhoneVerificationStep('verifying');
-    try {
-      const response = await api.verifyPhoneCode(userData.id, tempPhone, verificationCode);
-      if (response.success) {
-        const updatedUser = { ...userData, phone: tempPhone, phoneVerified: true };
-        setUserData(updatedUser);
-        if (updateUser) updateUser(updatedUser);
-        if (onUpdateUser) onUpdateUser(updatedUser);
-        setEditData(prev => ({ ...prev, phone: tempPhone }));
-        setPhoneVerificationStep('verified'); setShowVerificationInput(false);
-        toast.success(lang === 'ar' ? 'تم التحقق بنجاح' : 'Verified successfully');
-      } else { setPhoneVerificationStep('sent'); toast.error(lang === 'ar' ? 'رمز غير صحيح' : 'Invalid code'); }
-    } catch (error) { console.error(error); setPhoneVerificationStep('sent'); toast.error(lang === 'ar' ? 'خطأ في التحقق' : 'Verification error'); }
-  };
-  const handleResendCode = () => { if (countdown > 0) return; handleVerifyPhone(); };
-  const handleSaveProfile = async () => {
-    setSaveLoading(true);
-    try {
-      const response = await api.updateUserProfile(userData.id, { fullName: editData.fullName });
-      if (response.success) {
-        const updatedUser = { ...userData, fullName: editData.fullName };
-        setUserData(updatedUser);
-        if (updateUser) updateUser(updatedUser);
-        if (onUpdateUser) onUpdateUser(updatedUser);
-        setIsEditing(false);
-        toast.success(lang === 'ar' ? 'تم تحديث الاسم' : 'Name updated');
-      }
-    } catch (error) { console.error(error); toast.error(lang === 'ar' ? 'فشل التحديث' : 'Update failed'); } finally { setSaveLoading(false); }
-  };
-  const handleAvatarChange = async (e) => { /* نفس الكود السابق */ };
-  const handleDeleteAvatar = async () => { /* نفس الكود السابق */ };
   const openConfirmModal = (action, amount, account = null) => {
     if (amount <= 0 || isNaN(amount)) {
       toast.error(lang === 'ar' ? 'المبلغ يجب أن يكون أكبر من صفر' : 'Amount must be greater than zero');
@@ -412,32 +628,25 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
     }
     setConfirmAction(action);
     setConfirmAmount(amount);
-    // تخزين الحساب المستخدم مؤقتاً
     if (action === 'deposit' && account) window.tempDepositAccount = account;
     if (action === 'withdraw' && account) window.tempWithdrawAccount = account;
     setShowConfirmModal(true);
   };
+
   const executeTransaction = async () => {
     setShowConfirmModal(false);
     if (confirmAction === 'deposit') {
       if (window.tempDepositAccount) {
-        if (window.tempDepositAccount.isMerchant) {
-          await handleMerchantDeposit(confirmAmount);
-        } else {
-          await handleBankDeposit(confirmAmount, window.tempDepositAccount);
-        }
+        if (window.tempDepositAccount.isMerchant) await handleMerchantDeposit(confirmAmount);
+        else await handleBankDeposit(confirmAmount, window.tempDepositAccount);
         window.tempDepositAccount = null;
-      } else {
-        await handleMerchantDeposit(confirmAmount);
-      }
+      } else await handleMerchantDeposit(confirmAmount);
     } else if (confirmAction === 'withdraw') {
       if (window.tempWithdrawAccount) {
         setSelectedWithdrawAccount(window.tempWithdrawAccount);
         await handleWithdraw(confirmAmount);
         window.tempWithdrawAccount = null;
-      } else {
-        await handleWithdraw(confirmAmount);
-      }
+      } else await handleWithdraw(confirmAmount);
     }
     setConfirmAction(null);
     setConfirmAmount(0);
@@ -454,6 +663,9 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
     );
   }
 
+  const displayName = userData?.fullName?.trim() || (lang === 'ar' ? 'مستخدم' : 'User');
+  const displayUsername = userData?.username?.trim() || null;
+
   return (
     <div className="h-full overflow-y-auto bg-gradient-to-br from-green-50 to-emerald-50 dark:from-gray-900 dark:to-gray-800 pb-20">
       {/* Header */}
@@ -462,7 +674,9 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
           <button onClick={() => setPage('profile')} className="p-2 rounded-full bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition">
             <ArrowLeft size={22} />
           </button>
-          <h1 className="text-xl font-bold text-gray-800 dark:text-white">{lang === 'ar' ? 'حسابي الشخصي' : 'My Account'}</h1>
+          <h1 className="text-xl font-bold text-gray-800 dark:text-white">
+            {isOwnProfile ? (lang === 'ar' ? 'حسابي الشخصي' : 'My Account') : (lang === 'ar' ? 'الملف الشخصي' : 'Profile')}
+          </h1>
         </div>
       </div>
 
@@ -475,364 +689,420 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
               <div className="relative group">
                 <div className="w-24 h-24 rounded-full bg-white dark:bg-gray-800 p-1 shadow-xl">
                   <div className="w-full h-full rounded-full bg-gradient-to-br from-green-400 to-emerald-500 flex items-center justify-center text-white text-3xl font-bold overflow-hidden">
-                    {avatarPreview ? <img src={avatarPreview} alt={userData.fullName} className="w-full h-full object-cover" /> : (userData.fullName?.charAt(0) || 'U')}
+                    {avatarPreview ? (
+                      <img src={avatarPreview} alt={displayName} className="w-full h-full object-cover" />
+                    ) : (
+                      displayName?.charAt(0).toUpperCase() || 'U'
+                    )}
                   </div>
                 </div>
-                <button onClick={() => document.getElementById('avatar-upload').click()} className="absolute bottom-0 right-0 bg-green-600 text-white p-1.5 rounded-full hover:bg-green-700 transition shadow-md">
-                  <Camera size={16} />
-                </button>
-                {avatarPreview && (
-                  <button onClick={handleDeleteAvatar} className="absolute top-0 right-0 bg-red-500 text-white p-1 rounded-full hover:bg-red-600 transition shadow-md">
-                    <X size={12} />
-                  </button>
+                {isOwnProfile && (
+                  <>
+                    <button onClick={() => document.getElementById('avatar-upload').click()} className="absolute bottom-0 right-0 bg-green-600 text-white p-1.5 rounded-full hover:bg-green-700 transition shadow-md">
+                      <Camera size={16} />
+                    </button>
+                    {avatarPreview && (
+                      <button onClick={handleDeleteAvatar} className="absolute top-0 right-0 bg-red-500 text-white p-1 rounded-full hover:bg-red-600 transition shadow-md">
+                        <X size={12} />
+                      </button>
+                    )}
+                    <input type="file" id="avatar-upload" className="hidden" accept="image/jpeg,image/png,image/jpg,image/gif,image/webp" onChange={handleAvatarChange} />
+                  </>
                 )}
-                <input type="file" id="avatar-upload" className="hidden" accept="image/jpeg,image/png,image/jpg,image/gif,image/webp" onChange={handleAvatarChange} />
               </div>
             </div>
             <div className="text-center">
-              <h2 className="text-xl font-bold text-gray-800 dark:text-white">{userData.fullName}</h2>
-              <p className="text-sm text-gray-500 dark:text-gray-400 flex items-center justify-center gap-1 mt-1">
-                <Shield size={14} className="text-green-600" />
-                {lang === 'ar' ? 'عضو موثق' : 'Verified Member'}
+              <h2 className="text-xl font-bold text-gray-800 dark:text-white">{displayName}</h2>
+              {displayUsername && (
+                <div className="flex items-center justify-center gap-1 mt-1 text-sm text-gray-500 dark:text-gray-400">
+                  <AtSign size={14} />
+                  <span>{displayUsername}</span>
+                </div>
+              )}
+              {isOwnProfile && userData.email && (
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{userData.email}</p>
+              )}
+              <p className="text-xs text-gray-400 mt-1 flex items-center justify-center gap-1">
+                <Shield size={12} className="text-green-600" />
+                {lang === 'ar' ? 'عضو موثق' : 'Verified Member'} • {lang === 'ar' ? 'انضم في ' : 'Joined '}{new Date(userData.createdAt).toLocaleDateString(lang === 'ar' ? 'ar-SA' : 'en-US')}
               </p>
-              <p className="text-xs text-gray-400 mt-1">{lang === 'ar' ? 'انضم في ' : 'Joined '}{new Date(userData.createdAt).toLocaleDateString(lang === 'ar' ? 'ar-SA' : 'en-US')}</p>
             </div>
-            <div className="mt-4">
-              <button onClick={handleEditToggle} className="w-full py-2.5 bg-green-600 text-white rounded-xl font-medium hover:bg-green-700 transition flex items-center justify-center gap-2 shadow-sm">
-                <Edit2 size={18} />{isEditing ? (lang === 'ar' ? 'إلغاء' : 'Cancel') : (lang === 'ar' ? 'تعديل الملف الشخصي' : 'Edit Profile')}
-              </button>
-              {isEditing && (
-                <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-700/50 rounded-xl space-y-3">
-                  <input type="text" name="fullName" value={editData.fullName} onChange={handleInputChange} placeholder={lang === 'ar' ? 'الاسم الكامل' : 'Full Name'} className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-green-500 outline-none dark:bg-gray-800" />
-                  <div className="space-y-2">
-                    <div className="flex gap-2">
-                      <input type="tel" name="phone" value={editData.phone} onChange={handleInputChange} placeholder={lang === 'ar' ? 'رقم الجوال' : 'Phone'} className="flex-1 p-3 border rounded-lg focus:ring-2 focus:ring-green-500 outline-none dark:bg-gray-800" />
-                      {editData.phone && editData.phone !== userData.phone && (
-                        <button onClick={handleVerifyPhone} disabled={phoneVerificationStep === 'sending' || phoneVerificationStep === 'verifying'} className="px-4 py-2 bg-blue-600 text-white rounded-lg whitespace-nowrap">
-                          {phoneVerificationStep === 'sending' ? (lang === 'ar' ? 'جاري...' : 'Sending...') : (lang === 'ar' ? 'تحقق' : 'Verify')}
-                        </button>
-                      )}
-                    </div>
-                    {showVerificationInput && (
-                      <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-                        <p className="text-sm mb-2">{lang === 'ar' ? `تم إرسال الرمز إلى ${tempPhone}` : `Code sent to ${tempPhone}`}</p>
+            {isOwnProfile && (
+              <>
+                <div className="mt-4">
+                  <button onClick={handleEditToggle} className="w-full py-2.5 bg-green-600 text-white rounded-xl font-medium hover:bg-green-700 transition flex items-center justify-center gap-2 shadow-sm">
+                    <Edit2 size={18} />{isEditing ? (lang === 'ar' ? 'إلغاء' : 'Cancel') : (lang === 'ar' ? 'تعديل الملف الشخصي' : 'Edit Profile')}
+                  </button>
+                  {isEditing && (
+                    <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-700/50 rounded-xl space-y-3">
+                      {/* الحقل 1: الاسم الكامل */}
+                      <input type="text" name="fullName" value={editData.fullName} onChange={handleInputChange} placeholder={lang === 'ar' ? 'الاسم الكامل' : 'Full Name'} className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-green-500 outline-none dark:bg-gray-800" />
+                      
+                      {/* الحقل 2: البريد الإلكتروني (للقراءة فقط) */}
+                      <div className="relative">
+                        <input type="email" value={userData.email || ''} disabled className="w-full p-3 border rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed" />
+                        <span className="absolute left-3 top-3 text-gray-400"><Mail size={18} /></span>
+                      </div>
+                      
+                      {/* الحقل 3: رقم الجوال مع زر تحقق */}
+                      <div className="space-y-2">
                         <div className="flex gap-2">
-                          <input type="text" value={verificationCode} onChange={(e) => setVerificationCode(e.target.value)} placeholder={lang === 'ar' ? 'أدخل الرمز' : 'Enter code'} className="flex-1 p-2 border rounded-lg text-center" maxLength="6" />
-                          <button onClick={handleVerifyCode} disabled={phoneVerificationStep === 'verifying'} className="px-4 py-2 bg-green-600 text-white rounded-lg">
-                            {phoneVerificationStep === 'verifying' ? '...' : (lang === 'ar' ? 'تأكيد' : 'Confirm')}
+                          <input type="tel" name="phone" value={editData.phone} onChange={handleInputChange} placeholder={lang === 'ar' ? 'رقم الجوال' : 'Phone'} className="flex-1 p-3 border rounded-lg focus:ring-2 focus:ring-green-500 outline-none dark:bg-gray-800" />
+                          {editData.phone && editData.phone !== userData.phone && (
+                            <button onClick={handleVerifyPhone} disabled={phoneVerificationStep === 'sending' || phoneVerificationStep === 'verifying'} className="px-4 py-2 bg-blue-600 text-white rounded-lg whitespace-nowrap">
+                              {phoneVerificationStep === 'sending' ? (lang === 'ar' ? 'جاري...' : 'Sending...') : (lang === 'ar' ? 'تحقق' : 'Verify')}
+                            </button>
+                          )}
+                        </div>
+                        {showVerificationInput && (
+                          <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+                            <p className="text-sm mb-2">{lang === 'ar' ? `تم إرسال الرمز إلى ${tempPhone}` : `Code sent to ${tempPhone}`}</p>
+                            <div className="flex gap-2">
+                              <input type="text" value={verificationCode} onChange={(e) => setVerificationCode(e.target.value)} placeholder={lang === 'ar' ? 'أدخل الرمز' : 'Enter code'} className="flex-1 p-2 border rounded-lg text-center" maxLength="6" />
+                              <button onClick={handleVerifyCode} disabled={phoneVerificationStep === 'verifying'} className="px-4 py-2 bg-green-600 text-white rounded-lg">
+                                {phoneVerificationStep === 'verifying' ? '...' : (lang === 'ar' ? 'تأكيد' : 'Confirm')}
+                              </button>
+                            </div>
+                            <div className="mt-2 text-center">
+                              <button onClick={handleResendCode} disabled={countdown > 0} className="text-sm text-blue-600">
+                                {countdown > 0 ? (lang === 'ar' ? `إعادة الإرسال بعد ${countdown} ث` : `Resend in ${countdown}s`) : (lang === 'ar' ? 'إعادة إرسال الرمز' : 'Resend code')}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      
+                      <button onClick={handleSaveProfile} disabled={saveLoading} className="w-full py-2 bg-green-600 text-white rounded-lg">
+                        {saveLoading ? (lang === 'ar' ? 'جاري الحفظ...' : 'Saving...') : (lang === 'ar' ? 'حفظ التغييرات' : 'Save Changes')}
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {/* عرض اسم المستخدم أسفل زر التعديل */}
+                <div className="mt-4 pt-2 border-t border-gray-100 dark:border-gray-700 text-center">
+                  <div className="flex items-center justify-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+                    <AtSign size={12} />
+                    {displayUsername ? (
+                      <span>{displayUsername}</span>
+                    ) : (
+                      <span>{lang === 'ar' ? 'لم تتم إضافة اسم مستخدم' : 'No username added'}</span>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* إذا كان الملف الشخصي للمستخدم نفسه، نعرض كامل البيانات (المحفظة، الحسابات البنكية، الفواتير) */}
+        {isOwnProfile ? (
+          <>
+            {/* Contact Info */}
+            <div className="space-y-4">
+              <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-4 flex items-center gap-3">
+                <div className="p-2 bg-green-100 dark:bg-green-900/30 rounded-full"><Mail size={18} className="text-green-600" /></div>
+                <div className="flex-1">
+                  <p className="text-xs text-gray-500">{lang === 'ar' ? 'البريد الإلكتروني' : 'Email'}</p>
+                  <p className="text-sm font-medium">{userData.email}</p>
+                </div>
+              </div>
+              <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-4 flex items-center gap-3">
+                <div className="p-2 bg-green-100 dark:bg-green-900/30 rounded-full"><Phone size={18} className="text-green-600" /></div>
+                <div className="flex-1">
+                  <p className="text-xs text-gray-500">{lang === 'ar' ? 'رقم الجوال' : 'Phone'}</p>
+                  <p className="text-sm font-medium">{userData.phone || (lang === 'ar' ? 'غير مضاف' : 'Not added')}</p>
+                </div>
+                {userData.phone && userData.phoneVerified && <CheckCircle size={16} className="text-green-500" />}
+              </div>
+
+              {/* Wallet Card */}
+              <div className="bg-gradient-to-br from-white to-gray-50 dark:from-gray-800 dark:to-gray-800/80 rounded-2xl shadow-xl border border-gray-100 dark:border-gray-700 overflow-hidden">
+                <div className="p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <Wallet size={22} className="text-green-600" />
+                      <span className="font-bold text-gray-700 dark:text-gray-300">{lang === 'ar' ? 'محفظتي' : 'My Wallet'}</span>
+                    </div>
+                  </div>
+                  <div className="text-center mb-4">
+                    <p className="text-sm text-gray-500">{lang === 'ar' ? 'الرصيد الحالي' : 'Current Balance'}</p>
+                    <p className="text-4xl font-bold text-green-600">{balance} <span className="text-lg">ريال</span></p>
+                  </div>
+                  <div className="flex gap-3">
+                    <button onClick={() => setShowAddBalance(true)} className="flex-1 py-2.5 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-xl font-medium hover:bg-gray-200 dark:hover:bg-gray-600 transition transform hover:scale-[1.02] active:scale-98 flex items-center justify-center gap-2 shadow-sm">
+                      <ArrowDownCircle size={18} className="text-green-600" />
+                      <span>{lang === 'ar' ? 'إضافة أموال' : 'Add Funds'}</span>
+                    </button>
+                    <button onClick={() => setShowWithdraw(true)} className="flex-1 py-2.5 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-xl font-medium hover:bg-gray-200 dark:hover:bg-gray-600 transition transform hover:scale-[1.02] active:scale-98 flex items-center justify-center gap-2 shadow-sm">
+                      <ArrowUpCircle size={18} className="text-red-500" />
+                      <span>{lang === 'ar' ? 'سحب لحسابي الجاري' : 'Withdraw'}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Bank Accounts Section */}
+              <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md overflow-hidden">
+                <div className="p-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center">
+                  <div className="flex items-center gap-2">
+                    <Banknote size={18} className="text-green-600" />
+                    <span className="font-medium">{lang === 'ar' ? 'حساباتي البنكية' : 'My Bank Accounts'}</span>
+                  </div>
+                  <button onClick={() => setShowAddBankAccount(true)} className="text-sm bg-green-600 text-white px-3 py-1 rounded-lg hover:bg-green-700 transition flex items-center gap-1">
+                    <Plus size={14} /> {lang === 'ar' ? 'إضافة حساب' : 'Add Account'}
+                  </button>
+                </div>
+                {bankAccounts.length === 0 ? (
+                  <div className="p-4 text-center text-gray-500">
+                    {lang === 'ar' ? 'لا توجد حسابات بنكية مضافة' : 'No bank accounts added'}
+                  </div>
+                ) : (
+                  <div className="divide-y divide-gray-100 dark:divide-gray-700">
+                    {bankAccounts.map(account => (
+                      <div key={account.id} className="p-4 flex justify-between items-center">
+                        <div>
+                          <p className="font-medium">{account.accountName}</p>
+                          <p className="text-sm text-gray-500">{account.bankName} - {account.accountNumber.slice(-4)}</p>
+                        </div>
+                        <div className="flex gap-2">
+                          <button onClick={() => setSelectedDepositAccount(account)} className={`px-2 py-1 text-xs rounded ${selectedDepositAccount?.id === account.id ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                            {lang === 'ar' ? 'إيداع' : 'Deposit'}
+                          </button>
+                          <button onClick={() => setSelectedWithdrawAccount(account)} className={`px-2 py-1 text-xs rounded ${selectedWithdrawAccount?.id === account.id ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'}`}>
+                            {lang === 'ar' ? 'سحب' : 'Withdraw'}
+                          </button>
+                          <button onClick={() => handleDeleteBankAccount(account.id)} className="p-1 text-red-500 hover:bg-red-50 rounded">
+                            <Trash2 size={16} />
                           </button>
                         </div>
-                        <div className="mt-2 text-center">
-                          <button onClick={handleResendCode} disabled={countdown > 0} className="text-sm text-blue-600">
-                            {countdown > 0 ? (lang === 'ar' ? `إعادة الإرسال بعد ${countdown} ث` : `Resend in ${countdown}s`) : (lang === 'ar' ? 'إعادة إرسال الرمز' : 'Resend code')}
-                          </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {selectedDepositAccount && (
+                  <div className="p-2 text-xs text-green-600 text-center border-t">
+                    {lang === 'ar' ? `حساب الإيداع المختار: ${selectedDepositAccount.accountName}` : `Deposit account: ${selectedDepositAccount.accountName}`}
+                  </div>
+                )}
+                {selectedWithdrawAccount && (
+                  <div className="p-2 text-xs text-red-600 text-center border-t">
+                    {lang === 'ar' ? `حساب السحب المختار: ${selectedWithdrawAccount.accountName}` : `Withdrawal account: ${selectedWithdrawAccount.accountName}`}
+                  </div>
+                )}
+              </div>
+
+              {/* Invoices Section */}
+              <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-full">
+                    <Receipt size={20} className="text-blue-600 dark:text-blue-400" />
+                  </div>
+                  <div>
+                    <p className="font-medium text-gray-800 dark:text-white">{lang === 'ar' ? 'الفواتير والمدفوعات' : 'Invoices & Payments'}</p>
+                    <p className="text-xs text-gray-500">{lang === 'ar' ? 'سجل جميع المعاملات المالية والرحلات' : 'All financial transactions and trips'}</p>
+                  </div>
+                </div>
+                <button onClick={fetchTransactions} className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition flex items-center gap-2">
+                  <Receipt size={16} />
+                  <span>{lang === 'ar' ? 'عرض الفواتير' : 'View Invoices'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* النوافذ المنبثقة (Popups) - جميعها مكتوبة بالكامل */}
+            
+            {/* Add Bank Account Popup */}
+            {showAddBankAccount && (
+              <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowAddBankAccount(false)}>
+                <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-sm w-full p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-xl font-bold flex items-center gap-2"><Banknote className="text-green-600" /> {lang === 'ar' ? 'إضافة حساب بنكي' : 'Add Bank Account'}</h3>
+                    <button onClick={() => setShowAddBankAccount(false)} className="p-1 rounded-full hover:bg-gray-100"><X size={20} /></button>
+                  </div>
+                  <input type="text" placeholder={lang === 'ar' ? 'اسم الحساب' : 'Account Name'} value={newBankAccount.accountName} onChange={(e) => setNewBankAccount({...newBankAccount, accountName: e.target.value})} className="w-full p-3 border rounded-xl mb-3 focus:ring-2 focus:ring-green-500 outline-none" />
+                  <input type="text" placeholder={lang === 'ar' ? 'رقم الحساب' : 'Account Number'} value={newBankAccount.accountNumber} onChange={(e) => setNewBankAccount({...newBankAccount, accountNumber: e.target.value})} className="w-full p-3 border rounded-xl mb-3 focus:ring-2 focus:ring-green-500 outline-none" />
+                  <input type="text" placeholder={lang === 'ar' ? 'اسم البنك' : 'Bank Name'} value={newBankAccount.bankName} onChange={(e) => setNewBankAccount({...newBankAccount, bankName: e.target.value})} className="w-full p-3 border rounded-xl mb-4 focus:ring-2 focus:ring-green-500 outline-none" />
+                  <button onClick={handleAddBankAccount} disabled={addingBankAccount} className="w-full py-3 bg-green-600 text-white rounded-xl font-medium hover:bg-green-700 transition flex items-center justify-center gap-2">
+                    {addingBankAccount ? <div className="animate-spin h-5 w-5 border-2 border-white border-t-transparent rounded-full"></div> : (lang === 'ar' ? 'إضافة الحساب' : 'Add Account')}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Deposit Popup */}
+            {showAddBalance && (
+              <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowAddBalance(false)}>
+                <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-sm w-full p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-xl font-bold flex items-center gap-2"><ArrowDownCircle className="text-green-600" /> {lang === 'ar' ? 'إضافة أموال' : 'Add Funds'}</h3>
+                    <button onClick={() => setShowAddBalance(false)} className="p-1 rounded-full hover:bg-gray-100"><X size={20} /></button>
+                  </div>
+                  <input type="number" placeholder={lang === 'ar' ? 'المبلغ (ريال)' : 'Amount (SAR)'} value={addAmount} onChange={(e) => setAddAmount(e.target.value)} className="w-full p-3 border rounded-xl mb-4 focus:ring-2 focus:ring-green-500 outline-none" min="1" step="1" />
+                  <div className="space-y-3">
+                    {isApplePayAvailable() && (
+                      <div className="border rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-700 transition">
+                        <button onClick={handleApplePayDeposit} className="w-full flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <Smartphone size={22} className="text-black dark:text-white" />
+                            <div className="text-right">
+                              <p className="font-semibold">Apple Pay</p>
+                              <p className="text-xs text-gray-500">{lang === 'ar' ? 'دفع سريع وآمن' : 'Fast & secure'}</p>
+                            </div>
+                          </div>
+                          <span className="text-gray-400">→</span>
+                        </button>
+                      </div>
+                    )}
+                    <div className="border rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-700 transition">
+                      <button onClick={() => { const amount = parseFloat(addAmount); if (!isNaN(amount) && amount > 0) openConfirmModal('deposit', amount, DEPOSIT_CARD); else toast.error(lang === 'ar' ? 'المبلغ غير صالح' : 'Invalid amount'); }} disabled={addBalanceLoading} className="w-full flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <CreditCard size={22} className="text-green-600" />
+                          <div className="text-right">
+                            <p className="font-semibold">{DEPOSIT_CARD.label[lang]}</p>
+                            <p className="text-xs text-gray-500">{lang === 'ar' ? 'الدفع باستخدام بطاقة التاجر الرئيسية' : 'Pay using merchant card'}</p>
+                          </div>
+                        </div>
+                        {addBalanceLoading ? <div className="animate-spin h-5 w-5 border-2 border-green-600 border-t-transparent rounded-full"></div> : <span className="text-green-600">→</span>}
+                      </button>
+                    </div>
+                    {bankAccounts.length > 0 && (
+                      <div className="border rounded-xl p-3">
+                        <p className="text-sm font-medium mb-2">{lang === 'ar' ? 'اختر حسابك البنكي للإيداع' : 'Select your bank account for deposit'}</p>
+                        <div className="space-y-2">
+                          {bankAccounts.map(acc => (
+                            <button key={acc.id} onClick={() => { const amount = parseFloat(addAmount); if (!isNaN(amount) && amount > 0) openConfirmModal('deposit', amount, acc); else toast.error(lang === 'ar' ? 'المبلغ غير صالح' : 'Invalid amount'); }} className="w-full text-right p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition flex justify-between items-center">
+                              <span>{acc.accountName}</span>
+                              <span className={`text-xs ${selectedDepositAccount?.id === acc.id ? 'text-green-600' : 'text-gray-400'}`}>{selectedDepositAccount?.id === acc.id ? (lang === 'ar' ? 'محدد' : 'Selected') : ''}</span>
+                            </button>
+                          ))}
                         </div>
                       </div>
                     )}
                   </div>
-                  <button onClick={handleSaveProfile} disabled={saveLoading} className="w-full py-2 bg-green-600 text-white rounded-lg">
-                    {saveLoading ? (lang === 'ar' ? 'جاري الحفظ...' : 'Saving...') : (lang === 'ar' ? 'حفظ الاسم' : 'Save Name')}
-                  </button>
                 </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Contact & Wallet Section */}
-        <div className="space-y-4">
-          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-4 flex items-center gap-3">
-            <div className="p-2 bg-green-100 dark:bg-green-900/30 rounded-full"><Mail size={18} className="text-green-600" /></div>
-            <div className="flex-1">
-              <p className="text-xs text-gray-500">{lang === 'ar' ? 'البريد الإلكتروني' : 'Email'}</p>
-              <p className="text-sm font-medium">{userData.email}</p>
-            </div>
-          </div>
-          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-4 flex items-center gap-3">
-            <div className="p-2 bg-green-100 dark:bg-green-900/30 rounded-full"><Phone size={18} className="text-green-600" /></div>
-            <div className="flex-1">
-              <p className="text-xs text-gray-500">{lang === 'ar' ? 'رقم الجوال' : 'Phone'}</p>
-              <p className="text-sm font-medium">{userData.phone || (lang === 'ar' ? 'غير مضاف' : 'Not added')}</p>
-            </div>
-            {userData.phone && userData.phoneVerified && <CheckCircle size={16} className="text-green-500" />}
-          </div>
-
-          {/* Wallet Card */}
-          <div className="bg-gradient-to-br from-white to-gray-50 dark:from-gray-800 dark:to-gray-800/80 rounded-2xl shadow-xl border border-gray-100 dark:border-gray-700 overflow-hidden">
-            <div className="p-5">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <Wallet size={22} className="text-green-600" />
-                  <span className="font-bold text-gray-700 dark:text-gray-300">{lang === 'ar' ? 'محفظتي' : 'My Wallet'}</span>
-                </div>
-              </div>
-              <div className="text-center mb-4">
-                <p className="text-sm text-gray-500">{lang === 'ar' ? 'الرصيد الحالي' : 'Current Balance'}</p>
-                <p className="text-4xl font-bold text-green-600">{balance} <span className="text-lg">ريال</span></p>
-              </div>
-              <div className="flex gap-3">
-                <button onClick={() => setShowAddBalance(true)} className="flex-1 py-2.5 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-xl font-medium hover:bg-gray-200 dark:hover:bg-gray-600 transition transform hover:scale-[1.02] active:scale-98 flex items-center justify-center gap-2 shadow-sm">
-                  <ArrowDownCircle size={18} className="text-green-600" />
-                  <span>{lang === 'ar' ? 'إضافة أموال' : 'Add Funds'}</span>
-                </button>
-                <button onClick={() => setShowWithdraw(true)} className="flex-1 py-2.5 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-xl font-medium hover:bg-gray-200 dark:hover:bg-gray-600 transition transform hover:scale-[1.02] active:scale-98 flex items-center justify-center gap-2 shadow-sm">
-                  <ArrowUpCircle size={18} className="text-red-500" />
-                  <span>{lang === 'ar' ? 'سحب لحسابي الجاري' : 'Withdraw'}</span>
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Bank Accounts Section */}
-          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md overflow-hidden">
-            <div className="p-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center">
-              <div className="flex items-center gap-2">
-                <Banknote size={18} className="text-green-600" />
-                <span className="font-medium">{lang === 'ar' ? 'حساباتي البنكية' : 'My Bank Accounts'}</span>
-              </div>
-              <button onClick={() => setShowAddBankAccount(true)} className="text-sm bg-green-600 text-white px-3 py-1 rounded-lg hover:bg-green-700 transition flex items-center gap-1">
-                <Plus size={14} /> {lang === 'ar' ? 'إضافة حساب' : 'Add Account'}
-              </button>
-            </div>
-            {bankAccounts.length === 0 ? (
-              <div className="p-4 text-center text-gray-500">
-                {lang === 'ar' ? 'لا توجد حسابات بنكية مضافة' : 'No bank accounts added'}
-              </div>
-            ) : (
-              <div className="divide-y divide-gray-100 dark:divide-gray-700">
-                {bankAccounts.map(account => (
-                  <div key={account.id} className="p-4 flex justify-between items-center">
-                    <div>
-                      <p className="font-medium">{account.accountName}</p>
-                      <p className="text-sm text-gray-500">{account.bankName} - {account.accountNumber.slice(-4)}</p>
-                    </div>
-                    <div className="flex gap-2">
-                      <button onClick={() => setSelectedDepositAccount(account)} className={`px-2 py-1 text-xs rounded ${selectedDepositAccount?.id === account.id ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
-                        {lang === 'ar' ? 'إيداع' : 'Deposit'}
-                      </button>
-                      <button onClick={() => setSelectedWithdrawAccount(account)} className={`px-2 py-1 text-xs rounded ${selectedWithdrawAccount?.id === account.id ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'}`}>
-                        {lang === 'ar' ? 'سحب' : 'Withdraw'}
-                      </button>
-                      <button onClick={() => handleDeleteBankAccount(account.id)} className="p-1 text-red-500 hover:bg-red-50 rounded">
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                  </div>
-                ))}
               </div>
             )}
-            {selectedDepositAccount && (
-              <div className="p-2 text-xs text-green-600 text-center border-t">
-                {lang === 'ar' ? `حساب الإيداع المختار: ${selectedDepositAccount.accountName}` : `Deposit account: ${selectedDepositAccount.accountName}`}
-              </div>
-            )}
-            {selectedWithdrawAccount && (
-              <div className="p-2 text-xs text-red-600 text-center border-t">
-                {lang === 'ar' ? `حساب السحب المختار: ${selectedWithdrawAccount.accountName}` : `Withdrawal account: ${selectedWithdrawAccount.accountName}`}
-              </div>
-            )}
-          </div>
 
-          {/* Invoices Section */}
-          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-4 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-full">
-                <Receipt size={20} className="text-blue-600 dark:text-blue-400" />
-              </div>
-              <div>
-                <p className="font-medium text-gray-800 dark:text-white">{lang === 'ar' ? 'الفواتير والمدفوعات' : 'Invoices & Payments'}</p>
-                <p className="text-xs text-gray-500">{lang === 'ar' ? 'سجل جميع المعاملات المالية والرحلات' : 'All financial transactions and trips'}</p>
-              </div>
-            </div>
-            <button onClick={fetchTransactions} className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition flex items-center gap-2">
-              <Receipt size={16} />
-              <span>{lang === 'ar' ? 'عرض الفواتير' : 'View Invoices'}</span>
-            </button>
-          </div>
-
-          {/* Add Bank Account Popup */}
-          {showAddBankAccount && (
-            <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowAddBankAccount(false)}>
-              <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-sm w-full p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-xl font-bold flex items-center gap-2"><Banknote className="text-green-600" /> {lang === 'ar' ? 'إضافة حساب بنكي' : 'Add Bank Account'}</h3>
-                  <button onClick={() => setShowAddBankAccount(false)} className="p-1 rounded-full hover:bg-gray-100"><X size={20} /></button>
-                </div>
-                <input type="text" placeholder={lang === 'ar' ? 'اسم الحساب' : 'Account Name'} value={newBankAccount.accountName} onChange={(e) => setNewBankAccount({...newBankAccount, accountName: e.target.value})} className="w-full p-3 border rounded-xl mb-3 focus:ring-2 focus:ring-green-500 outline-none" />
-                <input type="text" placeholder={lang === 'ar' ? 'رقم الحساب' : 'Account Number'} value={newBankAccount.accountNumber} onChange={(e) => setNewBankAccount({...newBankAccount, accountNumber: e.target.value})} className="w-full p-3 border rounded-xl mb-3 focus:ring-2 focus:ring-green-500 outline-none" />
-                <input type="text" placeholder={lang === 'ar' ? 'اسم البنك' : 'Bank Name'} value={newBankAccount.bankName} onChange={(e) => setNewBankAccount({...newBankAccount, bankName: e.target.value})} className="w-full p-3 border rounded-xl mb-4 focus:ring-2 focus:ring-green-500 outline-none" />
-                <button onClick={handleAddBankAccount} disabled={addingBankAccount} className="w-full py-3 bg-green-600 text-white rounded-xl font-medium hover:bg-green-700 transition flex items-center justify-center gap-2">
-                  {addingBankAccount ? <div className="animate-spin h-5 w-5 border-2 border-white border-t-transparent rounded-full"></div> : (lang === 'ar' ? 'إضافة الحساب' : 'Add Account')}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Deposit Popup with Apple Pay and Bank Accounts */}
-          {showAddBalance && (
-            <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowAddBalance(false)}>
-              <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-sm w-full p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-xl font-bold flex items-center gap-2"><ArrowDownCircle className="text-green-600" /> {lang === 'ar' ? 'إضافة أموال' : 'Add Funds'}</h3>
-                  <button onClick={() => setShowAddBalance(false)} className="p-1 rounded-full hover:bg-gray-100"><X size={20} /></button>
-                </div>
-                <input type="number" placeholder={lang === 'ar' ? 'المبلغ (ريال)' : 'Amount (SAR)'} value={addAmount} onChange={(e) => setAddAmount(e.target.value)} className="w-full p-3 border rounded-xl mb-4 focus:ring-2 focus:ring-green-500 outline-none" min="1" step="1" />
-                <div className="space-y-3">
-                  {/* Apple Pay Option */}
-                  {isApplePayAvailable() && (
-                    <div className="border rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-700 transition">
-                      <button onClick={handleApplePayDeposit} className="w-full flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <Smartphone size={22} className="text-black dark:text-white" />
-                          <div className="text-right">
-                            <p className="font-semibold">Apple Pay</p>
-                            <p className="text-xs text-gray-500">{lang === 'ar' ? 'دفع سريع وآمن' : 'Fast & secure'}</p>
-                          </div>
-                        </div>
-                        <span className="text-gray-400">→</span>
-                      </button>
-                    </div>
-                  )}
-                  {/* Merchant Visa Card */}
-                  <div className="border rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-700 transition">
-                    <button onClick={() => { const amount = parseFloat(addAmount); if (!isNaN(amount) && amount > 0) openConfirmModal('deposit', amount, DEPOSIT_CARD); else toast.error(lang === 'ar' ? 'المبلغ غير صالح' : 'Invalid amount'); }} disabled={addBalanceLoading} className="w-full flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <CreditCard size={22} className="text-green-600" />
-                        <div className="text-right">
-                          <p className="font-semibold">{DEPOSIT_CARD.label[lang]}</p>
-                          <p className="text-xs text-gray-500">{lang === 'ar' ? 'الدفع باستخدام بطاقة التاجر الرئيسية' : 'Pay using merchant card'}</p>
-                        </div>
-                      </div>
-                      {addBalanceLoading ? <div className="animate-spin h-5 w-5 border-2 border-green-600 border-t-transparent rounded-full"></div> : <span className="text-green-600">→</span>}
-                    </button>
+            {/* Withdraw Popup */}
+            {showWithdraw && (
+              <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowWithdraw(false)}>
+                <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-sm w-full p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-xl font-bold flex items-center gap-2"><ArrowUpCircle className="text-red-600" /> {lang === 'ar' ? 'سحب أموال' : 'Withdraw Funds'}</h3>
+                    <button onClick={() => setShowWithdraw(false)} className="p-1 rounded-full hover:bg-gray-100"><X size={20} /></button>
                   </div>
-                  {/* User Bank Accounts */}
-                  {bankAccounts.length > 0 && (
-                    <div className="border rounded-xl p-3">
-                      <p className="text-sm font-medium mb-2">{lang === 'ar' ? 'اختر حسابك البنكي للإيداع' : 'Select your bank account for deposit'}</p>
-                      <div className="space-y-2">
-                        {bankAccounts.map(acc => (
-                          <button key={acc.id} onClick={() => { const amount = parseFloat(addAmount); if (!isNaN(amount) && amount > 0) openConfirmModal('deposit', amount, acc); else toast.error(lang === 'ar' ? 'المبلغ غير صالح' : 'Invalid amount'); }} className="w-full text-right p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition flex justify-between items-center">
-                            <span>{acc.accountName}</span>
-                            <span className={`text-xs ${selectedDepositAccount?.id === acc.id ? 'text-green-600' : 'text-gray-400'}`}>{selectedDepositAccount?.id === acc.id ? (lang === 'ar' ? 'محدد' : 'Selected') : ''}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Withdraw Popup */}
-          {showWithdraw && (
-            <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowWithdraw(false)}>
-              <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-sm w-full p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-xl font-bold flex items-center gap-2"><ArrowUpCircle className="text-red-600" /> {lang === 'ar' ? 'سحب أموال' : 'Withdraw Funds'}</h3>
-                  <button onClick={() => setShowWithdraw(false)} className="p-1 rounded-full hover:bg-gray-100"><X size={20} /></button>
-                </div>
-                <input type="number" placeholder={lang === 'ar' ? 'المبلغ (ريال)' : 'Amount (SAR)'} value={withdrawAmount} onChange={(e) => setWithdrawAmount(e.target.value)} className="w-full p-3 border rounded-xl mb-2 focus:ring-2 focus:ring-red-500 outline-none" min="1" step="1" max={balance} />
-                <p className="text-xs text-gray-500 mb-4 flex items-center gap-1"><AlertCircle size={12} /> {lang === 'ar' ? `الرصيد المتاح: ${balance} ريال` : `Available: ${balance} SAR`}</p>
-                <div className="space-y-3">
-                  {/* Merchant Mada Account */}
-                  <div className="border rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-700 transition">
-                    <button onClick={() => { const amount = parseFloat(withdrawAmount); if (!isNaN(amount) && amount > 0) openConfirmModal('withdraw', amount, WITHDRAW_CARD); else toast.error(lang === 'ar' ? 'المبلغ غير صالح' : 'Invalid amount'); }} disabled={withdrawLoading} className="w-full flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <CreditCard size={22} className="text-red-600" />
-                        <div className="text-right">
-                          <p className="font-semibold">{WITHDRAW_CARD.label[lang]}</p>
-                          <p className="text-xs text-gray-500">{lang === 'ar' ? 'سحب إلى حساب التاجر الرئيسي' : 'Withdraw to merchant account'}</p>
-                        </div>
-                      </div>
-                      {withdrawLoading ? <div className="animate-spin h-5 w-5 border-2 border-red-600 border-t-transparent rounded-full"></div> : <span className="text-red-600">→</span>}
-                    </button>
-                  </div>
-                  {/* User Bank Accounts */}
-                  {bankAccounts.length > 0 && (
-                    <div className="border rounded-xl p-3">
-                      <p className="text-sm font-medium mb-2">{lang === 'ar' ? 'اختر حسابك البنكي للسحب' : 'Select your bank account for withdrawal'}</p>
-                      <div className="space-y-2">
-                        {bankAccounts.map(acc => (
-                          <button key={acc.id} onClick={() => { setSelectedWithdrawAccount(acc); const amount = parseFloat(withdrawAmount); if (!isNaN(amount) && amount > 0) openConfirmModal('withdraw', amount, acc); else toast.error(lang === 'ar' ? 'المبلغ غير صالح' : 'Invalid amount'); }} className="w-full text-right p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition flex justify-between items-center">
-                            <span>{acc.accountName}</span>
-                            <span className={`text-xs ${selectedWithdrawAccount?.id === acc.id ? 'text-red-600' : 'text-gray-400'}`}>{selectedWithdrawAccount?.id === acc.id ? (lang === 'ar' ? 'محدد' : 'Selected') : ''}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Confirmation Modal */}
-        {showConfirmModal && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-sm w-full p-6 shadow-xl">
-              <div className="text-center mb-4">
-                <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-3 ${confirmAction === 'deposit' ? 'bg-green-100' : 'bg-red-100'}`}>
-                  {confirmAction === 'deposit' ? <ArrowDownCircle size={32} className="text-green-600" /> : <ArrowUpCircle size={32} className="text-red-600" />}
-                </div>
-                <h3 className="text-xl font-bold mb-2">{confirmAction === 'deposit' ? (lang === 'ar' ? 'تأكيد الإيداع' : 'Confirm Deposit') : (lang === 'ar' ? 'تأكيد السحب' : 'Confirm Withdrawal')}</h3>
-                <p className="text-gray-600 dark:text-gray-400">{confirmAction === 'deposit' ? (lang === 'ar' ? `إضافة ${confirmAmount} ريال` : `Add ${confirmAmount} SAR`) : (lang === 'ar' ? `سحب ${confirmAmount} ريال` : `Withdraw ${confirmAmount} SAR`)}</p>
-                {confirmAction === 'deposit' && window.tempDepositAccount && (
-                  <p className="text-xs text-green-600 mt-2">{lang === 'ar' ? `الحساب: ${window.tempDepositAccount.accountName || window.tempDepositAccount.label?.[lang] || 'بطاقة التاجر'}` : `Account: ${window.tempDepositAccount.accountName || window.tempDepositAccount.label?.[lang] || 'Merchant Card'}`}</p>
-                )}
-                {confirmAction === 'withdraw' && window.tempWithdrawAccount && (
-                  <p className="text-xs text-red-600 mt-2">{lang === 'ar' ? `الحساب: ${window.tempWithdrawAccount.accountName || window.tempWithdrawAccount.label?.[lang] || 'حساب التاجر'}` : `Account: ${window.tempWithdrawAccount.accountName || window.tempWithdrawAccount.label?.[lang] || 'Merchant Account'}`}</p>
-                )}
-              </div>
-              <div className="flex gap-3">
-                <button onClick={executeTransaction} className="flex-1 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition">{lang === 'ar' ? 'تأكيد' : 'Confirm'}</button>
-                <button onClick={() => setShowConfirmModal(false)} className="flex-1 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition">{lang === 'ar' ? 'إلغاء' : 'Cancel'}</button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Invoices Modal */}
-        {showInvoices && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowInvoices(false)}>
-            <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-lg w-full max-h-[80vh] overflow-hidden shadow-xl" onClick={e => e.stopPropagation()}>
-              <div className="flex justify-between items-center p-4 border-b dark:border-gray-700 bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20">
-                <h3 className="text-lg font-bold flex items-center gap-2"><Receipt size={20} className="text-green-600" /> {lang === 'ar' ? 'سجل المعاملات' : 'Transaction History'}</h3>
-                <button onClick={() => setShowInvoices(false)} className="p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700"><X size={20} /></button>
-              </div>
-              <div className="overflow-y-auto p-4 max-h-[60vh]">
-                {loadingTransactions ? (
-                  <div className="text-center py-8"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600 mx-auto"></div><p className="mt-2 text-gray-500">{lang === 'ar' ? 'جاري التحميل...' : 'Loading...'}</p></div>
-                ) : transactions.length === 0 ? (
-                  <div className="text-center py-8 text-gray-500"><Receipt size={48} className="mx-auto mb-2 opacity-50" /><p>{lang === 'ar' ? 'لا توجد معاملات' : 'No transactions'}</p></div>
-                ) : (
+                  <input type="number" placeholder={lang === 'ar' ? 'المبلغ (ريال)' : 'Amount (SAR)'} value={withdrawAmount} onChange={(e) => setWithdrawAmount(e.target.value)} className="w-full p-3 border rounded-xl mb-2 focus:ring-2 focus:ring-red-500 outline-none" min="1" step="1" max={balance} />
+                  <p className="text-xs text-gray-500 mb-4 flex items-center gap-1"><AlertCircle size={12} /> {lang === 'ar' ? `الرصيد المتاح: ${balance} ريال` : `Available: ${balance} SAR`}</p>
                   <div className="space-y-3">
-                    {transactions.map((tx, idx) => {
-                      let icon = null, colorClass = '';
-                      if (tx.type === 'deposit') { icon = <TrendingDown size={14} className="text-green-600" />; colorClass = 'text-green-600'; }
-                      else if (tx.type === 'withdraw') { icon = <TrendingUp size={14} className="text-red-600" />; colorClass = 'text-red-600'; }
-                      else if (tx.type === 'booking' || tx.type === 'trip') { icon = <Ticket size={14} className="text-blue-600" />; colorClass = 'text-blue-600'; }
-                      else { icon = <Receipt size={14} className="text-gray-500" />; colorClass = 'text-gray-500'; }
-                      return (
-                        <div key={idx} className="p-3 border rounded-lg dark:border-gray-700 bg-white dark:bg-gray-800">
-                          <div className="flex justify-between items-start">
-                            <div><p className="font-medium flex items-center gap-1">{icon} {tx.description || (tx.type === 'deposit' ? (lang === 'ar' ? 'إيداع' : 'Deposit') : tx.type === 'withdraw' ? (lang === 'ar' ? 'سحب' : 'Withdrawal') : (lang === 'ar' ? 'حجز رحلة' : 'Booking'))}</p><p className="text-xs text-gray-500 flex items-center gap-1 mt-1"><Clock size={12} /> {new Date(tx.createdAt).toLocaleString(lang === 'ar' ? 'ar-SA' : 'en-US')}</p></div>
-                            <div className={`font-bold flex items-center gap-1 ${colorClass}`}>{tx.type === 'deposit' ? '+' : tx.type === 'withdraw' ? '-' : ''}{tx.amount ? tx.amount : tx.price} ريال</div>
+                    <div className="border rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-700 transition">
+                      <button onClick={() => { const amount = parseFloat(withdrawAmount); if (!isNaN(amount) && amount > 0) openConfirmModal('withdraw', amount, WITHDRAW_CARD); else toast.error(lang === 'ar' ? 'المبلغ غير صالح' : 'Invalid amount'); }} disabled={withdrawLoading} className="w-full flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <CreditCard size={22} className="text-red-600" />
+                          <div className="text-right">
+                            <p className="font-semibold">{WITHDRAW_CARD.label[lang]}</p>
+                            <p className="text-xs text-gray-500">{lang === 'ar' ? 'سحب إلى حساب التاجر الرئيسي' : 'Withdraw to merchant account'}</p>
                           </div>
-                          {tx.balanceAfter && <div className="text-xs text-gray-500 mt-2">{lang === 'ar' ? 'الرصيد بعد العملية:' : 'Balance after:'} {tx.balanceAfter} ريال</div>}
-                          {tx.programName && <div className="text-xs text-gray-500 mt-1">{lang === 'ar' ? 'البرنامج:' : 'Program:'} {tx.programName}</div>}
                         </div>
-                      );
-                    })}
+                        {withdrawLoading ? <div className="animate-spin h-5 w-5 border-2 border-red-600 border-t-transparent rounded-full"></div> : <span className="text-red-600">→</span>}
+                      </button>
+                    </div>
+                    {bankAccounts.length > 0 && (
+                      <div className="border rounded-xl p-3">
+                        <p className="text-sm font-medium mb-2">{lang === 'ar' ? 'اختر حسابك البنكي للسحب' : 'Select your bank account for withdrawal'}</p>
+                        <div className="space-y-2">
+                          {bankAccounts.map(acc => (
+                            <button key={acc.id} onClick={() => { setSelectedWithdrawAccount(acc); const amount = parseFloat(withdrawAmount); if (!isNaN(amount) && amount > 0) openConfirmModal('withdraw', amount, acc); else toast.error(lang === 'ar' ? 'المبلغ غير صالح' : 'Invalid amount'); }} className="w-full text-right p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition flex justify-between items-center">
+                              <span>{acc.accountName}</span>
+                              <span className={`text-xs ${selectedWithdrawAccount?.id === acc.id ? 'text-red-600' : 'text-gray-400'}`}>{selectedWithdrawAccount?.id === acc.id ? (lang === 'ar' ? 'محدد' : 'Selected') : ''}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                )}
+                </div>
               </div>
-              <div className="p-3 border-t dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
-                <button onClick={() => setShowInvoices(false)} className="w-full py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition">{lang === 'ar' ? 'إغلاق' : 'Close'}</button>
+            )}
+
+            {/* Confirmation Modal */}
+            {showConfirmModal && (
+              <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-sm w-full p-6 shadow-xl">
+                  <div className="text-center mb-4">
+                    <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-3 ${confirmAction === 'deposit' ? 'bg-green-100' : 'bg-red-100'}`}>
+                      {confirmAction === 'deposit' ? <ArrowDownCircle size={32} className="text-green-600" /> : <ArrowUpCircle size={32} className="text-red-600" />}
+                    </div>
+                    <h3 className="text-xl font-bold mb-2">{confirmAction === 'deposit' ? (lang === 'ar' ? 'تأكيد الإيداع' : 'Confirm Deposit') : (lang === 'ar' ? 'تأكيد السحب' : 'Confirm Withdrawal')}</h3>
+                    <p className="text-gray-600 dark:text-gray-400">{confirmAction === 'deposit' ? (lang === 'ar' ? `إضافة ${confirmAmount} ريال` : `Add ${confirmAmount} SAR`) : (lang === 'ar' ? `سحب ${confirmAmount} ريال` : `Withdraw ${confirmAmount} SAR`)}</p>
+                    {confirmAction === 'deposit' && window.tempDepositAccount && (
+                      <p className="text-xs text-green-600 mt-2">{lang === 'ar' ? `الحساب: ${window.tempDepositAccount.accountName || window.tempDepositAccount.label?.[lang] || 'بطاقة التاجر'}` : `Account: ${window.tempDepositAccount.accountName || window.tempDepositAccount.label?.[lang] || 'Merchant Card'}`}</p>
+                    )}
+                    {confirmAction === 'withdraw' && window.tempWithdrawAccount && (
+                      <p className="text-xs text-red-600 mt-2">{lang === 'ar' ? `الحساب: ${window.tempWithdrawAccount.accountName || window.tempWithdrawAccount.label?.[lang] || 'حساب التاجر'}` : `Account: ${window.tempWithdrawAccount.accountName || window.tempWithdrawAccount.label?.[lang] || 'Merchant Account'}`}</p>
+                    )}
+                  </div>
+                  <div className="flex gap-3">
+                    <button onClick={executeTransaction} className="flex-1 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition">{lang === 'ar' ? 'تأكيد' : 'Confirm'}</button>
+                    <button onClick={() => setShowConfirmModal(false)} className="flex-1 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition">{lang === 'ar' ? 'إلغاء' : 'Cancel'}</button>
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
+
+            {/* Invoices Modal */}
+            {showInvoices && (
+              <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowInvoices(false)}>
+                <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-lg w-full max-h-[80vh] overflow-hidden shadow-xl" onClick={e => e.stopPropagation()}>
+                  <div className="flex justify-between items-center p-4 border-b dark:border-gray-700 bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20">
+                    <h3 className="text-lg font-bold flex items-center gap-2"><Receipt size={20} className="text-green-600" /> {lang === 'ar' ? 'سجل المعاملات' : 'Transaction History'}</h3>
+                    <button onClick={() => setShowInvoices(false)} className="p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700"><X size={20} /></button>
+                  </div>
+                  <div className="overflow-y-auto p-4 max-h-[60vh]">
+                    {loadingTransactions ? (
+                      <div className="text-center py-8"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600 mx-auto"></div><p className="mt-2 text-gray-500">{lang === 'ar' ? 'جاري التحميل...' : 'Loading...'}</p></div>
+                    ) : transactions.length === 0 ? (
+                      <div className="text-center py-8 text-gray-500"><Receipt size={48} className="mx-auto mb-2 opacity-50" /><p>{lang === 'ar' ? 'لا توجد معاملات' : 'No transactions'}</p></div>
+                    ) : (
+                      <div className="space-y-3">
+                        {transactions.map((tx, idx) => {
+                          let icon = null, colorClass = '';
+                          if (tx.type === 'deposit') { icon = <TrendingDown size={14} className="text-green-600" />; colorClass = 'text-green-600'; }
+                          else if (tx.type === 'withdraw') { icon = <TrendingUp size={14} className="text-red-600" />; colorClass = 'text-red-600'; }
+                          else if (tx.type === 'booking' || tx.type === 'trip') { icon = <Ticket size={14} className="text-blue-600" />; colorClass = 'text-blue-600'; }
+                          else { icon = <Receipt size={14} className="text-gray-500" />; colorClass = 'text-gray-500'; }
+                          return (
+                            <div key={idx} className="p-3 border rounded-lg dark:border-gray-700 bg-white dark:bg-gray-800">
+                              <div className="flex justify-between items-start">
+                                <div><p className="font-medium flex items-center gap-1">{icon} {tx.description || (tx.type === 'deposit' ? (lang === 'ar' ? 'إيداع' : 'Deposit') : tx.type === 'withdraw' ? (lang === 'ar' ? 'سحب' : 'Withdrawal') : (lang === 'ar' ? 'حجز رحلة' : 'Booking'))}</p><p className="text-xs text-gray-500 flex items-center gap-1 mt-1"><Clock size={12} /> {new Date(tx.createdAt).toLocaleString(lang === 'ar' ? 'ar-SA' : 'en-US')}</p></div>
+                                <div className={`font-bold flex items-center gap-1 ${colorClass}`}>{tx.type === 'deposit' ? '+' : tx.type === 'withdraw' ? '-' : ''}{tx.amount ? tx.amount : tx.price} ريال</div>
+                              </div>
+                              {tx.balanceAfter && <div className="text-xs text-gray-500 mt-2">{lang === 'ar' ? 'الرصيد بعد العملية:' : 'Balance after:'} {tx.balanceAfter} ريال</div>}
+                              {tx.programName && <div className="text-xs text-gray-500 mt-1">{lang === 'ar' ? 'البرنامج:' : 'Program:'} {tx.programName}</div>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                  <div className="p-3 border-t dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
+                    <button onClick={() => setShowInvoices(false)} className="w-full py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition">{lang === 'ar' ? 'إغلاق' : 'Close'}</button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          // للمستخدمين الآخرين
+          <div className="bg-white dark:bg-gray-800 rounded-xl p-6 text-center">
+            <User size={48} className="mx-auto text-gray-400 mb-2" />
+            <p className="text-gray-500">{lang === 'ar' ? 'هذا هو الملف الشخصي العام' : 'This is the public profile'}</p>
+            <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mt-2">{displayName}</p>
+            {displayUsername && (
+              <p className="text-sm text-gray-500 mt-1 flex items-center justify-center gap-1">
+                <AtSign size={14} /> {displayUsername}
+              </p>
+            )}
+            <p className="text-xs text-gray-400 mt-3">{lang === 'ar' ? 'المعلومات الإضافية مخفية لأسباب الخصوصية' : 'Additional information is hidden for privacy'}</p>
           </div>
         )}
       </div>
