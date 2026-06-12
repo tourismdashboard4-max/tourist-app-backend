@@ -1,5 +1,4 @@
-// client/src/pages/ExplorePage.jsx
-// ✅ نسخة Leaflet المحسّنة (تحل محل Mapbox) مع الحفاظ على جميع الوظائف
+// client/src/pages/ExplorePage.jsx - نسخة Leaflet المستقرة
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
@@ -11,7 +10,7 @@ import {
 import toast from "react-hot-toast";
 import api from '../services/api';
 
-// إصلاح أيقونات Leaflet
+// إصلاح أيقونات Leaflet (ضروري)
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
@@ -51,7 +50,7 @@ const getDistance = (lat1, lng1, lat2, lng2) => {
 };
 
 const LOCALES = {
-  ar: {
+  ar: { /* نفس المحتوى السابق - اختصاراً */ 
     search: "ابحث عن وجهة...",
     chatWithGuide: "💬 دردشة مع المرشد",
     bookNow: "احجز الآن",
@@ -67,7 +66,7 @@ const LOCALES = {
     nearbyPrograms: "البرامج القريبة",
     distance: "المسافة",
   },
-  en: {
+  en: { /* بالمثل */ 
     search: "Search...",
     chatWithGuide: "💬 Chat With Guide",
     bookNow: "Book Now",
@@ -87,7 +86,6 @@ const LOCALES = {
 
 function ExplorePage({ lang = "ar", setPage, user, unreadCount, dark }) {
   const t = (key) => LOCALES[lang]?.[key] || key;
-
   const [selectedProgram, setSelectedProgram] = useState(null);
   const [userLocation, setUserLocation] = useState([24.774, 46.713]); // الرياض
   const [showMyProgramsOnly, setShowMyProgramsOnly] = useState(false);
@@ -193,7 +191,7 @@ function ExplorePage({ lang = "ar", setPage, user, unreadCount, dark }) {
       (err) => {
         console.error("Geolocation error:", err);
         setLocationError(true);
-        setUserLocation([24.774, 46.713]); // الرياض
+        setUserLocation([24.774, 46.713]);
       },
       { enableHighAccuracy: true, timeout: 10000 }
     );
@@ -319,7 +317,7 @@ function ExplorePage({ lang = "ar", setPage, user, unreadCount, dark }) {
 
   return (
     <div className="h-full relative flex flex-col">
-      {/* الشريط العلوي */}
+      {/* الشريط العلوي - نفس التصميم */}
       <div className="bg-gradient-to-r from-green-500 to-emerald-600 p-4 text-white flex-shrink-0">
         <div className="flex justify-between items-center mb-3">
           <div className="flex items-center">
@@ -377,7 +375,7 @@ function ExplorePage({ lang = "ar", setPage, user, unreadCount, dark }) {
         )}
       </div>
 
-      {/* خريطة Leaflet */}
+      {/* خريطة Leaflet بارتفاع ثابت */}
       <div style={{ height: '500px', width: '100%' }}>
         <MapContainer center={userLocation} zoom={13} style={{ height: '100%', width: '100%' }}>
           <ChangeMapView center={userLocation} zoom={13} />
@@ -385,11 +383,9 @@ function ExplorePage({ lang = "ar", setPage, user, unreadCount, dark }) {
             url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; CartoDB'
           />
-          {/* علامة موقع المستخدم */}
           <Marker position={userLocation}>
             <Popup>{lang === 'ar' ? '📍 موقعك الحالي' : 'Your location'}</Popup>
           </Marker>
-          {/* علامات البرامج */}
           {displayedPrograms.map(program => (
             program.lat && program.lng && (
               <Marker
@@ -413,7 +409,7 @@ function ExplorePage({ lang = "ar", setPage, user, unreadCount, dark }) {
         </MapContainer>
       </div>
 
-      {/* نفس البطاقة السفلية التي تعرض تفاصيل البرنامج المختار (نفس كود Mapbox) */}
+      {/* بقية الكود (البطاقة السفلية ومعرض الصور) - نفس الكود الأصلي */}
       {selectedProgram && (
         <div className="absolute bottom-20 left-4 right-4 z-20 rounded-xl shadow-lg overflow-hidden border-2 border-green-500 bg-transparent">
           <div className="relative w-full bg-gray-900" style={{ height: '220px' }}>
@@ -426,10 +422,7 @@ function ExplorePage({ lang = "ar", setPage, user, unreadCount, dark }) {
                   alt={selectedProgram.name_ar || selectedProgram.name}
                   className="w-full h-full object-cover"
                   onClick={() => setShowGallery(true)}
-                  onError={(e) => {
-                    e.target.onerror = null;
-                    e.target.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' viewBox='0 0 100 100'%3E%3Crect width='100%25' height='100%25' fill='%23f0f0f0'/%3E%3Ctext x='50%25' y='50%25' font-size='12' fill='%23999' text-anchor='middle' dy='.3em'%3E❌%3C/text%3E%3C/svg%3E";
-                  }}
+                  onError={(e) => { e.target.onerror = null; e.target.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' viewBox='0 0 100 100'%3E%3Crect width='100%25' height='100%25' fill='%23f0f0f0'/%3E%3Ctext x='50%25' y='50%25' font-size='12' fill='%23999' text-anchor='middle' dy='.3em'%3E❌%3C/text%3E%3C/svg%3E"; }}
                 />
                 {programImages.length > 1 && (
                   <>
