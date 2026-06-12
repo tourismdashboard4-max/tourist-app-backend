@@ -25,7 +25,6 @@ const buildImageUrl = (url) => {
   return `${API_BASE}/${url}`;
 };
 
-// حساب المسافة بين نقطتين (km)
 const getDistance = (lat1, lng1, lat2, lng2) => {
   if (!lat1 || !lng1 || !lat2 || !lng2) return null;
   const R = 6371;
@@ -91,7 +90,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
   const isMapLoadedRef = useRef(false);
   const mapContainer = useRef(null);
 
-  // ========== تحميل المفضلة ==========
   useEffect(() => {
     if (user?.id) {
       const loadFavorites = async () => {
@@ -138,7 +136,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     }
   };
 
-  // ========== جلب البرامج النشطة فقط ==========
   const fetchProgramsFromAPI = useCallback(async () => {
     try {
       const response = await fetch(`${API_BASE}/api/programs`);
@@ -186,7 +183,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     return () => clearInterval(interval);
   }, [fetchProgramsFromAPI]);
 
-  // ========== الحصول على موقع المستخدم ==========
   useEffect(() => {
     if (!navigator.geolocation) {
       setLocationError(true);
@@ -201,7 +197,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
         console.log("📍 User location obtained:", coords);
         if (mapInstance && isMapLoadedRef.current) {
           mapInstance.flyTo({ center: coords, zoom: 13 });
-          // إضافة علامة المستخدم
           new mapboxgl.Marker({ color: "#3b82f6" })
             .setLngLat(coords)
             .setPopup(new mapboxgl.Popup().setText(lang === "ar" ? "📍 موقعك" : "📍 Your location"))
@@ -211,7 +206,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
       (err) => {
         console.error("Geolocation error:", err);
         setLocationError(true);
-        // استخدام موقع افتراضي (الرياض)
         const defaultCoords = [46.713, 24.774];
         setUserLocation({ lng: 46.713, lat: 24.774 });
         if (mapInstance && isMapLoadedRef.current) {
@@ -222,10 +216,8 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     );
   }, [mapInstance, lang]);
 
-  // ========== إضافة علامات البرامج على الخريطة ==========
   const addMarkersToMap = useCallback((map, programsList) => {
     if (!map || !isMapLoadedRef.current) return false;
-    // إزالة العلامات القديمة
     markersRef.current.forEach(m => {
       try { m.remove(); } catch(e) {}
     });
@@ -237,7 +229,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
 
     validPrograms.forEach(program => {
       const coords = program.coords;
-      // إذا كان البرنامج يخص المستخدم الحالي، لون مختلف
       const isOwn = (user && (program.guide_id === user.id || program.guide_id === user?.uuid));
       const color = isOwn ? "#9b59b6" : "#10b981";
       
@@ -257,7 +248,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     return true;
   }, [user, mapInstance]);
 
-  // ========== جلب صور البرنامج ==========
   const fetchProgramImages = useCallback(async (program) => {
     if (!program) return;
     setLoadingImages(true);
@@ -286,7 +276,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     }
   }, []);
 
-  // ========== التحقق مما إذا كان البرنامج يخص المستخدم الحالي ==========
   const isOwnProgram = useCallback((program) => {
     if (!user || !program) return false;
     const programGuideId = program.guide_id;
@@ -294,7 +283,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     return String(programGuideId) === String(currentUserId);
   }, [user]);
 
-  // ========== فتح المحادثة ==========
   const handleChatWithGuide = (guideId, guideName) => {
     if (!user) {
       toast.error(t('loginRequired'));
@@ -320,7 +308,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     setPage('directChat');
   };
 
-  // ========== الحجز ==========
   const handleBooking = async (program) => {
     if (!user) {
       toast.error(t('loginRequired'));
@@ -365,7 +352,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     }
   };
 
-  // ========== فلترة البرامج المعروضة ==========
   const allPrograms = programs;
   const displayedPrograms = useMemo(() => {
     if (!showMyProgramsOnly) return allPrograms;
@@ -374,7 +360,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     return allPrograms.filter(p => String(p.guide_id) === String(currentUserId));
   }, [allPrograms, showMyProgramsOnly, user]);
 
-  // ========== تهيئة الخريطة ==========
   useEffect(() => {
     if (!mapContainerRef?.current && !mapContainer.current) return;
     if (mapInstance) return;
@@ -397,7 +382,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
       setMapInstance(map);
       if (map.setLanguage) map.setLanguage(lang);
       
-      // إضافة علامات المستخدم إذا كان موجوداً
       if (userLocation) {
         new mapboxgl.Marker({ color: "#3b82f6" })
           .setLngLat([userLocation.lng, userLocation.lat])
@@ -405,7 +389,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
           .addTo(map);
       }
       
-      // إضافة علامات البرامج
       if (displayedPrograms.length) {
         addMarkersToMap(map, displayedPrograms);
       }
@@ -416,14 +399,12 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     };
   }, [mapContainerRef, dark, lang, userLocation, displayedPrograms, addMarkersToMap]);
 
-  // تحديث العلامات عند تغير البرامج أو الموقع
   useEffect(() => {
     if (mapInstance && isMapLoadedRef.current) {
       addMarkersToMap(mapInstance, displayedPrograms);
     }
   }, [displayedPrograms, mapInstance, addMarkersToMap]);
 
-  // تغيير نمط الخريطة عند تبديل الوضع الليلي/النهاري
   useEffect(() => {
     if (!mapInstance || !isMapLoadedRef.current) return;
     const newStyle = dark ? "mapbox://styles/mapbox/dark-v11" : "mapbox://styles/mapbox/streets-v12";
@@ -440,14 +421,12 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     });
   }, [dark, mapInstance, displayedPrograms, userLocation, addMarkersToMap, lang]);
 
-  // تحديث لغة الخريطة
   useEffect(() => {
     if (mapInstance && isMapLoadedRef.current && mapInstance.setLanguage) {
       mapInstance.setLanguage(lang);
     }
   }, [lang, mapInstance]);
 
-  // استعادة برنامج محدد من localStorage
   useEffect(() => {
     if (programs.length === 0) return;
     const selectedId = localStorage.getItem('selectedProgramId');
@@ -482,7 +461,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
 
   return (
     <div className="h-full relative flex flex-col">
-      {/* الشريط العلوي */}
       <div className="bg-gradient-to-r from-green-500 to-emerald-600 p-4 text-white flex-shrink-0">
         <div className="flex justify-between items-center mb-3">
           <div className="flex items-center">
