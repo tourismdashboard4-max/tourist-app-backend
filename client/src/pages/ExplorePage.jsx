@@ -1,15 +1,14 @@
 // client/src/pages/ExplorePage.jsx
-// ✅ إصلاح شامل لتحديد الموقع الحقيقي للمستخدم
-// - استخدام ip-api.com (يدعم CORS من localhost)
-// - مراقبة الموقع المستمرة (GPS) مع تحديث العلامة ديناميكياً
-// - عرض موقع حقيقي متحرك عند التحرك
-// - تجنب إعادة إنشاء الخريطة عدة مرات
+// ✅ تحسين جودة تحديد موقع المستخدم: دائرة دقة، تتبع مستمر، عرض اتجاه، تكبير ذكي
+// ✅ استخدام watchPosition مع أعلى دقة ممكنة
+// ✅ رسم دائرة شفافة حول الموقع تُظهر هامش الخطأ
+// ✅ تحديث الخريطة تلقائياً كلما تغير الموقع بفارق كبير
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import mapboxgl from "mapbox-gl";
 import { 
   Home, Bell, User, MapPin, Search, MessageCircle, 
-  CalendarCheck, AlertTriangle, Heart, X, Star, Image as ImageIcon 
+  CalendarCheck, AlertTriangle, Heart, X, Star, Image as ImageIcon, Navigation, Crosshair
 } from "lucide-react";
 import toast from "react-hot-toast";
 import api from '../services/api';
@@ -18,6 +17,19 @@ const MAPBOX_TOKEN = "pk.eyJ1IjoibW9vaG1kMTUiLCJhIjoiY21obWJwN3EwMHF1czJvc2lyaWR
 mapboxgl.accessToken = MAPBOX_TOKEN;
 
 const API_BASE = "https://tourist-app-api.onrender.com";
+
+// دالة حساب المسافة
+const getDistance = (lat1, lon1, lat2, lon2) => {
+  if (!lat1 || !lon1 || !lat2 || !lon2) return Infinity;
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat/2) ** 2 +
+            Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) *
+            Math.sin(dLon/2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
+};
 
 const buildImageUrl = (url) => {
   if (!url || typeof url !== 'string') return null;
@@ -42,10 +54,13 @@ const LOCALES = {
     removedFromFavorites: "🗑️ تمت الإزالة من المفضلة",
     duration: "المدة",
     myLocation: "موقعي",
-    locationError: "لم نتمكن من تحديد موقعك، سيتم استخدام موقع تقريبي",
-    locationPermissionDenied: "الوصول إلى الموقع ممنوع، يتم استخدام موقع تقريبي",
-    usingIpLocation: "📍 موقع تقريبي (حسب IP)",
-    usingGpsLocation: "📍 موقع حقيقي (GPS)",
+    locationError: "تعذر تحديد موقعك بدقة عالية، حاول مرة أخرى",
+    locationPermissionDenied: "الوصول إلى الموقع ممنوع، يرجى السماح من المتصفح",
+    usingGps: "📍 تتبع مباشر بدقة عالية",
+    enableLocation: "تفعيل الموقع",
+    retryLocation: "إعادة المحاولة",
+    kmAway: "كم",
+    accuracyMeters: "متر",
   },
   en: {
     search: "Search...",
@@ -61,19 +76,24 @@ const LOCALES = {
     removedFromFavorites: "🗑️ Removed from favorites",
     duration: "Duration",
     myLocation: "My Location",
-    locationError: "Could not determine your location, approximate location will be used",
-    locationPermissionDenied: "Location access denied, approximate location will be used",
-    usingIpLocation: "📍 Approximate location (IP based)",
-    usingGpsLocation: "📍 Real-time location (GPS)",
+    locationError: "Could not determine your location with high accuracy, please try again",
+    locationPermissionDenied: "Location permission denied, please allow in browser",
+    usingGps: "📍 Live tracking - high accuracy",
+    enableLocation: "Enable location",
+    retryLocation: "Retry",
+    kmAway: "km",
+    accuracyMeters: "m",
   },
 };
 
 function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount, dark }) {
   const t = (key) => LOCALES[lang]?.[key] || key;
+
   const [selectedProgram, setSelectedProgram] = useState(null);
   const [mapInstance, setMapInstance] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
-  const [locationSource, setLocationSource] = useState(null); // 'gps' or 'ip'
+  const [userAccuracy, setUserAccuracy] = useState(null);
+  const [locationActive, setLocationActive] = useState(false);
   const [showMyProgramsOnly, setShowMyProgramsOnly] = useState(false);
   const [programs, setPrograms] = useState([]);
   const [programImages, setProgramImages] = useState([]);
@@ -83,148 +103,25 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
   const [bookingLoading, setBookingLoading] = useState(false);
   const [favoriteIds, setFavoriteIds] = useState([]);
   const [mapLoadError, setMapLoadError] = useState(false);
+  const [showOnlyNearby, setShowOnlyNearby] = useState(true);
+  const [nearbyRadius] = useState(50);
+  const [isLocating, setIsLocating] = useState(false);
+
   const markersRef = useRef([]);
   const userMarkerRef = useRef(null);
+  const accuracyCircleSourceRef = useRef(null);
   const watchIdRef = useRef(null);
   const isMapLoadedRef = useRef(false);
   const mapInitializedRef = useRef(false);
+  const lastLocationUpdateRef = useRef(null);
 
-  // دالة الحصول على موقع تقريبي عبر IP مع دعم CORS
-  const getLocationFromIP = useCallback(async () => {
-    try {
-      // استخدام ip-api.com التي تدعم CORS من localhost
-      const response = await fetch('https://ip-api.com/json/?fields=lat,lon');
-      if (!response.ok) throw new Error('IP location failed');
-      const data = await response.json();
-      if (data.lat && data.lon) {
-        const coords = [data.lon, data.lat];
-        console.log(`📍 موقع IP: ${coords}`);
-        return coords;
-      }
-      throw new Error('No coordinates');
-    } catch (err) {
-      console.warn("⚠️ فشل الحصول على الموقع عبر IP:", err);
-      // موقع افتراضي: الرياض
-      return [46.713, 24.774];
-    }
-  }, []);
-
-  // تحديث علامة المستخدم على الخريطة
-  const updateUserMarker = useCallback((map, location, source) => {
-    if (!map || !location) return;
-    if (userMarkerRef.current) {
-      try { userMarkerRef.current.remove(); } catch(e) {}
-    }
-    const isGps = source === 'gps';
-    const markerColor = isGps ? "#3b82f6" : "#f59e0b";
-    const popupText = isGps ? t('usingGpsLocation') : t('usingIpLocation');
-    const marker = new mapboxgl.Marker({ color: markerColor, scale: 1 })
-      .setLngLat(location)
-      .setPopup(new mapboxgl.Popup().setText(popupText))
-      .addTo(map);
-    userMarkerRef.current = marker;
-  }, [t]);
-
-  // مراقبة الموقع باستخدام GPS (مع fallback للـ IP)
-  useEffect(() => {
-    let isMounted = true;
-
-    const startWatching = async () => {
-      // محاولة الحصول على موقع دقيق أولاً
-      if (navigator.geolocation) {
-        // التحقق من الإذن
-        let permissionGranted = false;
-        try {
-          if (navigator.permissions && navigator.permissions.query) {
-            const result = await navigator.permissions.query({ name: 'geolocation' });
-            permissionGranted = result.state === 'granted';
-            if (result.state === 'denied') {
-              toast.error(t('locationPermissionDenied'));
-              // استخدام IP بديل
-              const ipCoords = await getLocationFromIP();
-              if (isMounted) {
-                setUserLocation(ipCoords);
-                setLocationSource('ip');
-              }
-              return;
-            }
-          } else {
-            // إذا لم يكن Permissions API متاحاً، نعتبر أن الإذن غير معروف ونحاول
-            permissionGranted = true;
-          }
-        } catch(e) { console.warn(e); }
-
-        if (permissionGranted) {
-          watchIdRef.current = navigator.geolocation.watchPosition(
-            (position) => {
-              if (!isMounted) return;
-              const coords = [position.coords.longitude, position.coords.latitude];
-              setUserLocation(coords);
-              setLocationSource('gps');
-              console.log("📍 GPS location updated:", coords);
-            },
-            async (error) => {
-              console.warn("Geolocation error:", error);
-              if (error.code === 1) {
-                toast.error(t('locationPermissionDenied'));
-              } else {
-                toast.error(t('locationError'));
-              }
-              // استخدام IP
-              const ipCoords = await getLocationFromIP();
-              if (isMounted) {
-                setUserLocation(ipCoords);
-                setLocationSource('ip');
-              }
-            },
-            { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 }
-          );
-        } else {
-          // إذا لم يكن الإذن ممنوحاً ولا معروفاً، نجرب IP
-          const ipCoords = await getLocationFromIP();
-          if (isMounted) {
-            setUserLocation(ipCoords);
-            setLocationSource('ip');
-          }
-        }
-      } else {
-        // المتصفح لا يدعم Geolocation
-        const ipCoords = await getLocationFromIP();
-        if (isMounted) {
-          setUserLocation(ipCoords);
-          setLocationSource('ip');
-        }
-      }
-    };
-
-    startWatching();
-
-    return () => {
-      isMounted = false;
-      if (watchIdRef.current) {
-        navigator.geolocation?.clearWatch(watchIdRef.current);
-      }
-    };
-  }, [t, getLocationFromIP]);
-
-  // تحديث علامة المستخدم عند تغير الموقع أو المصدر
-  useEffect(() => {
-    if (mapInstance && isMapLoadedRef.current && userLocation && locationSource) {
-      updateUserMarker(mapInstance, userLocation, locationSource);
-    }
-  }, [userLocation, locationSource, mapInstance, updateUserMarker]);
-
-  // ---- باقي الكود (إدارة البرامج، المفضلة، الدوال الأساسية) ---- //
-
+  // ========== جلب البرامج ==========
   const fetchProgramsFromAPI = useCallback(async () => {
     try {
       const response = await fetch(`${API_BASE}/api/programs`);
       const data = await response.json();
       if (response.ok && data.success && Array.isArray(data.programs)) {
-        const activePrograms = data.programs.filter(p => {
-          const status = (p.status || '').toLowerCase();
-          return status === 'active';
-        });
+        const activePrograms = data.programs.filter(p => (p.status || '').toLowerCase() === 'active');
         const progs = activePrograms.map(p => ({
           id: p.id,
           name_ar: p.name,
@@ -232,6 +129,8 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
           guide_name: p.guide_name,
           guide_id: p.guide_id,
           coords: [p.location_lng, p.location_lat],
+          lat: p.location_lat,
+          lng: p.location_lng,
           price: p.price,
           duration: p.duration,
           rating: p.rating || 4.5,
@@ -243,7 +142,7 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
           status: p.status,
         }));
         setPrograms(progs);
-        console.log(`📦 Loaded ${progs.length} active programs from API`);
+        console.log(`📦 Loaded ${progs.length} active programs`);
       } else {
         setPrograms([]);
       }
@@ -253,22 +152,110 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     }
   }, []);
 
-  useEffect(() => {
-    fetchProgramsFromAPI();
-    const interval = setInterval(fetchProgramsFromAPI, 30000);
-    return () => clearInterval(interval);
-  }, [fetchProgramsFromAPI]);
+  const fetchProgramImages = useCallback(async (program) => {
+    if (!program) return;
+    setLoadingImages(true);
+    try {
+      const detailRes = await fetch(`${API_BASE}/api/programs/${program.id}`);
+      if (!detailRes.ok) { setProgramImages([]); return; }
+      const detailData = await detailRes.json();
+      const detailProgram = detailData.program || detailData.data || detailData;
+      let images = [];
+      if (detailProgram?.images?.length) {
+        images = detailProgram.images.map(img => buildImageUrl(img.url || img.image_url)).filter(Boolean);
+      } else if (detailProgram?.image) {
+        const imgUrl = buildImageUrl(detailProgram.image);
+        if (imgUrl) images = [imgUrl];
+      }
+      setProgramImages(images);
+      setCurrentImageIndex(0);
+    } catch (err) {
+      console.error(err);
+      setProgramImages([]);
+    } finally {
+      setLoadingImages(false);
+    }
+  }, []);
 
-  // المفضلة
+  // ========== دوال المستخدم والمرشد ==========
+  const getUserGuideUuid = useCallback(async () => {
+    if (!user?.id) return null;
+    if (typeof user.id === 'string' && (user.id.includes('-') || user.id.length === 36)) return user.id;
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_BASE}/api/users/${user.id}`, {
+        headers: { Authorization: token ? `Bearer ${token}` : '' }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.user) return data.user.id;
+      }
+    } catch (e) { console.warn(e); }
+    return null;
+  }, [user?.id]);
+
+  const [userUuid, setUserUuid] = useState(null);
+  useEffect(() => {
+    getUserGuideUuid().then(uuid => setUserUuid(uuid));
+  }, [getUserGuideUuid]);
+
+  const isOwnProgram = useCallback((program) => {
+    if (!user || !program) return false;
+    return String(program.guide_id) === String(userUuid || user.id);
+  }, [user, userUuid]);
+
+  // ========== إضافة علامات البرامج على الخريطة ==========
+  const addMarkersToMap = useCallback((map, programsList) => {
+    if (!map || !isMapLoadedRef.current) return;
+    markersRef.current.forEach(m => { try { m.remove(); } catch(e) {} });
+    markersRef.current = [];
+    const validPrograms = programsList.filter(p => p.coords && p.coords[0] && p.coords[1] && !isNaN(p.coords[0]) && !isNaN(p.coords[1]));
+    validPrograms.forEach(program => {
+      const color = isOwnProgram(program) ? "#9b59b6" : "#10b981";
+      const marker = new mapboxgl.Marker({ color, scale: 1.1 }).setLngLat(program.coords).addTo(map);
+      marker.getElement().addEventListener('click', () => {
+        setSelectedProgram(program);
+        fetchProgramImages(program);
+        if (mapInstance && program.coords) mapInstance.flyTo({ center: program.coords, zoom: 14 });
+      });
+      markersRef.current.push(marker);
+    });
+  }, [isOwnProgram, mapInstance, fetchProgramImages]);
+
+  // ========== حساب المسافات والترتيب ==========
+  const programsWithDistance = useMemo(() => {
+    if (!userLocation) return programs.map(p => ({ ...p, distance: Infinity }));
+    const [userLng, userLat] = userLocation;
+    return programs.map(p => ({
+      ...p,
+      distance: getDistance(userLat, userLng, p.lat, p.lng)
+    })).sort((a, b) => a.distance - b.distance);
+  }, [programs, userLocation]);
+
+  const displayedPrograms = useMemo(() => {
+    let filtered = programsWithDistance;
+    if (showMyProgramsOnly && user && userUuid) {
+      filtered = filtered.filter(p => String(p.guide_id) === String(userUuid));
+    }
+    if (showOnlyNearby && userLocation) {
+      filtered = filtered.filter(p => p.distance <= nearbyRadius);
+    }
+    return filtered;
+  }, [programsWithDistance, showMyProgramsOnly, user, userUuid, showOnlyNearby, nearbyRadius, userLocation]);
+
+  // تحديث العلامات عند تغيير البرامج
+  useEffect(() => {
+    if (mapInstance && isMapLoadedRef.current) addMarkersToMap(mapInstance, displayedPrograms);
+  }, [displayedPrograms, mapInstance, addMarkersToMap]);
+
+  // ========== المفضلة ==========
   useEffect(() => {
     if (user?.id) {
       const loadFavorites = async () => {
         try {
           const res = await api.getFavorites();
           setFavoriteIds(res.favorites || []);
-        } catch (err) {
-          console.error(err);
-        }
+        } catch (err) { console.error(err); }
       };
       loadFavorites();
     } else {
@@ -300,42 +287,7 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     }
   };
 
-  // الحصول على UUID للمستخدم
-  const getUserGuideUuid = useCallback(async () => {
-    if (!user?.id) return null;
-    if (typeof user.id === 'string' && (user.id.includes('-') || user.id.length === 36)) {
-      return user.id;
-    }
-    try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`${API_BASE}/api/users/${user.id}`, {
-        headers: { Authorization: token ? `Bearer ${token}` : '' }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.user) return data.user.id;
-      }
-    } catch (e) { console.warn(e); }
-    return null;
-  }, [user?.id]);
-
-  const [userUuid, setUserUuid] = useState(null);
-  useEffect(() => {
-    getUserGuideUuid().then(uuid => setUserUuid(uuid));
-  }, [getUserGuideUuid]);
-
-  const isOwnProgram = useCallback((program) => {
-    if (!user || !program) return false;
-    const programGuideId = program.guide_id;
-    const currentUserId = userUuid || user.id;
-    if (typeof programGuideId === 'string' && typeof currentUserId === 'string') {
-      return programGuideId === currentUserId;
-    }
-    const numProg = !isNaN(Number(programGuideId)) ? Number(programGuideId) : null;
-    const numUser = !isNaN(Number(currentUserId)) ? Number(currentUserId) : null;
-    return numProg && numUser && numProg === numUser;
-  }, [user, userUuid]);
-
+  // ========== الدوال الأخرى ==========
   const handleChatWithGuide = (guideId, guideName) => {
     if (!user) {
       toast.error(t('loginRequired'));
@@ -384,99 +336,172 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     } finally { setBookingLoading(false); }
   };
 
-  const allPrograms = programs;
-  const displayedPrograms = useMemo(() => {
-    if (!showMyProgramsOnly) return allPrograms;
-    if (!user) return [];
-    const currentGuideId = userUuid || user.id;
-    if (!currentGuideId) return [];
-    return allPrograms.filter(p => {
-      const programGuideId = p.guide_id;
-      if (typeof programGuideId === 'string' && typeof currentGuideId === 'string') {
-        return programGuideId === currentGuideId;
-      }
-      const numProg = !isNaN(Number(programGuideId)) ? Number(programGuideId) : null;
-      const numUser = !isNaN(Number(currentGuideId)) ? Number(currentGuideId) : null;
-      return numProg && numUser && numProg === numUser;
-    });
-  }, [allPrograms, showMyProgramsOnly, user, userUuid]);
-
   const isGuide = user?.role === 'guide' || user?.type === 'guide' || user?.isGuide === true;
 
-  const fetchProgramImages = useCallback(async (program) => {
-    if (!program) return;
-    setLoadingImages(true);
-    try {
-      const detailRes = await fetch(`${API_BASE}/api/programs/${program.id}`);
-      if (!detailRes.ok) { setProgramImages([]); return; }
-      const detailData = await detailRes.json();
-      const detailProgram = detailData.program || detailData.data || detailData;
-      let images = [];
-      if (detailProgram?.images?.length) {
-        images = detailProgram.images.map(img => buildImageUrl(img.url || img.image_url)).filter(Boolean);
-      } else if (detailProgram?.image) {
-        const imgUrl = buildImageUrl(detailProgram.image);
-        if (imgUrl) images = [imgUrl];
-      }
-      setProgramImages(images);
-      setCurrentImageIndex(0);
-    } catch (err) {
-      console.error(err);
-      setProgramImages([]);
-    } finally {
-      setLoadingImages(false);
+  // ========== تحديث علامة المستخدم ودائرة الدقة على الخريطة ==========
+  const updateUserLocationOnMap = useCallback((map, location, accuracy, heading = null) => {
+    if (!map || !location) return;
+
+    // تحديث أو إنشاء العلامة الرئيسية (نقطة زرقاء مع دائرة خارجية)
+    if (userMarkerRef.current) {
+      userMarkerRef.current.setLngLat(location);
+    } else {
+      // إنشاء عنصر HTML مخصص للعلامة
+      const el = document.createElement('div');
+      el.className = 'user-location-marker';
+      el.style.backgroundColor = '#3b82f6';
+      el.style.width = '20px';
+      el.style.height = '20px';
+      el.style.borderRadius = '50%';
+      el.style.border = '3px solid white';
+      el.style.boxShadow = '0 0 10px rgba(0,0,0,0.5)';
+      el.style.cursor = 'pointer';
+      
+      const marker = new mapboxgl.Marker({ element: el })
+        .setLngLat(location)
+        .setPopup(new mapboxgl.Popup().setHTML(`<strong>${lang === 'ar' ? 'موقعك' : 'Your location'}</strong><br/>${lang === 'ar' ? `الدقة: ${Math.round(accuracy)} متر` : `Accuracy: ${Math.round(accuracy)} m`}`))
+        .addTo(map);
+      userMarkerRef.current = marker;
     }
-  }, []);
 
-  const addMarkersToMap = useCallback((map, programsList) => {
-    if (!map || !isMapLoadedRef.current) return false;
-    markersRef.current.forEach(m => { try { m.remove(); } catch(e) {} });
-    markersRef.current = [];
-    const validPrograms = programsList.filter(p => {
-      const coords = p.coords || (p.location_lng && p.location_lat ? [p.location_lng, p.location_lat] : null);
-      return coords && coords[0] && coords[1] && !isNaN(coords[0]) && !isNaN(coords[1]);
-    });
-    validPrograms.forEach(program => {
-      const coords = program.coords;
-      const color = isOwnProgram(program) ? "#9b59b6" : "#10b981";
-      const marker = new mapboxgl.Marker({ color, scale: 1.1 }).setLngLat(coords).addTo(map);
-      marker.getElement().addEventListener('click', () => {
-        setSelectedProgram(program);
-        fetchProgramImages(program);
-        if (mapInstance && program.coords) mapInstance.flyTo({ center: program.coords, zoom: 14 });
+    // تحديث أو إنشاء دائرة الدقة (طبقة GeoJSON)
+    const circleData = {
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: location },
+        properties: { accuracy: Math.min(accuracy, 500) } // تحديد أقصى نصف قطر 500 متر للعرض
+      }]
+    };
+
+    if (map.getSource('user-accuracy-circle')) {
+      map.getSource('user-accuracy-circle').setData(circleData);
+    } else {
+      map.addSource('user-accuracy-circle', { type: 'geojson', data: circleData });
+      map.addLayer({
+        id: 'user-accuracy-circle-layer',
+        type: 'circle',
+        source: 'user-accuracy-circle',
+        paint: {
+          'circle-radius': ['*', ['get', 'accuracy'], 0.02], // تحويل الأمتار إلى وحدات خريطة تقريبية
+          'circle-color': '#3b82f6',
+          'circle-opacity': 0.3,
+          'circle-stroke-width': 1,
+          'circle-stroke-color': '#1e40af'
+        }
       });
-      markersRef.current.push(marker);
-    });
-    return true;
-  }, [isOwnProgram, fetchProgramImages, mapInstance]);
+    }
+  }, [lang]);
 
-  // تهيئة الخريطة (مرة واحدة فقط)
+  // ========== بدء تتبع الموقع بدقة عالية باستخدام watchPosition ==========
+  const startHighAccuracyTracking = useCallback(() => {
+    if (!navigator.geolocation) {
+      toast.error(t('locationError'));
+      return;
+    }
+
+    setIsLocating(true);
+
+    // إيقاف أي تتبع سابق
+    if (watchIdRef.current) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+    }
+
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      (position) => {
+        const { latitude, longitude, accuracy, heading } = position.coords;
+        const newLocation = [longitude, latitude];
+        
+        // تحديث الحالة
+        setUserLocation(newLocation);
+        setUserAccuracy(accuracy);
+        setLocationActive(true);
+        
+        // تحديث الخريطة إذا كانت جاهزة
+        if (mapInstance && isMapLoadedRef.current) {
+          updateUserLocationOnMap(mapInstance, newLocation, accuracy, heading);
+          
+          // تحريك الخريطة إلى الموقع الجديد مع تكبير مناسب
+          const currentZoom = mapInstance.getZoom();
+          const targetZoom = Math.max(currentZoom, 16);
+          mapInstance.flyTo({ center: newLocation, zoom: targetZoom, duration: 1000 });
+        }
+        
+        // إظهار إشعار بدقة الموقع أول مرة أو عند تحسن الدقة
+        if (!lastLocationUpdateRef.current || accuracy < (userAccuracy || 1000)) {
+          toast.success(lang === 'ar' ? `تم تحديد موقعك بدقة ${Math.round(accuracy)} متر` : `Location accuracy: ${Math.round(accuracy)} m`);
+        }
+        lastLocationUpdateRef.current = Date.now();
+        setIsLocating(false);
+        console.log(`📍 دقة عالية: ${newLocation} (±${accuracy}m)`);
+      },
+      (error) => {
+        console.error('Geolocation error:', error);
+        let msg = '';
+        switch(error.code) {
+          case error.PERMISSION_DENIED:
+            msg = t('locationPermissionDenied');
+            break;
+          case error.POSITION_UNAVAILABLE:
+          case error.TIMEOUT:
+            msg = t('locationError');
+            break;
+          default:
+            msg = t('locationError');
+        }
+        toast.error(msg);
+        setLocationActive(false);
+        setIsLocating(false);
+        
+        // تعيين موقع افتراضي (الرياض) كحل احتياطي
+        const defaultLoc = [46.713, 24.774];
+        setUserLocation(defaultLoc);
+        setUserAccuracy(1000);
+        if (mapInstance && isMapLoadedRef.current) {
+          updateUserLocationOnMap(mapInstance, defaultLoc, 1000);
+        }
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 10000
+      }
+    );
+  }, [mapInstance, updateUserLocationOnMap, lang, t, userAccuracy]);
+
+  // ========== تهيئة الخريطة ==========
   useEffect(() => {
     if (!mapContainerRef?.current || mapInitializedRef.current) return;
     mapInitializedRef.current = true;
 
-    const initMap = (center, zoom = 12) => {
+    const initMap = () => {
       try {
         const map = new mapboxgl.Map({
           container: mapContainerRef.current,
           style: dark ? "mapbox://styles/mapbox/dark-v11" : "mapbox://styles/mapbox/streets-v12",
-          center,
-          zoom,
+          center: [46.713, 24.774],
+          zoom: 12,
         });
+        
         map.addControl(new mapboxgl.NavigationControl(), "top-right");
+        
         map.on('load', () => {
           isMapLoadedRef.current = true;
           setMapInstance(map);
           if (map.setLanguage) map.setLanguage(lang);
-          if (userLocation && locationSource) updateUserMarker(map, userLocation, locationSource);
-          if (displayedPrograms.length) addMarkersToMap(map, displayedPrograms);
+          if (programs.length) addMarkersToMap(map, displayedPrograms);
+          
+          // بدء التتبع فوراً بعد تحميل الخريطة
+          startHighAccuracyTracking();
         });
+        
         map.on('error', (e) => {
           if (e.error?.status === 401 || e.error?.status === 403) {
             setMapLoadError(true);
-            toast.error(t('mapboxTokenError'));
+            toast.error('خطأ في مفتاح الخريطة. يرجى تحديث الصفحة.');
           }
         });
+        
         return map;
       } catch (err) {
         console.error(err);
@@ -484,24 +509,20 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
         return null;
       }
     };
+    
+    initMap();
+  }, [mapContainerRef, dark, lang, programs.length, displayedPrograms, addMarkersToMap, startHighAccuracyTracking]);
 
-    if (userLocation) {
-      initMap(userLocation, 13);
-    } else {
-      getLocationFromIP().then(coords => {
-        setUserLocation(coords);
-        setLocationSource('ip');
-        initMap(coords, 10);
-      });
-    }
-  }, [mapContainerRef, dark, lang, userLocation, locationSource, displayedPrograms, addMarkersToMap, updateUserMarker, t, getLocationFromIP]);
-
-  // تحديث علامات البرامج عند تغيير القائمة
+  // تنظيف التتبع عند إلغاء تحميل المكون
   useEffect(() => {
-    if (mapInstance && isMapLoadedRef.current) addMarkersToMap(mapInstance, displayedPrograms);
-  }, [displayedPrograms, mapInstance, addMarkersToMap]);
+    return () => {
+      if (watchIdRef.current) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+      }
+    };
+  }, []);
 
-  // تغيير الثيم
+  // تحديث الخريطة عند تغيير الثيم
   useEffect(() => {
     if (!mapInstance || !isMapLoadedRef.current) return;
     const newStyle = dark ? "mapbox://styles/mapbox/dark-v11" : "mapbox://styles/mapbox/streets-v12";
@@ -509,14 +530,30 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     mapInstance.setStyle(newStyle);
     mapInstance.once('style.load', () => {
       addMarkersToMap(mapInstance, displayedPrograms);
-      if (userLocation && locationSource) updateUserMarker(mapInstance, userLocation, locationSource);
+      if (userLocation && userAccuracy) {
+        updateUserLocationOnMap(mapInstance, userLocation, userAccuracy);
+      }
     });
-  }, [dark, mapInstance, displayedPrograms, userLocation, locationSource, addMarkersToMap, updateUserMarker]);
+  }, [dark, mapInstance, displayedPrograms, addMarkersToMap, updateUserLocationOnMap, userLocation, userAccuracy]);
 
   // تغيير اللغة
   useEffect(() => {
     if (mapInstance && isMapLoadedRef.current && mapInstance.setLanguage) mapInstance.setLanguage(lang);
   }, [lang, mapInstance]);
+
+  // تحميل البرامج
+  useEffect(() => {
+    fetchProgramsFromAPI();
+    const interval = setInterval(fetchProgramsFromAPI, 30000);
+    return () => clearInterval(interval);
+  }, [fetchProgramsFromAPI]);
+
+  // تحديث البرامج عند تغير موقع المستخدم
+  useEffect(() => {
+    if (userLocation) {
+      fetchProgramsFromAPI();
+    }
+  }, [userLocation, fetchProgramsFromAPI]);
 
   // تحديد برنامج من localStorage
   useEffect(() => {
@@ -532,35 +569,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
       } else localStorage.removeItem('selectedProgramId');
     }
   }, [programs, mapInstance, fetchProgramImages]);
-
-  // زر تحديث الموقع يدوي
-  const handleRefreshLocation = async () => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const coords = [pos.coords.longitude, pos.coords.latitude];
-          setUserLocation(coords);
-          setLocationSource('gps');
-          toast.success(lang === "ar" ? "تم تحديث موقعك" : "Location updated");
-          if (mapInstance) mapInstance.flyTo({ center: coords, zoom: 13 });
-        },
-        async (err) => {
-          console.error(err);
-          if (err.code === 1) toast.error(t('locationPermissionDenied'));
-          else toast.error(t('locationError'));
-          const ipCoords = await getLocationFromIP();
-          setUserLocation(ipCoords);
-          setLocationSource('ip');
-          if (mapInstance) mapInstance.flyTo({ center: ipCoords, zoom: 10 });
-        }
-      );
-    } else {
-      const ipCoords = await getLocationFromIP();
-      setUserLocation(ipCoords);
-      setLocationSource('ip');
-      if (mapInstance) mapInstance.flyTo({ center: ipCoords, zoom: 10 });
-    }
-  };
 
   // استماع لتحديثات بيانات المرشدين
   useEffect(() => {
@@ -580,6 +588,15 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     return () => window.removeEventListener('guideProfileUpdated', handleGuideUpdate);
   }, [selectedProgram]);
 
+  // ========== زر تفعيل التتبع يدوياً ==========
+  const handleManualTracking = () => {
+    if (watchIdRef.current) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+    }
+    startHighAccuracyTracking();
+  };
+
+  // ========== العروض الشرطية ==========
   if (!user) {
     return (
       <div className="h-full flex items-center justify-center bg-gray-50 dark:bg-gray-900">
@@ -614,14 +631,23 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
               <h1 className="font-bold">{user.name}</h1>
               <p className="text-xs flex items-center gap-1">
                 <MapPin size={12} className="inline ml-1" /> استكشف البرامج
-                {locationSource === 'ip' && <span className="bg-yellow-500/80 text-[10px] px-1 rounded-full mr-1">تقريبي</span>}
-                {locationSource === 'gps' && <span className="bg-blue-500/80 text-[10px] px-1 rounded-full mr-1">مباشر</span>}
+                {locationActive && userAccuracy && (
+                  <span className="bg-blue-500/80 text-[10px] px-1 rounded-full mr-1">
+                    {t('usingGps')} (±{Math.round(userAccuracy)}{t('accuracyMeters')})
+                  </span>
+                )}
+                {!locationActive && <span className="bg-yellow-500/80 text-[10px] px-1 rounded-full mr-1">موقع تقريبي</span>}
               </p>
             </div>
           </div>
           <div className="flex gap-2">
-            <button onClick={handleRefreshLocation} className="p-2 bg-white/20 rounded-full" title={t('myLocation')}>
-              <MapPin size={18} />
+            <button 
+              onClick={handleManualTracking} 
+              className="p-2 bg-white/20 rounded-full hover:bg-white/30 transition disabled:opacity-50"
+              title={t('myLocation')}
+              disabled={isLocating}
+            >
+              <Crosshair size={18} className={isLocating ? "animate-pulse" : ""} />
             </button>
             <button onClick={() => setPage('home')} className="p-2 bg-white/20 rounded-full"><Home size={18} /></button>
             <button onClick={() => setPage('notifications')} className="relative p-2 bg-white/20 rounded-full">
@@ -634,13 +660,23 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
           <Search className="absolute right-3 top-2.5 text-gray-400" size={16} />
           <input type="text" placeholder={t('search')} className="w-full p-2 pr-9 rounded-lg bg-white/20 text-white placeholder-white/70" />
         </div>
-        <div className="flex justify-between mt-3 text-xs">
-          <span>📌 {displayedPrograms.length} برنامج نشط</span>
-          {isGuide && (
-            <button onClick={() => setShowMyProgramsOnly(!showMyProgramsOnly)} className={`px-2 py-1 rounded ${showMyProgramsOnly ? 'bg-yellow-500' : 'bg-white/20'}`}>
-              {showMyProgramsOnly ? '📌 برامجي فقط' : '🌍 كل البرامج'}
+        <div className="flex flex-wrap justify-between mt-3 text-xs gap-2">
+          <div className="flex items-center gap-2">
+            <span>📌 {displayedPrograms.length} برنامج نشط</span>
+            {userLocation && showOnlyNearby && (
+              <span className="bg-blue-500/50 px-2 py-0.5 rounded-full">ضمن {nearbyRadius} كم</span>
+            )}
+          </div>
+          <div className="flex gap-2">
+            {isGuide && (
+              <button onClick={() => setShowMyProgramsOnly(!showMyProgramsOnly)} className={`px-2 py-1 rounded ${showMyProgramsOnly ? 'bg-yellow-500' : 'bg-white/20'}`}>
+                {showMyProgramsOnly ? '📌 برامجي فقط' : '🌍 كل البرامج'}
+              </button>
+            )}
+            <button onClick={() => setShowOnlyNearby(!showOnlyNearby)} className="px-2 py-1 rounded bg-white/20">
+              {showOnlyNearby ? '📍 القريبة فقط' : '🗺️ الكل'}
             </button>
-          )}
+          </div>
         </div>
       </div>
 
@@ -679,6 +715,9 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
                 <span className="bg-black/40 backdrop-blur-sm px-1.5 py-0.5 rounded-full">💰 {selectedProgram.price} ريال</span>
                 <span className="bg-black/40 backdrop-blur-sm px-1.5 py-0.5 rounded-full flex items-center gap-0.5"><Star size={10} className="fill-yellow-400 text-yellow-400" /> {selectedProgram.rating || 4.5}</span>
                 <span className="bg-black/40 backdrop-blur-sm px-1.5 py-0.5 rounded-full">⏱ {selectedProgram.duration}</span>
+                {selectedProgram.distance !== undefined && selectedProgram.distance !== Infinity && (
+                  <span className="bg-blue-500/80 backdrop-blur-sm px-1.5 py-0.5 rounded-full flex items-center gap-0.5"><Navigation size={10} /> {selectedProgram.distance.toFixed(1)} {t('kmAway')}</span>
+                )}
               </div>
               {selectedProgram.description && <p className="text-xs text-white/80 line-clamp-1 mt-0.5 drop-shadow-md">{selectedProgram.description}</p>}
               {selectedProgram.safetyGuidelines && <div className="flex items-center gap-1 text-[10px] bg-orange-500/50 backdrop-blur-sm rounded-full px-1.5 py-0.5 w-fit mt-0.5"><AlertTriangle size={10} /> <span>{t('safetyGuidelines')}</span></div>}
