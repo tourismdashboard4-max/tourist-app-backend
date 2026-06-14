@@ -1,17 +1,11 @@
 // client/src/pages/FavoritesPage.jsx
-// ✅ النسخة النهائية – تستخدم دوال api.js التي تخزن المفضلة لكل مستخدم على حدة
-
 import React, { useState, useEffect, useCallback } from 'react';
-import { 
-  MapPin, Star, Heart, Trash2, Navigation, 
-  Image as ImageIcon, MessageCircle, CalendarCheck 
-} from 'lucide-react';
+import { MapPin, Star, Heart, Trash2, Navigation, Image as ImageIcon, MessageCircle, CalendarCheck, Map } from 'lucide-react';
 import toast from 'react-hot-toast';
-import api from '../services/api';
 
 const API_BASE = 'https://tourist-app-api.onrender.com';
 
-// ========== دوال معالجة الصور ==========
+// دوال مساعدة (نفس المستخدمة في HomePage)
 const buildImageUrl = (url) => {
   if (!url || typeof url !== 'string') return null;
   if (url.startsWith('blob:') || url.startsWith('data:')) return url;
@@ -24,23 +18,12 @@ const fixImagesArray = (images) => {
   if (!images || !Array.isArray(images)) return [];
   return images.map(img => {
     if (!img) return null;
-    if (typeof img === 'string') {
-      const url = buildImageUrl(img);
-      return url ? { url, is_primary: false } : null;
-    }
+    if (typeof img === 'string') return buildImageUrl(img);
     const url = buildImageUrl(img.url || img.image_url);
-    if (!url) return null;
-    return { ...img, url };
+    return url || null;
   }).filter(Boolean);
 };
 
-// خريطة ثابتة للمرشدين
-const FALLBACK_GUIDES_MAP = {
-  "64be64ff-ae41-4eb0-a41f-27de577b6246": 6,
-  "d93beb84-4e67-4f64-bfe9-d20cc25f8b44": 1,
-};
-
-// دالة حساب المسافة
 const getDistance = (lat1, lon1, lat2, lon2) => {
   if (!lat1 || !lon1 || !lat2 || !lon2) return null;
   const R = 6371;
@@ -53,17 +36,12 @@ const getDistance = (lat1, lon1, lat2, lon2) => {
   return R * c;
 };
 
-// تحديد نوع النشاط
 const getActivityType = (program, lang) => {
   const text = ((program.name || '') + ' ' + (program.description || '')).toLowerCase();
-  if (text.includes('بحر') || text.includes('بحري') || text.includes('marine') || text.includes('sea'))
-    return { ar: 'رحلات بحرية', en: 'Marine trips', icon: '🌊' };
-  if (text.includes('تسلق') || text.includes('جبل') || text.includes('mountain') || text.includes('climb'))
-    return { ar: 'تسلق جبال', en: 'Mountain climbing', icon: '⛰️' };
-  if (text.includes('سفاري') || text.includes('safari') || text.includes('براري'))
-    return { ar: 'رحلات سفاري', en: 'Safari trips', icon: '🦁' };
-  if (text.includes('براشوت') || text.includes('مظلة') || text.includes('parachute') || text.includes('skydive'))
-    return { ar: 'رحلات براشوت', en: 'Parachute trips', icon: '🪂' };
+  if (text.includes('بحر') || text.includes('بحري')) return { ar: 'رحلات بحرية', en: 'Marine trips', icon: '🌊' };
+  if (text.includes('تسلق') || text.includes('جبل')) return { ar: 'تسلق جبال', en: 'Mountain climbing', icon: '⛰️' };
+  if (text.includes('سفاري')) return { ar: 'رحلات سفاري', en: 'Safari trips', icon: '🦁' };
+  if (text.includes('براشوت') || text.includes('مظلة')) return { ar: 'رحلات براشوت', en: 'Parachute trips', icon: '🪂' };
   return { ar: 'برنامج سياحي', en: 'Tour program', icon: '🏞️' };
 };
 
@@ -71,57 +49,113 @@ function FavoritesPage({ lang, setPage, user }) {
   const [favorites, setFavorites] = useState([]);
   const [loading, setLoading] = useState(true);
   const [userLocation, setUserLocation] = useState(null);
+  const [locationSource, setLocationSource] = useState(null);
   const [imageIndex, setImageIndex] = useState({});
   const [bookingLoading, setBookingLoading] = useState(false);
-  const [guidesMap, setGuidesMap] = useState(FALLBACK_GUIDES_MAP);
 
-  // جلب خريطة المرشدين
-  useEffect(() => {
-    const fetchGuidesMap = async () => {
+  // تحميل الموقع المخزن (مثل HomePage)
+  const loadStoredLocation = useCallback(() => {
+    if (user?.id) {
+      const saved = localStorage.getItem(`manual_loc_${user.id}`);
+      if (saved) {
+        try {
+          const { lat, lng } = JSON.parse(saved);
+          setUserLocation({ lat, lng });
+          setLocationSource('manual');
+          return;
+        } catch(e) {}
+      }
+    }
+    const defaultLoc = localStorage.getItem('cached_user_location');
+    if (defaultLoc) {
       try {
-        const response = await fetch(`${API_BASE}/api/guides`);
-        const data = await response.json();
-        let guidesList = [];
-        if (data && data.data && Array.isArray(data.data)) guidesList = data.data;
-        else if (data && Array.isArray(data)) guidesList = data;
-        else if (data && data.guides && Array.isArray(data.guides)) guidesList = data.guides;
-        else if (data && data.data && data.data.guides && Array.isArray(data.data.guides)) guidesList = data.data.guides;
-        
-        const map = {};
-        guidesList.forEach(guide => {
-          const uuid = guide.id || guide.uuid;
-          const numericId = guide.old_id || guide.oldId;
-          if (uuid && numericId && !isNaN(Number(numericId))) map[uuid] = Number(numericId);
-          const name = guide.full_name || guide.name;
-          if (name && numericId && !isNaN(Number(numericId))) map[name] = Number(numericId);
-        });
-        setGuidesMap(prev => ({ ...prev, ...map }));
-      } catch (err) { console.error('Failed to fetch guides map:', err); }
-    };
-    fetchGuidesMap();
-  }, []);
+        const { lat, lng } = JSON.parse(defaultLoc);
+        setUserLocation({ lat, lng });
+        setLocationSource('cached');
+        return;
+      } catch(e) {}
+    }
+    setUserLocation(null);
+  }, [user]);
 
-  // تحويل معرف المرشد
-  const convertGuideId = useCallback((guideId, guideName) => {
+  // جلب تفاصيل برنامج كاملة (مطابق لـ HomePage)
+  const fetchFullProgram = async (programId) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/programs/${programId}`);
+      const data = await res.json();
+      const prog = data.program || data.data || data;
+      if (prog) {
+        let images = [];
+        if (prog.images?.length) images = prog.images.map(img => buildImageUrl(img.url || img.image_url)).filter(Boolean);
+        else if (prog.image) images = [buildImageUrl(prog.image)];
+        return { ...prog, images };
+      }
+    } catch(e) {}
+    return null;
+  };
+
+  // تحميل قائمة المفضلة من localStorage وجلب تفاصيل البرامج
+  const loadFavorites = useCallback(async () => {
+    if (!user) {
+      setFavorites([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const favoriteIds = JSON.parse(localStorage.getItem(`favorites_${user.id}`) || '[]');
+      if (favoriteIds.length === 0) {
+        setFavorites([]);
+        setLoading(false);
+        return;
+      }
+
+      // جلب جميع البرامج النشطة
+      const res = await fetch(`${API_BASE}/api/programs`);
+      const data = await res.json();
+      let allPrograms = [];
+      if (data.success && Array.isArray(data.programs)) allPrograms = data.programs;
+      else if (Array.isArray(data)) allPrograms = data;
+      else allPrograms = [];
+
+      const favProgramsBasic = allPrograms.filter(p => favoriteIds.includes(p.id) && p.status === 'active');
+      const detailed = await Promise.all(favProgramsBasic.map(p => fetchFullProgram(p.id).catch(() => p)));
+      setFavorites(detailed.filter(p => p !== null));
+
+      const initialIndex = {};
+      detailed.forEach(p => { if(p) initialIndex[p.id] = 0; });
+      setImageIndex(initialIndex);
+    } catch (err) {
+      console.error('Error loading favorites:', err);
+      setFavorites([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [user]);
+
+  // إزالة من المفضلة (تحديث localStorage)
+  const removeFavorite = (programId) => {
+    if (!user) return;
+    const favoriteIds = JSON.parse(localStorage.getItem(`favorites_${user.id}`) || '[]');
+    const newFavs = favoriteIds.filter(id => id !== programId);
+    localStorage.setItem(`favorites_${user.id}`, JSON.stringify(newFavs));
+    setFavorites(prev => prev.filter(p => p.id !== programId));
+    toast.success(lang === 'ar' ? 'تمت الإزالة من المفضلة' : 'Removed from favorites');
+  };
+
+  // دوال التفاعل (دردشة، حجز، عرض على الخريطة) مشابهة لـ HomePage
+  const convertGuideId = (guideId, guideName) => {
     if (guideId && !isNaN(Number(guideId))) return Number(guideId);
-    if (guideId && guidesMap[guideId]) return guidesMap[guideId];
-    if (guideName && guidesMap[guideName]) return guidesMap[guideName];
     if (guideId === "64be64ff-ae41-4eb0-a41f-27de577b6246") return 6;
     if (guideId === "d93beb84-4e67-4f64-bfe9-d20cc25f8b44") return 1;
     if (guideName === "مرشد سياحي") return 6;
-    if (guideName === "Tour Guide 2") return 6;
     return null;
-  }, [guidesMap]);
+  };
 
-  // فتح محادثة مع المرشد
-  const handleChatWithGuide = useCallback((guideId, guideName) => {
+  const handleChatWithGuide = (guideId, guideName) => {
     if (!user) {
       toast.error(lang === 'ar' ? 'يجب تسجيل الدخول أولاً' : 'Please login first');
       setPage('profile');
-      return;
-    }
-    if (!guideId && !guideName) {
-      toast.error(lang === 'ar' ? 'معرف المرشد غير موجود' : 'Guide ID missing');
       return;
     }
     const numericGuideId = convertGuideId(guideId, guideName);
@@ -133,17 +167,12 @@ function FavoritesPage({ lang, setPage, user }) {
       toast.error(lang === 'ar' ? 'لا يمكنك فتح محادثة مع نفسك' : 'Cannot start chat with yourself');
       return;
     }
-    const chatParams = { 
-      recipientId: numericGuideId, 
-      recipientName: guideName || 'المرشد', 
-      timestamp: Date.now() 
-    };
+    const chatParams = { recipientId: numericGuideId, recipientName: guideName || 'المرشد', timestamp: Date.now() };
     localStorage.setItem('directChatParams', JSON.stringify(chatParams));
     toast.success(lang === 'ar' ? `تم فتح المحادثة مع ${guideName}` : `Chat opened with ${guideName}`);
     setPage('directChat');
-  }, [user, lang, setPage, convertGuideId]);
+  };
 
-  // طلب حجز البرنامج
   const handleBooking = async (program) => {
     if (!user) {
       toast.error(lang === 'ar' ? 'يجب تسجيل الدخول أولاً' : 'Please login first');
@@ -153,149 +182,61 @@ function FavoritesPage({ lang, setPage, user }) {
     setBookingLoading(true);
     try {
       const token = localStorage.getItem('token');
-      const ticketData = {
-        user_id: user.id,
-        subject: `طلب حجز برنامج: ${program.name}`,
-        type: 'booking',
-        priority: 'normal',
-        message: `أود حجز البرنامج "${program.name}" الذي يقدمه المرشد ${program.guide_name}.`
-      };
-      const response = await fetch(`${API_BASE}/api/support/tickets`, {
+      const res = await fetch(`${API_BASE}/api/support/tickets`, {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          ...(token && { 'Authorization': `Bearer ${token}` })
-        },
-        body: JSON.stringify(ticketData)
+        headers: { 'Content-Type': 'application/json', ...(token && { Authorization: `Bearer ${token}` }) },
+        body: JSON.stringify({
+          user_id: user.id,
+          subject: `طلب حجز: ${program.name}`,
+          type: 'booking',
+          priority: 'normal',
+          message: `أود حجز البرنامج "${program.name}" للمرشد ${program.guide_name}`
+        })
       });
-      if (response.status === 401) {
-        toast.error(lang === 'ar' ? 'انتهت الجلسة، يرجى تسجيل الدخول مرة أخرى' : 'Session expired, please login again');
-        setPage('profile');
-        return;
-      }
-      const result = await response.json();
-      if (result.success) {
-        toast.success(lang === 'ar' ? 'تم إرسال طلب الحجز بنجاح' : 'Booking request sent');
-      } else {
-        toast.error(result.message || (lang === 'ar' ? 'فشل إرسال طلب الحجز' : 'Booking failed'));
-      }
-    } catch (err) {
-      console.error('Booking error:', err);
-      toast.error(lang === 'ar' ? 'حدث خطأ أثناء إرسال الطلب' : 'Error sending request');
+      const result = await res.json();
+      if (result.success) toast.success(lang === 'ar' ? 'تم إرسال طلب الحجز بنجاح' : 'Booking request sent');
+      else toast.error(result.message || (lang === 'ar' ? 'فشل إرسال طلب الحجز' : 'Booking failed'));
+    } catch(e) {
+      toast.error(lang === 'ar' ? 'حدث خطأ' : 'Error');
     } finally {
       setBookingLoading(false);
     }
   };
 
-  // جلب تفاصيل البرنامج الكاملة
-  const fetchFullProgram = async (programId) => {
-    try {
-      const res = await fetch(`${API_BASE}/api/programs/${programId}`);
-      const data = await res.json();
-      const programData = data.program || data.data || data;
-      if (programData) {
-        return {
-          ...programData,
-          images: fixImagesArray(programData.images || []),
-          image: buildImageUrl(programData.image)
-        };
-      }
-    } catch (err) { console.error(`Failed to fetch details for program ${programId}`, err); }
-    return null;
+  const handleViewOnMap = (id) => {
+    localStorage.setItem('selectedProgramId', id);
+    setPage('explore');
   };
 
-  // ========== تحميل المفضلة باستخدام api.js ==========
-  const loadFavorites = async () => {
-    if (!user) {
-      setFavorites([]);
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    try {
-      const response = await api.getFavorites();
-      const favIds = response.favorites || [];
-      if (favIds.length === 0) {
-        setFavorites([]);
-        setLoading(false);
-        return;
-      }
-      const res = await fetch(`${API_BASE}/api/programs`);
-      const data = await res.json();
-      let programs = [];
-      if (data.success && Array.isArray(data.programs)) programs = data.programs;
-      else if (Array.isArray(data)) programs = data;
-
-      const basicFavs = programs.filter(p => favIds.includes(p.id));
-      const detailedFavs = await Promise.all(
-        basicFavs.map(async (prog) => {
-          const detailed = await fetchFullProgram(prog.id);
-          if (detailed) return detailed;
-          return {
-            ...prog,
-            images: fixImagesArray(prog.images || []),
-            image: buildImageUrl(prog.image)
-          };
-        })
-      );
-      setFavorites(detailedFavs);
-      const initialIndex = {};
-      detailedFavs.forEach(p => { initialIndex[p.id] = 0; });
-      setImageIndex(initialIndex);
-    } catch (err) {
-      console.error('Error loading favorites:', err);
-      setFavorites([]);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ========== إزالة من المفضلة باستخدام api.js ==========
-  const removeFavorite = async (programId) => {
-    if (!user) return;
-    const previousFavs = [...favorites];
-    // Optimistic update
-    setFavorites(prev => prev.filter(p => p.id !== programId));
-    toast.success(lang === 'ar' ? 'تمت الإزالة من المفضلة' : 'Removed from favorites');
-    try {
-      await api.removeFavorite(programId);
-    } catch (err) {
-      console.error('Failed to remove favorite:', err);
-      setFavorites(previousFavs);
-      toast.error(lang === 'ar' ? 'فشل الإزالة، حاول مرة أخرى' : 'Failed to remove, please try again');
-    }
-  };
-
-  // التنقل بين الصور
-  const nextImage = (e, programId, total) => {
+  const nextImage = (e, id, total) => {
     e.stopPropagation();
-    setImageIndex(prev => ({ ...prev, [programId]: (prev[programId] + 1) % total }));
+    setImageIndex(prev => ({ ...prev, [id]: (prev[id] + 1) % total }));
   };
-  const prevImage = (e, programId, total) => {
+  const prevImage = (e, id, total) => {
     e.stopPropagation();
-    setImageIndex(prev => ({ ...prev, [programId]: (prev[programId] - 1 + total) % total }));
+    setImageIndex(prev => ({ ...prev, [id]: (prev[id] - 1 + total) % total }));
   };
 
-  // تحميل موقع المستخدم
-  const loadUserLocation = () => {
-    const cached = localStorage.getItem('cached_user_location');
-    if (cached) {
-      try {
-        const data = JSON.parse(cached);
-        if (data.lat && data.lng) setUserLocation({ lat: data.lat, lng: data.lng });
-      } catch(e) {}
-    } else if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-        () => console.warn('Unable to get location')
-      );
-    }
+  const goToMapForLocation = () => {
+    localStorage.setItem('redirectAfterLocation', 'favorites');
+    setPage('explore');
   };
 
   useEffect(() => {
-    loadUserLocation();
+    loadStoredLocation();
     loadFavorites();
-  }, [user]);
+
+    const handleLocationUpdate = (event) => {
+      if (event.detail && event.detail.coords) {
+        const coords = event.detail.coords;
+        setUserLocation({ lat: coords[1], lng: coords[0] });
+        setLocationSource('manual');
+        toast.success(lang === 'ar' ? 'تم تحديث موقعك يدوياً' : 'Manual location updated');
+      }
+    };
+    window.addEventListener('userLocationUpdated', handleLocationUpdate);
+    return () => window.removeEventListener('userLocationUpdated', handleLocationUpdate);
+  }, [loadFavorites, loadStoredLocation, lang]);
 
   if (loading) {
     return (
@@ -323,9 +264,24 @@ function FavoritesPage({ lang, setPage, user }) {
 
   return (
     <div className="h-full overflow-y-auto bg-gray-50 dark:bg-gray-900 p-4 pb-20">
-      <h1 className="text-2xl font-bold mb-6 text-gray-800 dark:text-white">
-        {lang === 'ar' ? 'المفضلة' : 'Favorites'}
-      </h1>
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-2xl font-bold text-gray-800 dark:text-white">
+          {lang === 'ar' ? 'المفضلة' : 'Favorites'}
+        </h1>
+        <button
+          onClick={goToMapForLocation}
+          className="p-2 bg-white dark:bg-gray-800 rounded-full shadow-sm hover:shadow transition flex items-center gap-1 text-sm text-green-600 dark:text-green-400"
+        >
+          <Map size={16} />
+          <span className="hidden sm:inline">{lang === 'ar' ? 'تحديد موقعي' : 'Set location'}</span>
+        </button>
+      </div>
+
+      {userLocation && (
+        <div className="mb-4 text-xs text-center text-gray-500 dark:text-gray-400">
+          {locationSource === 'manual' ? '📍 موقع محدد يدوياً' : '📍 موقع مخزن سابقاً'}
+        </div>
+      )}
 
       {favorites.length === 0 ? (
         <div className="text-center py-12">
@@ -340,18 +296,13 @@ function FavoritesPage({ lang, setPage, user }) {
       ) : (
         <div className="space-y-5">
           {favorites.map(program => {
-            const images = (program.images || []).map(img => img.url);
+            const images = program.images || [];
             const currentImgIndex = imageIndex[program.id] || 0;
             const currentImg = images[currentImgIndex] || null;
-
             let distance = null;
             if (userLocation && program.location_lat && program.location_lng) {
-              distance = getDistance(
-                userLocation.lat, userLocation.lng,
-                program.location_lat, program.location_lng
-              ).toFixed(1);
+              distance = getDistance(userLocation.lat, userLocation.lng, program.location_lat, program.location_lng).toFixed(1);
             }
-
             const activity = getActivityType(program, lang);
             const activityLabel = lang === 'ar' ? activity.ar : activity.en;
 
@@ -363,88 +314,46 @@ function FavoritesPage({ lang, setPage, user }) {
                 >
                   <Trash2 size={16} />
                 </button>
-
                 <div className="relative w-full h-64 md:h-72 bg-gray-200">
                   {currentImg ? (
-                    <img
-                      src={currentImg}
-                      alt={program.name}
-                      className="w-full h-full object-cover"
-                      onError={(e) => {
-                        e.target.onerror = null;
-                        e.target.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' viewBox='0 0 100 100'%3E%3Crect width='100%25' height='100%25' fill='%23f0f0f0'/%3E%3Ctext x='50%25' y='50%25' font-size='12' fill='%23999' text-anchor='middle' dy='.3em'%3E❌%3C/text%3E%3C/svg%3E";
-                      }}
-                    />
+                    <img src={currentImg} alt={program.name} className="w-full h-full object-cover" />
                   ) : (
                     <div className="w-full h-full flex flex-col items-center justify-center text-gray-400">
                       <ImageIcon size={40} />
                       <span className="text-sm mt-1">لا توجد صورة</span>
                     </div>
                   )}
-
                   {images.length > 1 && (
                     <>
-                      <button
-                        onClick={(e) => prevImage(e, program.id, images.length)}
-                        className="absolute left-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full text-sm hover:bg-black/70 transition z-10"
-                      >❮</button>
-                      <button
-                        onClick={(e) => nextImage(e, program.id, images.length)}
-                        className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full text-sm hover:bg-black/70 transition z-10"
-                      >❯</button>
-                      <span className="absolute bottom-2 right-2 bg-black/60 text-white text-xs px-2 py-1 rounded-full z-10">
-                        {currentImgIndex+1} / {images.length}
-                      </span>
+                      <button onClick={(e) => prevImage(e, program.id, images.length)} className="absolute left-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full text-sm hover:bg-black/70 transition z-10">❮</button>
+                      <button onClick={(e) => nextImage(e, program.id, images.length)} className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full text-sm hover:bg-black/70 transition z-10">❯</button>
+                      <span className="absolute bottom-2 right-2 bg-black/60 text-white text-xs px-2 py-1 rounded-full z-10">{currentImgIndex+1} / {images.length}</span>
                     </>
                   )}
-
                   <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/50 to-transparent p-4 text-white">
                     <div className="flex justify-between items-end">
                       <div>
                         <h3 className="font-bold text-lg leading-tight">{program.name}</h3>
                         <div className="flex items-center gap-2 mt-1 flex-wrap">
-                          <span className="text-xs bg-purple-500/80 backdrop-blur-sm px-2 py-0.5 rounded-full">
-                            {activity.icon} {activityLabel}
-                          </span>
-                          {distance && (
-                            <span className="text-xs bg-blue-500/80 backdrop-blur-sm px-2 py-0.5 rounded-full flex items-center gap-1">
-                              <Navigation size={12} /> {distance} كم
-                            </span>
-                          )}
+                          <span className="text-xs bg-purple-500/80 backdrop-blur-sm px-2 py-0.5 rounded-full">{activity.icon} {activityLabel}</span>
+                          {distance && <span className="text-xs bg-blue-500/80 backdrop-blur-sm px-2 py-0.5 rounded-full flex items-center gap-1"><Navigation size={12} /> {distance} كم</span>}
                         </div>
                       </div>
                       <div className="text-left">
                         <div className="text-sm font-semibold">{program.guide_name || 'مرشد سياحي'}</div>
-                        <div className="text-xs flex items-center gap-1 mt-0.5">
-                          <MapPin size={12} />
-                          <span className="truncate max-w-[120px]">{program.location || 'موقع البرنامج'}</span>
-                        </div>
+                        <div className="text-xs flex items-center gap-1 mt-0.5"><MapPin size={12} /> <span className="truncate max-w-[120px]">{program.location || 'موقع البرنامج'}</span></div>
                       </div>
                     </div>
                     <div className="flex justify-between items-center mt-2">
                       <div className="flex items-center gap-2">
                         <Star size={14} className="text-yellow-400 fill-current" />
                         <span className="text-sm">{program.rating || 4.5}</span>
-                        <span className="text-sm font-bold bg-green-600/80 px-2 py-0.5 rounded-full">
-                          {program.price} ريال
-                        </span>
+                        <span className="text-sm font-bold bg-green-600/80 px-2 py-0.5 rounded-full">{program.price} ريال</span>
                       </div>
                       <div className="flex gap-2">
-                        <button
-                          onClick={() => handleChatWithGuide(program.guide_id, program.guide_name)}
-                          className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-sm flex items-center gap-1 transition"
-                        >
-                          <MessageCircle size={14} />
-                          {lang === 'ar' ? 'دردشة' : 'Chat'}
-                        </button>
-                        <button
-                          onClick={() => handleBooking(program)}
-                          disabled={bookingLoading}
-                          className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1.5 rounded-lg text-sm flex items-center gap-1 transition disabled:opacity-50"
-                        >
-                          <CalendarCheck size={14} />
-                          {lang === 'ar' ? 'احجز' : 'Book'}
-                        </button>
+                        <button onClick={() => handleChatWithGuide(program.guide_id, program.guide_name)} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-sm flex items-center gap-1 transition"><MessageCircle size={14} />{lang === 'ar' ? 'دردشة' : 'Chat'}</button>
+                        <button onClick={() => handleBooking(program)} disabled={bookingLoading} className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1.5 rounded-lg text-sm flex items-center gap-1 transition disabled:opacity-50"><CalendarCheck size={14} />{lang === 'ar' ? 'احجز' : 'Book'}</button>
+                        <button onClick={() => handleViewOnMap(program.id)} className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-sm flex items-center gap-1 transition"><Map size={14} />{lang === 'ar' ? 'خريطة' : 'Map'}</button>
                       </div>
                     </div>
                   </div>
