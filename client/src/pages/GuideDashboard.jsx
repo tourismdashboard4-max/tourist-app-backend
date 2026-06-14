@@ -1,5 +1,5 @@
 // client/src/pages/GuideDashboard.jsx
-// ✅ النسخة النهائية - منع إضافة أكثر من 11 برنامج لكل مرشد
+// ✅ النسخة النهائية – ألوان كلاسيكية، عرض البرامج، طلبات الحجز، حذف المحادثات نهائياً
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
@@ -8,7 +8,8 @@ import {
   ArrowLeft, Shield, RefreshCw, Search,
   Image as LucideImage, Camera, X,
   Save, Upload, AlertTriangle, Crosshair, Package,
-  MessageCircle, Inbox, MailOpen, Bell, Headphones, Star
+  MessageCircle, Inbox, MailOpen, Bell, Headphones, Star,
+  CalendarCheck, Briefcase
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import mapboxgl from 'mapbox-gl';
@@ -29,12 +30,11 @@ const buildImageUrl = (url) => {
 const DELETED_TICKETS_KEY = 'guide_deleted_tickets';
 const PERMANENTLY_DELETED_KEY = 'guide_permanently_deleted';
 
-// دالة لتنظيف التذاكر القديمة تلقائياً
+// تنظيف التذاكر القديمة
 const cleanupOldTickets = () => {
   const oldTickets = [128, 129, 134, 135, 142, 143, 144, 145, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169];
   const currentPermanentlyDeleted = localStorage.getItem(PERMANENTLY_DELETED_KEY);
   let deletedSet = currentPermanentlyDeleted ? new Set(JSON.parse(currentPermanentlyDeleted)) : new Set();
-  
   let added = false;
   oldTickets.forEach(ticketId => {
     if (!deletedSet.has(String(ticketId))) {
@@ -42,13 +42,11 @@ const cleanupOldTickets = () => {
       added = true;
     }
   });
-  
   if (added) {
     localStorage.setItem(PERMANENTLY_DELETED_KEY, JSON.stringify([...deletedSet]));
     console.log('🧹 تم تنظيف التذاكر القديمة:', oldTickets);
   }
 };
-
 cleanupOldTickets();
 
 const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgramAdded }) => {
@@ -84,9 +82,13 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
   const socketRef = useRef(null);
   const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
-
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
   const [unreadChatCount, setUnreadChatCount] = useState(0);
+  const [bookingRequests, setBookingRequests] = useState([]);
+  const [loadingBookings, setLoadingBookings] = useState(false);
+  const [processingBookingId, setProcessingBookingId] = useState(null);
+  const [guideCompletedTrips, setGuideCompletedTrips] = useState([]);
+  const [guideRatingsTrips, setGuideRatingsTrips] = useState([]);
 
   const deletingIdsRef = useRef(new Set());
   const failedTicketsRef = useRef(new Set());
@@ -194,7 +196,63 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     localStorage.setItem(PERMANENTLY_DELETED_KEY, JSON.stringify([...current]));
   }, [getPermanentlyDeletedTickets]);
 
-  // ✅ دالة محسنة لجلب التذاكر
+  // جلب طلبات الحجز
+  const fetchBookingRequests = useCallback(async () => {
+    if (!user?.id || !isGuide) return;
+    setLoadingBookings(true);
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE}/api/support/tickets`, {
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+      });
+      const data = await response.json();
+      const permanentlyDeletedSet = getPermanentlyDeletedTickets();
+      let bookings = [];
+      if (data.success && data.tickets) {
+        const guideId = String(user.id);
+        bookings = data.tickets.filter(ticket => {
+          if (permanentlyDeletedSet.has(String(ticket.id))) return false;
+          if (ticket.type !== 'booking') return false;
+          const metadata = ticket.metadata || {};
+          const isForThisGuide = 
+            (metadata.guideId && String(metadata.guideId) === guideId) ||
+            (ticket.guide_id && String(ticket.guide_id) === guideId) ||
+            (metadata.program_guide_id && String(metadata.program_guide_id) === guideId);
+          return isForThisGuide;
+        });
+        const enrichedBookings = await Promise.all(bookings.map(async (booking) => {
+          let touristName = booking.user_name || 'مسافر';
+          let programName = booking.subject?.replace(/طلب حجز برنامج:\s*/, '') || 'برنامج غير معروف';
+          let programPrice = 0;
+          if (booking.metadata?.program_price) {
+            programPrice = booking.metadata.program_price;
+          } else {
+            const priceMatch = booking.message?.match(/(\d+)\s*ريال/);
+            if (priceMatch) programPrice = parseInt(priceMatch[1]);
+          }
+          return {
+            id: booking.id,
+            touristId: booking.user_id,
+            touristName: touristName,
+            programName: programName,
+            programPrice: programPrice,
+            status: booking.status || 'pending',
+            message: booking.message,
+            createdAt: booking.created_at,
+            rawTicket: booking
+          };
+        }));
+        setBookingRequests(enrichedBookings);
+      }
+      console.log(`✅ طلبات الحجز للمرشد: ${bookings.length}`);
+    } catch (error) {
+      console.error('Error fetching booking requests:', error);
+    } finally {
+      setLoadingBookings(false);
+    }
+  }, [user?.id, isGuide, getPermanentlyDeletedTickets]);
+
+  // جلب تذاكر المحادثات
   const fetchGuideTickets = useCallback(async () => {
     if (!user?.id || !isGuide) return;
     setLoadingTickets(true);
@@ -216,7 +274,7 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
           if (permanentlyDeletedSet.has(String(ticket.id))) return false;
           if (deletedSet.has(String(ticket.id))) return false;
           const isValidType = ticket.type === 'guide_chat' || ticket.type === 'chat' || ticket.type === 'direct_chat';
-          if (!isValidType && ticket.type !== 'guide_chat') return false;
+          if (!isValidType) return false;
           const metadata = ticket.metadata || {};
           const isGuideInTicket = 
             (metadata.guideId && String(metadata.guideId) === guideId) ||
@@ -228,12 +286,12 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         tickets.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
       }
       setGuideTickets(tickets);
-      console.log('✅ التذاكر المسترجعة للمرشد:', tickets.length);
+      console.log('✅ التذاكر المسترجعة للمرشد (محادثات):', tickets.length);
     } catch (error) { console.error('Error fetching guide tickets:', error); }
     finally { setLoadingTickets(false); }
   }, [user?.id, isGuide, getDeletedTickets, getPermanentlyDeletedTickets]);
 
-  // ✅ دالة محسنة لجلب الإشعارات
+  // جلب الإشعارات
   const fetchNotifications = useCallback(async () => {
     if (!user?.id) return;
     try {
@@ -260,20 +318,12 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         const unreadRegular = filteredNotifications.filter(n => !n.is_read && !CHAT_TYPES.has(n.type)).length;
         const unreadChats = filteredNotifications.filter(n => !n.is_read && CHAT_TYPES.has(n.type)).length;
         setUnreadNotifCount(unreadRegular);
-        setUnreadChatCount(prev => Math.max(prev, unreadChats));
+        setUnreadChatCount(unreadChats);
       }
     } catch (error) { console.error('Error fetching notifications:', error); }
   }, [user?.id, getPermanentlyDeletedTickets, getDeletedTickets]);
 
-  const addDeletedTicket = useCallback((ticketId) => {
-    const current = getDeletedTickets();
-    current.add(String(ticketId));
-    localStorage.setItem(DELETED_TICKETS_KEY, JSON.stringify([...current]));
-    fetchGuideTickets();
-    fetchNotifications();
-  }, [getDeletedTickets, fetchGuideTickets, fetchNotifications]);
-
-  // ✅ دالة مدمجة لعرض المحادثات - محادثة واحدة لكل مستخدم مع تحسين جلب البيانات
+  // بناء المحادثات الموحدة
   const buildUnifiedChats = useCallback(async (tickets, notifs) => {
     const deletedSet = getDeletedTickets();
     const permanentlyDeletedSet = getPermanentlyDeletedTickets();
@@ -283,7 +333,6 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
       'new_message', 'NEW_MESSAGE', 'support_message', 'SUPPORT_MESSAGE'
     ]);
 
-    // جمع كل المحادثات من الإشعارات
     const chatNotifs = notifs
       .filter(n => CHAT_TYPES.has(n.type))
       .filter(n => {
@@ -332,7 +381,6 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         };
       }).filter(Boolean);
 
-    // جمع كل المحادثات من التذاكر
     const chatTicketsPromises = tickets
       .filter(t => !permanentlyDeletedSet.has(String(t.id)))
       .filter(t => !deletedSet.has(String(t.id)))
@@ -375,15 +423,11 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     
     const chatTickets = await Promise.all(chatTicketsPromises);
     
-    // ✅ دمج جميع المحادثات حسب touristId (محادثة واحدة لكل مستخدم)
     const chatMap = new Map();
-    
     [...chatTickets, ...chatNotifs].forEach(item => {
       if (!item || !item.touristId) return;
-      
       const key = item.touristId;
       const existing = chatMap.get(key);
-      
       if (!existing) {
         chatMap.set(key, item);
       } else {
@@ -406,7 +450,6 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     return merged;
   }, [lang, getDeletedTickets, getPermanentlyDeletedTickets, convertToNumericId]);
 
-  // ✅ استخدام useEffect لتحميل المحادثات المدمجة
   const [unifiedChats, setUnifiedChats] = useState([]);
   const [totalUnreadChats, setTotalUnreadChats] = useState(0);
   
@@ -417,7 +460,7 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         setUnifiedChats(merged);
         const unreadCount = merged.filter(c => !c.is_read).length;
         setTotalUnreadChats(unreadCount);
-      } else if (guideTickets.length === 0 && notifications.length === 0) {
+      } else {
         setUnifiedChats([]);
         setTotalUnreadChats(0);
       }
@@ -425,207 +468,120 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     loadUnifiedChats();
   }, [guideTickets, notifications, buildUnifiedChats]);
 
-  // ========== دالة مساعدة لاستخراج معرف المسافر ==========
-  const extractTouristId = useCallback((data, currentUserId) => {
-    const ignoreFields = ['id', 'notification_id', 'notif_id', 'ticket_id', 'notificationId'];
-    const possibleFields = [
-      'userId', 'touristId', 'senderId', 'receiverId', 'from_user_id', 'to_user_id',
-      'created_by_id', 'participant_id', 'user_id', 'other_party_id',
-      'recipientId', 'targetId', 'target_user_id', 'from_id', 'to_id',
-      'guideId', 'tourist_id', 'sender_id', 'receiver_id', 'user_Id'
-    ];
-    
-    if (data.data && typeof data.data === 'string') {
-      try {
-        const parsed = JSON.parse(data.data);
-        if (parsed.userId && String(parsed.userId) !== String(currentUserId)) {
-          return String(parsed.userId);
-        }
-        if (parsed.touristId && String(parsed.touristId) !== String(currentUserId)) {
-          return String(parsed.touristId);
-        }
-        if (parsed.senderId && String(parsed.senderId) !== String(currentUserId)) {
-          return String(parsed.senderId);
-        }
-        if (parsed.from_user_id && String(parsed.from_user_id) !== String(currentUserId)) {
-          return String(parsed.from_user_id);
-        }
-      } catch (e) { 
-        console.warn('Failed to parse data.data:', e); 
-      }
-    }
-    
-    for (const field of possibleFields) {
-      const value = data[field];
-      if (value && String(value) !== String(currentUserId) && !ignoreFields.includes(field)) {
-        return String(value);
-      }
-    }
-    
-    if (data.user_id && String(data.user_id) !== String(currentUserId)) {
-      return String(data.user_id);
-    }
-    
-    return null;
-  }, []);
-
-  const extractTouristName = useCallback((data, fallbackName) => {
-    const possibleNameFields = [
-      'userName', 'touristName', 'senderName', 'fromName', 'created_by_name',
-      'user_name', 'tourist_name', 'sender_name', 'fullName', 'full_name',
-      'name', 'displayName', 'display_name'
-    ];
-    
-    for (const field of possibleNameFields) {
-      const value = data[field];
-      if (value && typeof value === 'string' && value.trim().length > 0) {
-        return value;
-      }
-    }
-    
-    return fallbackName || (lang === 'ar' ? 'مسافر' : 'Traveler');
-  }, [lang]);
-
-  const _fetchTicket = useCallback(async (ticketId) => {
-    if (!ticketId || failedTicketsRef.current.has(String(ticketId))) return null;
+  // قبول طلب الحجز
+  const handleAcceptBooking = async (booking) => {
+    if (processingBookingId === booking.id) return;
+    setProcessingBookingId(booking.id);
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch(`${API_BASE}/api/support/tickets/${ticketId}`, { headers: { Authorization: `Bearer ${token}` } });
-      if (!res.ok) {
-        failedTicketsRef.current.add(String(ticketId));
-        return null;
-      }
-      const data = await res.json();
-      if (!data.success) {
-        failedTicketsRef.current.add(String(ticketId));
-        return null;
-      }
-      return data.ticket;
-    } catch { 
-      failedTicketsRef.current.add(String(ticketId));
-      return null;
+      const response = await fetch(`${API_BASE}/api/support/tickets/${booking.id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ status: 'accepted' })
+      });
+      if (!response.ok) throw new Error('فشل قبول الطلب');
+      toast.success(lang === 'ar' ? 'تم قبول طلب الحجز' : 'Booking request accepted');
+      setBookingRequests(prev => prev.filter(b => b.id !== booking.id));
+      await fetch(`${API_BASE}/api/notifications`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          user_id: booking.touristId,
+          title: lang === 'ar' ? 'تم قبول طلب حجزك' : 'Booking request accepted',
+          message: lang === 'ar' ? `تم قبول طلب حجز برنامج ${booking.programName}` : `Your booking for ${booking.programName} has been accepted`,
+          type: 'booking_accepted'
+        })
+      });
+    } catch (error) {
+      console.error(error);
+      toast.error(lang === 'ar' ? 'فشل قبول الطلب' : 'Failed to accept booking');
+    } finally {
+      setProcessingBookingId(null);
     }
-  }, []);
+  };
 
-  const _fetchFirstMessageSender = useCallback(async (ticketId, guideId) => {
-    if (!ticketId || failedTicketsRef.current.has(`msg_${ticketId}`)) return null;
+  const handleRejectBooking = async (booking) => {
+    if (processingBookingId === booking.id) return;
+    setProcessingBookingId(booking.id);
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch(`${API_BASE}/api/support/tickets/${ticketId}/messages`, { headers: { Authorization: `Bearer ${token}` } });
-      if (!res.ok) {
-        failedTicketsRef.current.add(`msg_${ticketId}`);
-        return null;
-      }
-      const data = await res.json();
-      if (data.success && Array.isArray(data.messages) && data.messages.length > 0) {
-        const senderMsg = data.messages.find(m => m.user_id && String(m.user_id) !== String(guideId));
-        if (senderMsg) return { id: senderMsg.user_id, name: senderMsg.sender_name || (lang === 'ar' ? 'مسافر' : 'Traveler') };
-      }
-      failedTicketsRef.current.add(`msg_${ticketId}`);
-      return null;
-    } catch {
-      failedTicketsRef.current.add(`msg_${ticketId}`);
-      return null;
+      const response = await fetch(`${API_BASE}/api/support/tickets/${booking.id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ status: 'rejected' })
+      });
+      if (!response.ok) throw new Error('فشل رفض الطلب');
+      toast.success(lang === 'ar' ? 'تم رفض طلب الحجز' : 'Booking request rejected');
+      setBookingRequests(prev => prev.filter(b => b.id !== booking.id));
+      await fetch(`${API_BASE}/api/notifications`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          user_id: booking.touristId,
+          title: lang === 'ar' ? 'تم رفض طلب حجزك' : 'Booking request rejected',
+          message: lang === 'ar' ? `تم رفض طلب حجز برنامج ${booking.programName}` : `Your booking for ${booking.programName} has been rejected`,
+          type: 'booking_rejected'
+        })
+      });
+    } catch (error) {
+      console.error(error);
+      toast.error(lang === 'ar' ? 'فشل رفض الطلب' : 'Failed to reject booking');
+    } finally {
+      setProcessingBookingId(null);
     }
-  }, [lang]);
+  };
 
-  // ========== دالة فتح المحادثة ==========
+  // فتح محادثة مباشرة
   const openDirectChat = useCallback(async (chatItem) => {
     const guideId = user?.id;
     if (!guideId) {
       toast.error(lang === 'ar' ? 'لم يتم تسجيل الدخول' : 'Not logged in');
       return;
     }
-
-    let touristId = null;
-    let touristName = null;
-    let ticketId = null;
-
-    if (chatItem.touristId) touristId = chatItem.touristId;
-    if (chatItem.touristName) touristName = chatItem.touristName;
-    if (chatItem.ticketId) ticketId = chatItem.ticketId;
-
-    if (!touristId && chatItem._sourceType === 'notification' && chatItem.rawNotif) {
+    let touristId = chatItem.touristId;
+    let touristName = chatItem.touristName;
+    let ticketId = chatItem.ticketId;
+    if (!touristId && chatItem.rawNotif) {
       const rawNotif = chatItem.rawNotif;
-      
       if (rawNotif.data) {
         let parsedData = rawNotif.data;
         if (typeof parsedData === 'string') {
-          try {
-            parsedData = JSON.parse(parsedData);
-            if (parsedData.userId && String(parsedData.userId) !== String(guideId)) {
-              touristId = String(parsedData.userId);
-            } else if (parsedData.touristId && String(parsedData.touristId) !== String(guideId)) {
-              touristId = String(parsedData.touristId);
-            } else if (parsedData.senderId && String(parsedData.senderId) !== String(guideId)) {
-              touristId = String(parsedData.senderId);
-            }
-            
-            if (!ticketId && parsedData.ticketId) {
-              ticketId = parsedData.ticketId;
-            }
-          } catch (e) { 
-            console.warn('Failed to parse data:', e); 
-          }
+          try { parsedData = JSON.parse(parsedData); } catch(e) {}
         }
-      }
-      
-      if (!touristId) {
-        touristId = extractTouristId(rawNotif, guideId);
-      }
-      
-      if (!ticketId) {
-        ticketId = rawNotif.data?.ticketId || rawNotif.ticket_id;
+        touristId = parsedData.userId || parsedData.senderId || parsedData.touristId;
+        touristName = parsedData.userName || parsedData.senderName || touristName;
+        if (!ticketId) ticketId = parsedData.ticketId;
       }
     }
-
-    if (!touristId && chatItem._sourceType === 'ticket' && chatItem.rawTicket) {
-      const rawTicket = chatItem.rawTicket;
-      touristId = extractTouristId(rawTicket, guideId);
-      if (!ticketId && rawTicket.id) ticketId = rawTicket.id;
-    }
-
     if (!touristId) {
       toast.error(lang === 'ar' ? 'تعذر تحديد المسافر' : 'Cannot identify traveler');
       return;
     }
-
-    if (!touristName || touristName.trim() === '') {
-      touristName = lang === 'ar' ? 'مسافر' : 'Traveler';
-    }
-
     const numericTouristId = await convertToNumericId(touristId);
     if (!numericTouristId) {
       toast.error(lang === 'ar' ? 'معرف المسافر غير صالح' : 'Invalid traveler ID');
       return;
     }
-
     const params = {
       recipientId: numericTouristId,
-      recipientName: touristName,
+      recipientName: touristName || (lang === 'ar' ? 'مسافر' : 'Traveler'),
       recipientType: 'tourist',
       timestamp: Date.now()
     };
     if (ticketId) params.ticketId = ticketId;
-    
     localStorage.setItem('directChatParams', JSON.stringify(params));
-    toast.success(lang === 'ar' ? `جاري فتح المحادثة مع ${touristName}` : `Opening chat with ${touristName}`);
+    localStorage.setItem('previousPage', 'guideDashboard');
+    toast.success(lang === 'ar' ? `جاري فتح المحادثة مع ${params.recipientName}` : `Opening chat with ${params.recipientName}`);
     setPage('directChat');
-    
-  }, [user?.id, lang, setPage, convertToNumericId, extractTouristId]);
+  }, [user?.id, lang, setPage, convertToNumericId]);
 
-  // ========== دالة حذف المحادثة بشكل دائم ==========
+  // حذف المحادثة نهائياً
   const deleteConversation = useCallback(async (chat, event) => {
     if (event) event.stopPropagation();
-    
-    if (!window.confirm(lang === 'ar' ? 'هل أنت متأكد من حذف هذه المحادثة نهائياً؟' : 'Are you sure you want to delete this conversation permanently?')) {
-      return;
-    }
-    
+    if (!window.confirm(lang === 'ar' ? 'هل أنت متأكد من حذف هذه المحادثة نهائياً؟' : 'Are you sure you want to permanently delete this conversation?')) return;
     const uniqueKey = chat.id || chat.ticketId;
     if (deletingIdsRef.current.has(uniqueKey)) return;
     deletingIdsRef.current.add(uniqueKey);
-    
     try {
       let ticketId = chat.ticketId;
       if (!ticketId && chat.id && !String(chat.id).startsWith('notif_') && !String(chat.id).startsWith('ticket_')) {
@@ -635,26 +591,19 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         if (chat.rawNotif.data) {
           let parsedData = chat.rawNotif.data;
           if (typeof parsedData === 'string') {
-            try {
-              parsedData = JSON.parse(parsedData);
-              ticketId = parsedData.ticketId;
-            } catch (e) {}
-          } else if (typeof parsedData === 'object') {
-            ticketId = parsedData.ticketId;
+            try { parsedData = JSON.parse(parsedData); } catch(e) {}
           }
+          ticketId = parsedData.ticketId;
         }
-        if (!ticketId) {
-          ticketId = chat.rawNotif.ticket_id;
-        }
+        if (!ticketId) ticketId = chat.rawNotif.ticket_id;
       }
-      if (!ticketId && chat.rawTicket) {
-        ticketId = chat.rawTicket.id;
-      }
+      if (!ticketId && chat.rawTicket) ticketId = chat.rawTicket.id;
       
       if (!ticketId) {
         if (chat._sourceType === 'notification' && chat.rawNotif?.id) {
           setNotifications(prev => prev.filter(n => n.id !== chat.rawNotif.id));
-          if (!chat.is_read) setUnreadChatCount(prev => Math.max(0, prev - 1));
+          setUnifiedChats(prev => prev.filter(c => c.id !== chat.id));
+          if (!chat.is_read) setTotalUnreadChats(prev => Math.max(0, prev - 1));
           toast.success(lang === 'ar' ? 'تم حذف الإشعار' : 'Notification deleted');
         } else {
           toast.error(lang === 'ar' ? 'لا يمكن حذف هذه المحادثة' : 'Cannot delete this conversation');
@@ -663,36 +612,17 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         return;
       }
 
-      const token = localStorage.getItem('token');
-      
-      let deleteSuccess = false;
-      try {
-        const delRes = await fetch(`${API_BASE}/api/support/tickets/${ticketId}`, {
-          method: 'DELETE',
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (delRes.ok) {
-          deleteSuccess = true;
-          console.log(`✅ Ticket ${ticketId} deleted successfully`);
-        } else if (delRes.status === 404) {
-          console.log(`⚠️ Ticket ${ticketId} already deleted on server`);
-          deleteSuccess = true;
-        } else {
-          console.warn(`DELETE returned ${delRes.status}`);
-        }
-      } catch (e) { 
-        console.warn('DELETE request failed:', e);
-      }
-      
       addPermanentlyDeletedTicket(ticketId);
-      
       setGuideTickets(prev => prev.filter(t => String(t.id) !== String(ticketId)));
       setNotifications(prev => prev.filter(n => {
         const notifTicketId = n.data?.ticketId || n.ticket_id;
         return String(notifTicketId) !== String(ticketId);
       }));
+      setUnifiedChats(prev => prev.filter(c => c.id !== chat.id));
+      setBookingRequests(prev => prev.filter(b => String(b.id) !== String(ticketId)));
       
       if (!chat.is_read) {
+        setTotalUnreadChats(prev => Math.max(0, prev - 1));
         setUnreadChatCount(prev => Math.max(0, prev - 1));
       }
       
@@ -702,21 +632,14 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         localStorage.setItem(DELETED_TICKETS_KEY, JSON.stringify([...oldDeletedSet]));
       }
       
-      toast.success(deleteSuccess
-        ? (lang === 'ar' ? '✅ تم حذف المحادثة نهائياً' : '✅ Conversation deleted')
-        : (lang === 'ar' ? '✅ تم حذف المحادثة محلياً' : '✅ Conversation deleted locally'));
-      
+      toast.success(lang === 'ar' ? '✅ تم حذف المحادثة نهائياً' : '✅ Conversation permanently deleted');
     } catch (error) {
       console.error('Delete error:', error);
-      toast.error(lang === 'ar' ? '❌ فشل حذف المحادثة' : '❌ Failed to delete');
+      toast.error(lang === 'ar' ? '❌ فشل حذف المحادثة' : '❌ Failed to delete conversation');
     } finally {
       deletingIdsRef.current.delete(uniqueKey);
-      setTimeout(() => {
-        fetchGuideTickets();
-        fetchNotifications();
-      }, 500);
     }
-  }, [lang, getDeletedTickets, addPermanentlyDeletedTicket, fetchGuideTickets, fetchNotifications]);
+  }, [lang, getDeletedTickets, addPermanentlyDeletedTicket]);
 
   const markNotificationAsRead = useCallback(async (notificationId) => {
     try {
@@ -752,63 +675,58 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         toast(lang === 'ar' ? 'هذه المحادثة محذوفة' : 'Conversation deleted', { icon: '🗑️' }); 
         return; 
       }
-      
-      let otherPartyId = null;
-      let otherPartyName = null;
-      try {
-        const token = localStorage.getItem('token');
-        const res = await fetch(`${API_BASE}/api/support/tickets/${ticketId}`, { headers: { Authorization: `Bearer ${token}` } });
-        const data = await res.json();
-        if (data.success && data.ticket) {
-          const fullTicket = data.ticket;
-          const currentUserId = user?.id;
-          const possibleIds = [
-            fullTicket.user_id, fullTicket.sender_id, fullTicket.receiver_id,
-            fullTicket.metadata?.guideId, fullTicket.metadata?.created_by_id,
-            fullTicket.metadata?.userId, fullTicket.metadata?.senderId,
-            fullTicket.metadata?.receiverId
-          ];
-          for (const id of possibleIds) {
-            if (id && String(id) !== String(currentUserId)) {
-              otherPartyId = String(id);
-              otherPartyName = fullTicket.user_name || fullTicket.sender_name || fullTicket.metadata?.created_by_name || fullTicket.metadata?.userName || (lang === 'ar' ? 'مسافر' : 'Traveler');
-              break;
+      let touristId = null;
+      let touristName = null;
+      if (notif.data) {
+        let parsedData = notif.data;
+        if (typeof parsedData === 'string') {
+          try { parsedData = JSON.parse(parsedData); } catch(e) {}
+        }
+        touristId = parsedData.userId || parsedData.senderId || parsedData.created_by_id;
+        touristName = parsedData.userName || parsedData.senderName || parsedData.created_by_name;
+        if (!ticketId && parsedData.ticketId) ticketId = parsedData.ticketId;
+      }
+      if (!touristId && notif.ticket_id) {
+        try {
+          const token = localStorage.getItem('token');
+          const res = await fetch(`${API_BASE}/api/support/tickets/${ticketId}`, { headers: { 'Authorization': `Bearer ${token}` } });
+          const data = await res.json();
+          if (data.success && data.ticket) {
+            const t = data.ticket;
+            const currentUserId = user?.id;
+            const possible = [t.user_id, t.sender_id, t.receiver_id, t.metadata?.guideId, t.metadata?.created_by_id, t.metadata?.userId, t.metadata?.senderId];
+            for (const id of possible) {
+              if (id && String(id) !== String(currentUserId)) {
+                touristId = String(id);
+                touristName = t.user_name || t.sender_name || t.metadata?.created_by_name || t.metadata?.userName;
+                break;
+              }
             }
           }
-        }
-      } catch (err) { console.error('Error fetching ticket details:', err); }
-      
-      if (!otherPartyId) {
-        otherPartyId = notif.data?.userId || notif.data?.created_by_id || notif.data?.senderId;
-        otherPartyName = notif.data?.userName || notif.data?.fromName || notif.data?.created_by_name || (lang === 'ar' ? 'مسافر' : 'Traveler');
+        } catch(e) { console.warn(e); }
       }
-      
-      if (!otherPartyId) { 
-        toast.error(lang === 'ar' ? 'لا يمكن فتح المحادثة' : 'Cannot open conversation'); 
+      if (!touristId) {
+        toast.error(lang === 'ar' ? 'لا يمكن فتح المحادثة' : 'Cannot open conversation');
         return;
       }
-      
-      const numericOtherPartyId = await convertToNumericId(otherPartyId);
-      if (!numericOtherPartyId) {
-        toast.error(lang === 'ar' ? 'معرف المستخدم غير صالح' : 'Invalid user ID');
-        return;
-      }
-      
-      const params = {
-        recipientId: numericOtherPartyId,
-        recipientName: otherPartyName || (lang === 'ar' ? 'مستخدم' : 'User'),
-        recipientType: 'tourist',
-        ticketId: ticketId
+      const tempChatItem = {
+        touristId: touristId,
+        touristName: touristName || (lang === 'ar' ? 'مسافر' : 'Traveler'),
+        ticketId: ticketId,
+        _sourceType: 'notification',
+        rawNotif: notif
       };
-      localStorage.setItem('directChatParams', JSON.stringify(params));
-      setPage('directChat');
+      await openDirectChat(tempChatItem);
     } else {
       if (notif.action_url) {
         const pageName = notif.action_url.replace(/^\//, '');
         if (pageName && typeof setPage === 'function') setPage(pageName);
-      } else { setPage('support'); }
+        else setPage('support');
+      } else {
+        setPage('support');
+      }
     }
-  }, [lang, getPermanentlyDeletedTickets, user?.id, markNotificationAsRead, setPage, convertToNumericId]);
+  }, [lang, getPermanentlyDeletedTickets, user?.id, markNotificationAsRead, setPage, openDirectChat]);
 
   // Socket.IO
   useEffect(() => {
@@ -842,14 +760,20 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     return () => { if (socket) socket.disconnect(); };
   }, [user?.id, isGuide, fetchGuideTickets, lang]);
 
+  // تحديث دوري
   useEffect(() => {
     if (isGuide) {
       fetchGuideTickets();
       fetchNotifications();
-      const interval = setInterval(() => { fetchGuideTickets(); fetchNotifications(); }, 30000);
+      fetchBookingRequests();
+      const interval = setInterval(() => { 
+        fetchGuideTickets(); 
+        fetchNotifications();
+        fetchBookingRequests();
+      }, 30000);
       return () => clearInterval(interval);
     }
-  }, [isGuide, fetchGuideTickets, fetchNotifications]);
+  }, [isGuide, fetchGuideTickets, fetchNotifications, fetchBookingRequests]);
 
   useEffect(() => {
     if (activeTab === 'chats') {
@@ -858,7 +782,7 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     }
   }, [activeTab, fetchGuideTickets]);
 
-  // ===================== دوال البرامج =====================
+  // دوال البرامج (إدارة الصور، الخرائط، إلخ)
   const formatSafetyGuidelines = useCallback((text) => {
     if (!text) return null;
     return text.split(/\r?\n/).map((line, idx) => {
@@ -995,7 +919,6 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     return null;
   };
 
-  // ✅ جلب البرامج مع إضافة ?limit=1000
   const fetchRealPrograms = useCallback(async () => {
     const guideId = user?.id;
     if (!guideId) { setLoading(false); return; }
@@ -1007,7 +930,6 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await response.json();
-      
       if (response.ok && data.success && Array.isArray(data.programs)) {
         programsArray = data.programs;
       } else if (Array.isArray(data)) {
@@ -1027,8 +949,6 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
           programsArray = fallbackData.data.filter(p => String(p.guide_id) === String(guideId));
         }
       }
-      console.log(`🔍 تم جلب ${programsArray.length} برنامج للمرشح (بعد إضافة ?limit=1000)`);
-      
       const programsWithImages = await Promise.all(programsArray.map(async (program) => {
         try {
           const detailRes = await fetch(`${API_BASE}/api/programs/${program.id}?limit=1000`, {
@@ -1042,7 +962,6 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         } catch (err) { console.warn(err); }
         return { ...program, images: [] };
       }));
-      
       const formatted = programsWithImages.map(p => formatProgramFromServer(p));
       setPrograms(formatted);
       updateMapWithPrograms(formatted);
@@ -1147,7 +1066,6 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     }
   }, [showEditModal, editingProgram, newProgram.location_lat, newProgram.location_lng, initEditMap]);
 
-  // ✅ التحقق من إمكانية إضافة برنامج جديد (الحد الأقصى 11)
   const canAddNewProgram = useCallback(() => {
     if (programs.length >= 11) {
       toast.error(lang === 'ar' 
@@ -1168,7 +1086,6 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
   };
 
   const handleAddProgram = async () => {
-    // ✅ التحقق من الحد الأقصى أولاً
     if (!canAddNewProgram()) return;
     if (!validateProgram()) return;
     setLoading(true);
@@ -1497,9 +1414,13 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         </div>
       </div>
 
-      {/* علامات التبويب */}
+      {/* علامات التبويب: البرامج | الحجوزات | المحادثات */}
       <div className="flex border-b border-gray-200 dark:border-gray-700 mb-6">
         <button onClick={() => setActiveTab('programs')} className={`px-4 py-2 font-medium text-sm transition-colors ${activeTab === 'programs' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-500 hover:text-gray-700'}`}><Package className="inline w-4 h-4 ml-1" /> البرامج</button>
+        <button onClick={() => setActiveTab('bookings')} className={`px-4 py-2 font-medium text-sm transition-colors relative ${activeTab === 'bookings' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-500 hover:text-gray-700'}`}>
+          <CalendarCheck className="inline w-4 h-4 ml-1" /> طلبات الحجز
+          {bookingRequests.length > 0 && <span className="ml-1 inline-flex items-center justify-center w-5 h-5 text-xs font-bold text-white bg-orange-500 rounded-full">{bookingRequests.length}</span>}
+        </button>
         <button onClick={() => setActiveTab('chats')} className={`px-4 py-2 font-medium text-sm transition-colors relative ${activeTab === 'chats' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-500 hover:text-gray-700'}`}>
           <MessageCircle className="inline w-4 h-4 ml-1" /> المحادثات الواردة
           {totalUnreadChats > 0 && <span className="ml-1 inline-flex items-center justify-center w-5 h-5 text-xs font-bold text-white bg-red-500 rounded-full">{totalUnreadChats}</span>}
@@ -1518,25 +1439,17 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
                 <option value="inactive">غير نشط</option>
               </select>
               <button onClick={() => fetchRealPrograms()} className="p-3 bg-gray-200 dark:bg-gray-700 rounded-xl hover:bg-gray-300 transition"><RefreshCw size={20} /></button>
-              {/* زر إضافة برنامج مع منع الإضافة إذا وصل العدد 11 */}
               {programs.length >= 11 ? (
-                <button 
-                  className="px-5 py-3 bg-gray-400 text-white rounded-xl flex items-center gap-2 cursor-not-allowed opacity-60"
-                  title={lang === 'ar' ? 'لقد وصلت إلى الحد الأقصى (11 برنامج)' : 'You have reached the maximum (11 programs)'}
-                >
+                <button className="px-5 py-3 bg-gray-400 text-white rounded-xl flex items-center gap-2 cursor-not-allowed opacity-60" title={lang === 'ar' ? 'لقد وصلت إلى الحد الأقصى (11 برنامج)' : 'You have reached the maximum (11 programs)'}>
                   <Plus size={20} /> إضافة برنامج
                 </button>
               ) : (
-                <button 
-                  onClick={() => { setActiveStep(1); setShowAddProgram(true); }} 
-                  className="px-5 py-3 bg-green-600 text-white rounded-xl flex items-center gap-2 hover:bg-green-700 transition shadow-md"
-                >
+                <button onClick={() => { setActiveStep(1); setShowAddProgram(true); }} className="px-5 py-3 bg-green-600 text-white rounded-xl flex items-center gap-2 hover:bg-green-700 transition shadow-md">
                   <Plus size={20} /> إضافة برنامج
                 </button>
               )}
             </div>
           </div>
-          {/* رسالة تحذير عند الاقتراب من الحد */}
           {programs.length >= 10 && programs.length < 11 && (
             <div className="mb-4 p-3 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-200 rounded-lg text-sm flex items-center gap-2">
               <AlertTriangle size={16} />
@@ -1580,7 +1493,66 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         </>
       )}
 
-      {/* ✅ محتوى المحادثات - محادثة واحدة لكل مستخدم */}
+      {/* طلبات الحجز */}
+      {activeTab === 'bookings' && (
+        <div>
+          {loadingBookings && bookingRequests.length === 0 ? (
+            <div className="flex justify-center items-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div></div>
+          ) : bookingRequests.length === 0 ? (
+            <div className="bg-white dark:bg-gray-800 rounded-2xl p-12 text-center border-2 border-dashed">
+              <CalendarCheck className="w-20 h-20 mx-auto text-gray-400 mb-4" />
+              <p className="text-gray-500 text-lg mb-3">لا توجد طلبات حجز جديدة</p>
+              <p className="text-sm text-gray-400">عندما يطلب مسافر حجز برنامج من برامجك، ستظهر هنا</p>
+              <button onClick={() => fetchBookingRequests()} className="mt-4 px-4 py-2 bg-green-600 text-white rounded-lg text-sm">تحديث</button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {bookingRequests.map(booking => {
+                const isProcessing = processingBookingId === booking.id;
+                return (
+                  <div key={booking.id} className="bg-white dark:bg-gray-800 rounded-xl p-5 shadow-md border border-orange-200 dark:border-orange-800">
+                    <div className="flex flex-col md:flex-row justify-between gap-4">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Briefcase className="w-5 h-5 text-orange-600" />
+                          <h3 className="font-bold text-gray-800 dark:text-white">طلب حجز: {booking.programName}</h3>
+                          <span className="px-2 py-0.5 bg-yellow-100 text-yellow-800 rounded-full text-xs">قيد الانتظار</span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+                          <div><span className="text-gray-500">السائح:</span> <strong>{booking.touristName}</strong></div>
+                          <div><span className="text-gray-500">السعر:</span> <strong className="text-green-600">{booking.programPrice} ريال</strong></div>
+                          <div><span className="text-gray-500">التاريخ:</span> {new Date(booking.createdAt).toLocaleDateString()}</div>
+                          <div><span className="text-gray-500">الرسالة:</span> <span className="truncate">{booking.message?.substring(0, 60)}</span></div>
+                        </div>
+                      </div>
+                      <div className="flex gap-2 items-start">
+                        <button
+                          onClick={() => handleAcceptBooking(booking)}
+                          disabled={isProcessing}
+                          className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 transition flex items-center gap-1 disabled:opacity-50"
+                        >
+                          {isProcessing ? <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div> : <CheckCircle size={16} />}
+                          قبول
+                        </button>
+                        <button
+                          onClick={() => handleRejectBooking(booking)}
+                          disabled={isProcessing}
+                          className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700 transition flex items-center gap-1 disabled:opacity-50"
+                        >
+                          {isProcessing ? <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div> : <XCircle size={16} />}
+                          رفض
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* المحادثات الواردة */}
       {activeTab === 'chats' && (
         <div>
           {loadingTickets && unifiedChats.length === 0 ? (
@@ -1597,7 +1569,6 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
               {unifiedChats.map(chat => {
                 const isUnread = !chat.is_read;
                 const isDeleting = deletingIdsRef.current.has(chat.id || chat.ticketId);
-                
                 return (
                   <div 
                     key={chat.id} 
