@@ -1,21 +1,26 @@
 // client/src/pages/HomePage.jsx
-// ✅ إصلاح كامل: استخدام نفس منطق FavoritesPage الناجح
-// ✅ عرض جميع البرامج النشطة بنفس التصميم والأزرار
-// ✅ دعم تحديد الموقع وعرض المسافة
-// ✅ تحديث تلقائي كل 5 ثوانٍ
+// ✅ إزالة الخلفية الثابتة والعودة إلى الخلفية الكلاسيكية (أبيض/رمادي فاتح)
+// ✅ دمج الأيقونات (الخريطة، القريبة، المرشدون، المفضلة) في السطر العلوي (تم إزالتها لأن الوظائف موجودة في الإعلان)
+// ✅ الاحتفاظ بإعلان "🌟 تطبيق السائح - اكتشف أجمل الوجهات السياحية مع مرشدين محترفين" مع الأزرار
+// ✅ الاحتفاظ بصورة المستخدم واسمه في الهيدر
+// ✅ عرض البرامج القريبة مع المسافات والأزرار
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import {
-  FaMapMarkedAlt, FaUserTie, FaWallet, FaComments,
-  FaStar, FaArrowLeft, FaShieldAlt, FaClock,
-  FaSun, FaMoon, FaUserCircle, FaMapMarkerAlt, FaBoxOpen,
-  FaSpinner, FaLocationArrow, FaRedoAlt
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { 
+  FaStar, FaSun, FaMoon, FaUserCircle, FaMapMarkerAlt, 
+  FaBoxOpen, FaSpinner, FaLocationArrow, FaRedoAlt, FaArrowUp,
+  FaHeart, FaCalendarCheck, FaComments, FaMapMarkedAlt
 } from 'react-icons/fa';
-import { motion } from 'framer-motion';
+import { 
+  MapPin, Bell, Search, Users, Package, Heart, Archive, 
+  Navigation, MessageCircle, CalendarCheck, Shield, Sun, Moon, Compass
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { Navigation, MessageCircle, CalendarCheck, MapPin, Image as ImageIcon } from 'lucide-react';
 
 const API_BASE = 'https://tourist-app-api.onrender.com';
+const RIYADH_COORDS = { lat: 24.774, lng: 46.713 };
+const NEARBY_RADIUS_KM = 254;
 
 const buildImageUrl = (url) => {
   if (!url || typeof url !== 'string') return null;
@@ -25,22 +30,8 @@ const buildImageUrl = (url) => {
   return `${API_BASE}/${url}`;
 };
 
-const fixImagesArray = (images) => {
-  if (!images || !Array.isArray(images)) return [];
-  return images.map(img => {
-    if (!img) return null;
-    if (typeof img === 'string') {
-      const url = buildImageUrl(img);
-      return url ? { url, is_primary: false } : null;
-    }
-    const url = buildImageUrl(img.url || img.image_url);
-    if (!url) return null;
-    return { ...img, url };
-  }).filter(Boolean);
-};
-
 const getDistance = (lat1, lon1, lat2, lon2) => {
-  if (!lat1 || !lon1 || !lat2 || !lon2) return null;
+  if (!lat1 || !lon1 || !lat2 || !lon2) return Infinity;
   const R = 6371;
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLon = (lon2 - lon1) * Math.PI / 180;
@@ -53,608 +44,622 @@ const getDistance = (lat1, lon1, lat2, lon2) => {
 
 const getActivityType = (program, lang) => {
   const text = ((program.name || '') + ' ' + (program.description || '')).toLowerCase();
-  if (text.includes('بحر') || text.includes('بحري') || text.includes('marine') || text.includes('sea'))
-    return { ar: 'رحلات بحرية', en: 'Marine trips', icon: '🌊' };
-  if (text.includes('تسلق') || text.includes('جبل') || text.includes('mountain') || text.includes('climb'))
-    return { ar: 'تسلق جبال', en: 'Mountain climbing', icon: '⛰️' };
-  if (text.includes('سفاري') || text.includes('safari') || text.includes('براري'))
-    return { ar: 'رحلات سفاري', en: 'Safari trips', icon: '🦁' };
-  if (text.includes('براشوت') || text.includes('مظلة') || text.includes('parachute') || text.includes('skydive'))
-    return { ar: 'رحلات براشوت', en: 'Parachute trips', icon: '🪂' };
+  if (text.includes('بحر') || text.includes('بحري')) return { ar: 'رحلات بحرية', en: 'Marine trips', icon: '🌊' };
+  if (text.includes('تسلق') || text.includes('جبل')) return { ar: 'تسلق جبال', en: 'Mountain climbing', icon: '⛰️' };
+  if (text.includes('سفاري')) return { ar: 'رحلات سفاري', en: 'Safari trips', icon: '🦁' };
+  if (text.includes('براشوت') || text.includes('مظلة')) return { ar: 'رحلات براشوت', en: 'Parachute trips', icon: '🪂' };
   return { ar: 'برنامج سياحي', en: 'Tour program', icon: '🏞️' };
 };
 
 const LOCALES = {
   ar: {
     appName: 'تطبيق السائح',
-    heroTitle: 'اكتشف جمال السياحة مع',
-    heroSubtitle: 'مرشدين محترفين',
-    heroDesc: 'منصتك المتكاملة لحجز المرشدين السياحيين واكتشاف الأماكن الرائعة في المملكة',
-    ctaStart: 'ابدأ الآن مجاناً',
-    ctaExplore: 'استكشف البرامج',
-    goToDashboard: 'اذهب إلى لوحة التحكم',
-    stats: { guides: 'مرشد سياحي', trips: 'رحلة مكتملة', rating: 'تقييم إيجابي', support: 'دعم فني' },
-    featuresTitle: 'مميزات التطبيق',
-    featuresSub: 'كل ما تحتاجه في منصة واحدة لتجربة سياحية مميزة',
-    nearbyTitle: 'البرامج السياحية',
-    nearbySub: 'اكتشف البرامج السياحية النشطة القريبة منك',
+    welcome: 'مرحباً بك',
+    search: 'ابحث عن وجهة...',
+    explore: 'استكشف',
+    nearbyPrograms: 'البرامج القريبة منك',
+    map: 'الخريطة',
+    nearby: 'القريبة',
+    guides: 'المرشدون',
+    favorites: 'المفضلة',
+    archiveTrips: 'أرشيف الرحلات',
+    guideDashboard: 'لوحة التحكم',
     loading: 'جاري تحميل البرامج...',
-    noNearby: 'لا توجد برامج سياحية نشطة',
-    enableLocation: 'يُرجى تفعيل خدمة الموقع لحساب المسافة',
-    enableLocationBtn: 'تفعيل الموقع',
-    viewOnMap: 'عرض على الخريطة',
-    refreshNearby: 'تحديث البرامج',
-    retry: 'إعادة المحاولة',
-    locationPermissionDenied: 'تم رفض إذن الموقع. يرجى السماح يدوياً من إعدادات المتصفح.',
-    locationTimeout: 'انتهت مهلة الحصول على الموقع، حاول مرة أخرى.',
-    locationGeneralError: 'حدث خطأ أثناء الحصول على الموقع.',
-    autoTrack: 'تتبع تلقائي (كل 5 ثوانٍ)',
-    stopTracking: 'إيقاف التتبع',
-    startTracking: 'تشغيل التتبع',
-    howItWorks: 'كيف تعمل المنصة؟',
-    howItWorksSub: 'ثلاث خطوات بسيطة لحجز رحلتك المثالية',
-    step1Title: 'اختر المرشد',
-    step1Desc: 'تصفح قائمة المرشدين واختر الأنسب لرحلتك',
-    step2Title: 'احجز البرنامج',
-    step2Desc: 'حدد الموعد وادفع عبر المحفظة الإلكترونية',
-    step3Title: 'استمتع بالرحلة',
-    step3Desc: 'تواصل مع المرشد واستمتع بتجربة فريدة',
-    testimonialsTitle: 'آراء المستخدمين',
-    testimonialsSub: 'ماذا يقول عملاؤنا عن تجربتهم معنا',
-    ctaTitle: 'انضم إلى آلاف المستخدمين',
-    ctaDesc: 'ابدأ رحلتك السياحية مع أفضل المرشدين الآن واستمتع بتجربة فريدة',
-    ctaRegister: 'سجل مجاناً',
-    ctaBrowse: 'تصفح البرامج',
-    securePayment: 'دفع آمن 100%',
-    support247: 'دعم فني 24/7',
-    verifiedGuides: 'مرشدين معتمدين',
-    footerQuickLinks: 'روابط سريعة',
-    footerSupport: 'الدعم',
-    footerContact: 'تواصل معنا',
-    footerRights: 'جميع الحقوق محفوظة',
-    home: 'الرئيسية',
-    programs: 'البرامج',
-    about: 'عن التطبيق',
-    faq: 'الأسئلة الشائعة',
-    privacy: 'سياسة الخصوصية',
-    terms: 'شروط الاستخدام'
+    noPrograms: 'لا توجد برامج سياحية قريبة حالياً',
+    noProgramsAtAll: 'لا توجد برامج سياحية متاحة',
+    loginRequired: 'الرجاء تسجيل الدخول أولاً',
+    distance: 'كم',
+    price: 'ريال',
+    rating: 'تقييم',
+    chat: 'دردشة',
+    book: 'احجز',
+    viewOnMap: 'خريطة',
+    addToFavorites: 'مفضلة',
+    removeFromFavorites: 'تمت الإزالة',
+    requestSent: 'تم إرسال طلب الحجز بنجاح',
+    bookingFailed: 'فشل إرسال طلب الحجز',
+    locationUpdated: 'تم تحديث الموقع',
+    usingManual: '📍 موقع يدوي',
+    usingGps: '📍 GPS',
+    usingDefault: '📍 الموقع الافتراضي',
+    updateLocation: 'تحديث موقعي',
+    refresh: 'تحديث',
+    connectionError: 'فشل الاتصال بالإنترنت',
+    tryAgainLater: 'حاول مرة أخرى لاحقاً',
+    exploreNature: 'استكشف الطبيعة الخلابة',
   },
   en: {
     appName: 'Tourist App',
-    heroTitle: 'Discover the beauty of tourism with',
-    heroSubtitle: 'professional guides',
-    heroDesc: 'Your integrated platform for booking tour guides and discovering amazing places in the Kingdom',
-    ctaStart: 'Start for free',
-    ctaExplore: 'Explore Programs',
-    goToDashboard: 'Go to Dashboard',
-    stats: { guides: 'Tour Guides', trips: 'Completed Trips', rating: 'Positive Rating', support: '24/7 Support' },
-    featuresTitle: 'Features',
-    featuresSub: 'Everything you need in one platform for an exceptional tourism experience',
-    nearbyTitle: 'Tour Programs',
-    nearbySub: 'Discover active tour programs near you',
+    welcome: 'Welcome',
+    search: 'Search...',
+    explore: 'Explore',
+    nearbyPrograms: 'Nearby Programs',
+    map: 'Map',
+    nearby: 'Nearby',
+    guides: 'Guides',
+    favorites: 'Favorites',
+    archiveTrips: 'Archive',
+    guideDashboard: 'Dashboard',
     loading: 'Loading programs...',
-    noNearby: 'No active tour programs available',
-    enableLocation: 'Please enable location to see distance',
-    enableLocationBtn: 'Enable location',
-    viewOnMap: 'View on map',
-    refreshNearby: 'Refresh programs',
-    retry: 'Retry',
-    locationPermissionDenied: 'Location permission denied. Please allow manually from browser settings.',
-    locationTimeout: 'Location request timeout, please try again.',
-    locationGeneralError: 'Error getting your location.',
-    autoTrack: 'Auto-track (every 5 sec)',
-    stopTracking: 'Stop tracking',
-    startTracking: 'Start tracking',
-    howItWorks: 'How it works?',
-    howItWorksSub: 'Three simple steps to book your perfect trip',
-    step1Title: 'Choose a guide',
-    step1Desc: 'Browse the list of guides and choose the best for your trip',
-    step2Title: 'Book the program',
-    step2Desc: 'Select the date and pay via digital wallet',
-    step3Title: 'Enjoy the trip',
-    step3Desc: 'Communicate with your guide and enjoy a unique experience',
-    testimonialsTitle: 'User Reviews',
-    testimonialsSub: 'What our customers say about their experience with us',
-    ctaTitle: 'Join thousands of users',
-    ctaDesc: 'Start your tourism journey with the best guides now and enjoy a unique experience',
-    ctaRegister: 'Sign up for free',
-    ctaBrowse: 'Browse programs',
-    securePayment: '100% secure payment',
-    support247: '24/7 support',
-    verifiedGuides: 'Verified guides',
-    footerQuickLinks: 'Quick Links',
-    footerSupport: 'Support',
-    footerContact: 'Contact',
-    footerRights: 'All rights reserved',
-    home: 'Home',
-    programs: 'Programs',
-    about: 'About',
-    faq: 'FAQ',
-    privacy: 'Privacy Policy',
-    terms: 'Terms of Use'
+    noPrograms: 'No nearby programs available',
+    noProgramsAtAll: 'No tour programs available',
+    loginRequired: 'Please login first',
+    distance: 'km',
+    price: 'SAR',
+    rating: 'Rating',
+    chat: 'Chat',
+    book: 'Book',
+    viewOnMap: 'Map',
+    addToFavorites: 'Favorite',
+    removeFromFavorites: 'Removed',
+    requestSent: 'Booking request sent',
+    bookingFailed: 'Booking failed',
+    locationUpdated: 'Location updated',
+    usingManual: '📍 Manual',
+    usingGps: '📍 GPS',
+    usingDefault: '📍 Default',
+    updateLocation: 'Update location',
+    refresh: 'Refresh',
+    connectionError: 'Connection failed',
+    tryAgainLater: 'Please try again later',
+    exploreNature: 'Explore beautiful nature',
   }
 };
 
-const HomePage = ({ lang, user, setPage, dark, setDark, locationEnabled, setLocationEnabled }) => {
+// مكون الإعلان المميز للتطبيق
+const HeroAd = ({ lang, setPage }) => {
+  const t = (key) => LOCALES[lang]?.[key] || key;
+  return (
+    <div className="relative rounded-2xl overflow-hidden mb-6 shadow-md">
+      <div className="absolute inset-0 bg-gradient-to-r from-green-600 to-emerald-700" />
+      <div className="relative p-6 text-white text-center">
+        <h2 className="text-2xl font-bold mb-2">🌟 {t('appName')}</h2>
+        <p className="text-sm opacity-95 mb-3">
+          {lang === 'ar' 
+            ? 'اكتشف أجمل الوجهات السياحية مع مرشدين محترفين'
+            : 'Discover the best tourist destinations with professional guides'}
+        </p>
+        <div className="flex justify-center gap-3">
+          <button onClick={() => setPage('explore')} className="bg-white text-green-700 px-4 py-1.5 rounded-full text-sm font-semibold shadow-lg flex items-center gap-2">
+            <MapPin size={16} /> {lang === 'ar' ? 'استكشف الآن' : 'Explore Now'}
+          </button>
+          <button onClick={() => setPage('guides')} className="bg-transparent border border-white px-4 py-1.5 rounded-full text-sm flex items-center gap-2">
+            <Users size={16} /> {lang === 'ar' ? 'المرشدون' : 'Guides'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const HomePage = ({ lang = 'ar', user, setPage, dark, setDark }) => {
   const t = (key) => LOCALES[lang]?.[key] || key;
 
-  const [programs, setPrograms] = useState([]);
+  const [allPrograms, setAllPrograms] = useState(() => {
+    const saved = localStorage.getItem('homepage_programs');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [userLocation, setUserLocation] = useState(() => {
+    if (user?.id) {
+      const saved = localStorage.getItem(`manual_loc_${user.id}`);
+      if (saved) {
+        try { return JSON.parse(saved); } catch(e) {}
+      }
+    }
+    const defaultLoc = localStorage.getItem('cached_user_location');
+    if (defaultLoc) {
+      try { return JSON.parse(defaultLoc); } catch(e) {}
+    }
+    return null;
+  });
+  const [locationSource, setLocationSource] = useState(null);
+  const [favoriteIds, setFavoriteIds] = useState(() => {
+    if (user?.id) {
+      const saved = localStorage.getItem(`favorites_${user.id}`);
+      return saved ? JSON.parse(saved) : [];
+    }
+    return [];
+  });
+  const [imageIndex, setImageIndex] = useState({});
+  const [showAllMode, setShowAllMode] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [userLocation, setUserLocation] = useState(null);
-  const [isAutoTracking, setIsAutoTracking] = useState(true);
-  const intervalRef = useRef(null);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [bookingLoading, setBookingLoading] = useState(false);
+  const [showScrollTop, setShowScrollTop] = useState(false);
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
+  
+  const [guidesMap, setGuidesMap] = useState({});
 
-  const fetchFullProgram = async (programId) => {
-    try {
-      const res = await fetch(`${API_BASE}/api/programs/${programId}`);
-      const data = await res.json();
-      const programData = data.program || data.data || data;
-      if (programData) {
-        return {
-          ...programData,
-          images: fixImagesArray(programData.images || []),
-          image: buildImageUrl(programData.image)
-        };
-      }
-    } catch (err) { console.error(`Failed to fetch details for program ${programId}`, err); }
+  const isFetchingRef = useRef(false);
+  const contentRef = useRef(null);
+  const locationLoadedRef = useRef(false);
+
+  // حفظ البيانات
+  useEffect(() => {
+    if (allPrograms.length) localStorage.setItem('homepage_programs', JSON.stringify(allPrograms));
+  }, [allPrograms]);
+  useEffect(() => {
+    if (user?.id && userLocation) localStorage.setItem(`manual_loc_${user.id}`, JSON.stringify(userLocation));
+  }, [userLocation, user]);
+  useEffect(() => {
+    if (user?.id) localStorage.setItem(`favorites_${user.id}`, JSON.stringify(favoriteIds));
+  }, [favoriteIds, user]);
+
+  // جلب خريطة المرشدين
+  useEffect(() => {
+    const fetchGuidesMap = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/api/guides`);
+        const data = await response.json();
+        let guidesList = [];
+        if (data && data.data && Array.isArray(data.data)) guidesList = data.data;
+        else if (data && Array.isArray(data)) guidesList = data;
+        else if (data && data.guides && Array.isArray(data.guides)) guidesList = data.guides;
+        else if (data && data.data && data.data.guides && Array.isArray(data.data.guides)) guidesList = data.data.guides;
+        
+        const map = {};
+        guidesList.forEach(guide => {
+          const uuid = guide.id || guide.uuid;
+          const numericId = guide.old_id || guide.oldId;
+          const avatar = buildImageUrl(guide.avatar_url || guide.avatar);
+          const fullName = guide.full_name || guide.name;
+          if (uuid) {
+            map[uuid] = { id: numericId ? Number(numericId) : uuid, name: fullName, avatar };
+          }
+          if (fullName) {
+            map[fullName] = { id: numericId ? Number(numericId) : uuid, name: fullName, avatar };
+          }
+        });
+        setGuidesMap(map);
+      } catch (err) { console.error('Failed to fetch guides map:', err); }
+    };
+    fetchGuidesMap();
+  }, []);
+
+  // استماع لتحديث بيانات المرشدين
+  useEffect(() => {
+    const handleGuideUpdate = (event) => {
+      const { guideId, updatedData } = event.detail;
+      console.log('🔄 HomePage - تحديث المرشد:', guideId, updatedData);
+      
+      setGuidesMap(prev => {
+        const newMap = { ...prev };
+        Object.keys(newMap).forEach(key => {
+          if (newMap[key].id == guideId) {
+            newMap[key].name = updatedData.fullName || newMap[key].name;
+            newMap[key].avatar = updatedData.avatar_url ? buildImageUrl(updatedData.avatar_url) : null;
+          }
+        });
+        return newMap;
+      });
+      
+      setAllPrograms(prev => prev.map(program => {
+        if (String(program.guide_id) === String(guideId)) {
+          return {
+            ...program,
+            guide_name: updatedData.fullName || program.guide_name,
+            guide_avatar: updatedData.avatar_url ? buildImageUrl(updatedData.avatar_url) : null
+          };
+        }
+        return program;
+      }));
+    };
+    
+    window.addEventListener('guideProfileUpdated', handleGuideUpdate);
+    return () => window.removeEventListener('guideProfileUpdated', handleGuideUpdate);
+  }, []);
+
+  const convertGuideId = useCallback((guideId, guideName) => {
+    if (guideId && !isNaN(Number(guideId))) return Number(guideId);
+    if (guideId && guidesMap[guideId]?.id) return Number(guidesMap[guideId].id);
+    if (guideName && guidesMap[guideName]?.id) return Number(guidesMap[guideName].id);
+    if (guideId === "64be64ff-ae41-4eb0-a41f-27de577b6246") return 6;
+    if (guideId === "d93beb84-4e67-4f64-bfe9-d20cc25f8b44") return 1;
+    if (guideName === "مرشد سياحي") return 6;
+    if (guideName === "Tour Guide 2") return 6;
     return null;
+  }, [guidesMap]);
+
+  const toggleFavorite = (id) => {
+    if (!user) {
+      toast.error(t('loginRequired'));
+      setPage('profile');
+      return;
+    }
+    const isFav = favoriteIds.includes(id);
+    const newFavs = isFav ? favoriteIds.filter(i => i !== id) : [...favoriteIds, id];
+    setFavoriteIds(newFavs);
+    toast.success(isFav ? t('removeFromFavorites') : t('addToFavorites'));
   };
 
-  const fetchAllActivePrograms = useCallback(async () => {
+  // الإشعارات
+  useEffect(() => {
+    if (!user?.id) { setUnreadCount(0); return; }
+    const fetchUnreadCount = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${API_BASE}/api/notifications?status=unread&limit=1`, {
+          headers: { Authorization: token ? `Bearer ${token}` : '' }
+        });
+        const data = await res.json();
+        let count = 0;
+        if (data.success && data.pagination) count = data.pagination.total || 0;
+        else if (data.unreadCount !== undefined) count = data.unreadCount;
+        else if (data.data?.unreadCount !== undefined) count = data.data.unreadCount;
+        else if (Array.isArray(data.notifications)) count = data.notifications.filter(n => n.status === 'unread').length;
+        setUnreadCount(count);
+      } catch (err) { console.warn(err); }
+    };
+    fetchUnreadCount();
+    const interval = setInterval(fetchUnreadCount, 30000);
+    return () => clearInterval(interval);
+  }, [user]);
+
+  const loadUserLocationOnce = useCallback(() => {
+    if (locationLoadedRef.current) return;
+    locationLoadedRef.current = true;
+    if (!user) return;
+    const key = `manual_loc_${user.id}`;
+    const saved = localStorage.getItem(key);
+    if (saved) {
+      try { const { lat, lng } = JSON.parse(saved); setUserLocation({ lat, lng }); setLocationSource('manual'); return; } catch(e) {}
+    }
+    if (navigator.geolocation) {
+      toast.loading(t('loading'), { id: 'location' });
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const { latitude, longitude, accuracy } = pos.coords;
+          setUserLocation({ lat: latitude, lng: longitude });
+          setLocationSource('gps');
+          toast.success(`✅ ${t('locationUpdated')} (دقة ${Math.round(accuracy)}م)`, { id: 'location' });
+          localStorage.setItem(`manual_loc_${user.id}`, JSON.stringify({ lat: latitude, lng: longitude }));
+        },
+        (err) => {
+          console.warn(err);
+          toast.error(`⚠️ ${t('usingDefault')}`, { id: 'location' });
+          setUserLocation(RIYADH_COORDS);
+          setLocationSource('default');
+        },
+        { enableHighAccuracy: true, timeout: 10000 }
+      );
+    } else {
+      setUserLocation(RIYADH_COORDS);
+      setLocationSource('default');
+    }
+  }, [user, t]);
+
+  const fetchFullProgram = useCallback(async (id) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/programs/${id}`);
+      const data = await res.json();
+      const prog = data.program || data.data || data;
+      if (prog) {
+        let images = [];
+        if (prog.images?.length) images = prog.images.map(img => buildImageUrl(img.url || img.image_url)).filter(Boolean);
+        else if (prog.image) images = [buildImageUrl(prog.image)];
+        let guide_avatar = null;
+        if (prog.guide_id && guidesMap[prog.guide_id]) guide_avatar = guidesMap[prog.guide_id].avatar;
+        else if (prog.guide_name && guidesMap[prog.guide_name]) guide_avatar = guidesMap[prog.guide_name].avatar;
+        return { ...prog, images, guide_avatar };
+      }
+    } catch(e) {}
+    return null;
+  }, [guidesMap]);
+
+  const fetchAllPrograms = useCallback(async () => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
     setLoading(true);
     setError(null);
     try {
       const res = await fetch(`${API_BASE}/api/programs`);
+      if (!res.ok) throw new Error('HTTP error');
       const data = await res.json();
-      if (!res.ok) throw new Error('API error');
-
-      let programsArray = [];
-      if (data.success && Array.isArray(data.programs)) programsArray = data.programs;
-      else if (Array.isArray(data)) programsArray = data;
-      else if (data.data && Array.isArray(data.data)) programsArray = data.data;
-      else programsArray = [];
-
-      const activePrograms = programsArray.filter(p => {
-        const status = (p.status || '').toLowerCase();
-        return status === 'active';
-      });
-
-      if (activePrograms.length === 0) {
-        setPrograms([]);
-        return;
-      }
-
-      const detailedPrograms = await Promise.all(
-        activePrograms.map(async (prog) => {
-          const detailed = await fetchFullProgram(prog.id);
-          if (detailed) return detailed;
-          return {
-            ...prog,
-            images: fixImagesArray(prog.images || []),
-            image: buildImageUrl(prog.image)
-          };
-        })
-      );
-
-      const withDistance = detailedPrograms.map(p => {
-        let distance = null;
-        if (userLocation && p.location_lat && p.location_lng) {
-          distance = getDistance(
-            userLocation.lat, userLocation.lng,
-            p.location_lat, p.location_lng
-          );
-        }
-        return { ...p, distance };
-      });
-
-      setPrograms(withDistance);
-      console.log(`✅ HomePage loaded ${withDistance.length} active programs`);
+      let list = [];
+      if (data.success && Array.isArray(data.programs)) list = data.programs;
+      else if (Array.isArray(data)) list = data;
+      else list = [];
+      const active = list.filter(p => (p.status || '').toLowerCase() === 'active');
+      const detailed = await Promise.all(active.map(p => fetchFullProgram(p.id).catch(() => p)));
+      setAllPrograms(detailed);
+      const idxMap = {};
+      detailed.forEach(p => idxMap[p.id] = 0);
+      setImageIndex(prev => ({ ...prev, ...idxMap }));
+      setInitialLoadDone(true);
     } catch (err) {
-      console.error('Fetch programs error:', err);
-      setError(err.message);
-      toast.error(lang === 'ar' ? 'فشل تحميل البرامج' : 'Failed to load programs');
+      console.error(err);
+      setError(t('connectionError'));
+      const cached = localStorage.getItem('homepage_programs');
+      if (cached && allPrograms.length === 0) {
+        try {
+          setAllPrograms(JSON.parse(cached));
+          toast((lang === 'ar' ? '📱 عرض بيانات سابقة' : 'Showing cached data'), { icon: '💾' });
+        } catch(e) {}
+      }
     } finally {
       setLoading(false);
+      isFetchingRef.current = false;
     }
-  }, [userLocation, lang]);
+  }, [fetchFullProgram, t, lang, allPrograms.length]);
 
-  const requestLocation = useCallback(() => {
-    if (!navigator.geolocation) {
-      setError(t('locationGeneralError'));
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        setLocationEnabled(true);
-        localStorage.setItem('cached_user_location', JSON.stringify({ lat: pos.coords.latitude, lng: pos.coords.longitude, timestamp: Date.now() }));
-      },
-      (err) => {
-        let msg = '';
-        switch(err.code) {
-          case err.PERMISSION_DENIED: msg = t('locationPermissionDenied'); break;
-          case err.TIMEOUT: msg = t('locationTimeout'); break;
-          default: msg = t('locationGeneralError');
-        }
-        setError(msg);
-        setLocationEnabled(false);
-      },
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
-  }, [setLocationEnabled, t]);
-
+  useEffect(() => { loadUserLocationOnce(); }, [loadUserLocationOnce]);
   useEffect(() => {
-    const cached = localStorage.getItem('cached_user_location');
-    if (cached) {
-      try {
-        const data = JSON.parse(cached);
-        const hoursPassed = (Date.now() - data.timestamp) / (1000 * 60 * 60);
-        if (hoursPassed < 1) {
-          setUserLocation({ lat: data.lat, lng: data.lng });
-          setLocationEnabled(true);
-        }
-      } catch(e) {}
-    }
-  }, []);
+    if (userLocation && !initialLoadDone && !isFetchingRef.current) fetchAllPrograms();
+  }, [userLocation, initialLoadDone, fetchAllPrograms]);
 
-  useEffect(() => {
-    fetchAllActivePrograms();
-    if (locationEnabled && !userLocation) requestLocation();
-  }, []);
+  const displayedPrograms = useMemo(() => {
+    if (!userLocation || allPrograms.length === 0) return [];
+    const withDist = allPrograms.map(p => {
+      let dist = Infinity;
+      if (p.location_lat && p.location_lng) dist = getDistance(userLocation.lat, userLocation.lng, p.location_lat, p.location_lng);
+      return { ...p, distance: dist };
+    });
+    withDist.sort((a,b) => a.distance - b.distance);
+    if (showAllMode) return withDist;
+    return withDist.filter(p => p.distance <= NEARBY_RADIUS_KM);
+  }, [allPrograms, userLocation, showAllMode]);
 
-  useEffect(() => {
-    fetchAllActivePrograms();
-  }, [userLocation]);
+  const handleRefresh = () => fetchAllPrograms();
+  const handleUpdateLocation = () => { locationLoadedRef.current = false; loadUserLocationOnce(); };
 
-  useEffect(() => {
-    if (!isAutoTracking) {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      return;
-    }
-    if (intervalRef.current) clearInterval(intervalRef.current);
-    intervalRef.current = setInterval(() => {
-      fetchAllActivePrograms();
-    }, 5000);
-    return () => clearInterval(intervalRef.current);
-  }, [isAutoTracking, fetchAllActivePrograms]);
-
-  const handleRefresh = () => {
-    fetchAllActivePrograms();
-    if (locationEnabled && !userLocation) requestLocation();
+  const handleChat = (guideId, guideName) => {
+    if (!user) { toast.error(t('loginRequired')); setPage('profile'); return; }
+    const numericGuideId = convertGuideId(guideId, guideName);
+    if (!numericGuideId) { toast.error(lang === 'ar' ? 'معرف المرشد غير صالح' : 'Invalid guide ID'); return; }
+    if (String(numericGuideId) === String(user.id)) { toast.error(lang === 'ar' ? 'لا يمكنك فتح محادثة مع نفسك' : 'Cannot start chat with yourself'); return; }
+    const chatParams = { recipientId: numericGuideId, recipientName: guideName || 'المرشد', timestamp: Date.now() };
+    localStorage.setItem('directChatParams', JSON.stringify(chatParams));
+    toast.success(lang === 'ar' ? `تم فتح المحادثة مع ${guideName}` : `Chat opened with ${guideName}`);
+    setPage('directChat');
   };
 
-  const handleViewProgramOnMap = (programId) => {
-    localStorage.setItem('highlightProgramId', String(programId));
+  const handleBooking = async (program) => {
+    if (!user) { toast.error(t('loginRequired')); setPage('profile'); return; }
+    setBookingLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_BASE}/api/support/tickets`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token && { Authorization: `Bearer ${token}` }) },
+        body: JSON.stringify({
+          user_id: user.id,
+          subject: `طلب حجز: ${program.name}`,
+          type: 'booking',
+          priority: 'normal',
+          message: `أود حجز البرنامج "${program.name}" للمرشد ${program.guide_name}`
+        })
+      });
+      const result = await res.json();
+      if (result.success) toast.success(t('requestSent'));
+      else toast.error(result.message || t('bookingFailed'));
+    } catch(e) { toast.error(lang === 'ar' ? 'حدث خطأ' : 'Error'); }
+    finally { setBookingLoading(false); }
+  };
+
+  const handleViewOnMap = (id) => {
+    localStorage.setItem('selectedProgramId', id);
     setPage('explore');
   };
 
-  const features = [
-    { icon: <FaMapMarkedAlt size={40} />, title: 'اكتشف الأماكن', desc: 'استكشف أفضل الوجهات السياحية والأماكن المميزة في جميع أنحاء المملكة', primary: true },
-    { icon: <FaUserTie size={40} />, title: 'مرشدين محترفين', desc: 'احجز مع مرشدين سياحيين معتمدين ومتميزين بخبرة عالية', primary: false },
-    { icon: <FaWallet size={40} />, title: 'محفظة إلكترونية', desc: 'ادفع بسهولة وأمان عبر محفظتك الرقمية مع نظام رسوم شفاف', primary: false },
-    { icon: <FaComments size={40} />, title: 'تواصل فوري', desc: 'تحدث مع المرشدين مباشرة عبر المحادثة الفورية قبل وأثناء الرحلة', primary: false }
-  ];
-  const stats = [
-    { value: '500+', label: t('stats.guides') },
-    { value: '1000+', label: t('stats.trips') },
-    { value: '98%', label: t('stats.rating') },
-    { value: '24/7', label: t('stats.support') }
-  ];
-  const testimonials = [
-    { name: 'أحمد محمد', role: 'سائح', comment: 'تجربة رائعة جداً، المرشد كان محترف والمكان جميل', rating: 5, image: 'https://i.pravatar.cc/100?img=1' },
-    { name: 'سارة عبدالله', role: 'سائحة', comment: 'سهولة في الحجز والتواصل، أنصح الجميع باستخدام التطبيق', rating: 5, image: 'https://i.pravatar.cc/100?img=2' },
-    { name: 'محمد علي', role: 'مرشد سياحي', comment: 'منصة ممتازة للتواصل مع السياح وإدارة الحجوزات بكل سهولة', rating: 5, image: 'https://i.pravatar.cc/100?img=3' }
-  ];
+  const nextImage = (e, id, total) => { e.stopPropagation(); setImageIndex(prev => ({ ...prev, [id]: (prev[id] + 1) % total })); };
+  const prevImage = (e, id, total) => { e.stopPropagation(); setImageIndex(prev => ({ ...prev, [id]: (prev[id] - 1 + total) % total })); };
+  const toggleDisplayMode = () => setShowAllMode(prev => !prev);
+  const handleGoToMap = () => setPage('explore');
+
+  useEffect(() => {
+    const handleScroll = () => { if (contentRef.current) setShowScrollTop(contentRef.current.scrollTop > 300); };
+    const container = contentRef.current;
+    if (container) { container.addEventListener('scroll', handleScroll); return () => container.removeEventListener('scroll', handleScroll); }
+  }, []);
+
+  const scrollToTop = () => contentRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+  const ScrollTopButton = () => {
+    if (!showScrollTop) return null;
+    return <button onClick={scrollToTop} className="fixed bottom-6 left-6 bg-green-600 text-white p-3 rounded-full shadow-lg hover:bg-green-700 transition z-50"><FaArrowUp size={20} /></button>;
+  };
 
   const textColor = dark ? 'text-gray-100' : 'text-gray-900';
-  const bgColor = dark ? 'bg-gray-900' : 'bg-white';
+  const bgColor = dark ? 'bg-gray-900' : 'bg-gray-50';
   const cardBg = dark ? 'bg-gray-800' : 'bg-white';
   const borderColor = dark ? 'border-gray-700' : 'border-gray-200';
-  const secondaryText = dark ? 'text-gray-400' : 'text-gray-500';
+
+  if (!user) {
+    return (
+      <div className="h-full flex items-center justify-center bg-gray-50 dark:bg-gray-900">
+        <div className="text-center p-6 max-w-md">
+          <h2 className="text-2xl font-bold mb-2">{t('welcome')}</h2>
+          <p className="mb-4 text-gray-600">{t('loginRequired')}</p>
+          <button onClick={() => setPage('profile')} className="bg-green-600 text-white px-6 py-2 rounded-lg">{lang === 'ar' ? 'تسجيل الدخول' : 'Login'}</button>
+        </div>
+      </div>
+    );
+  }
+
+  const getUserAvatarUrl = () => {
+    if (user.avatar) return user.avatar.startsWith('http') ? user.avatar : `${API_BASE}${user.avatar}`;
+    if (user.avatar_url) return user.avatar_url.startsWith('http') ? user.avatar_url : `${API_BASE}${user.avatar_url}`;
+    return null;
+  };
 
   return (
-    <div className={`${bgColor} ${textColor} min-h-screen`} dir="rtl">
-      <nav className={`sticky top-0 z-50 ${cardBg} border-b ${borderColor} shadow-sm`}>
-        <div className="container mx-auto px-4 py-3 flex justify-between items-center">
-          <button onClick={() => setPage('home')} className="text-2xl font-bold">{t('appName')}</button>
-          <div className="flex gap-4 items-center">
-            <button onClick={() => setDark(!dark)} className={`p-2 rounded-lg border ${borderColor}`}>
-              {dark ? <FaSun className="text-yellow-400" /> : <FaMoon className="text-gray-600" />}
-            </button>
-            {user ? (
-              <button onClick={() => setPage('profile')} className="flex items-center gap-2">
-                <FaUserCircle size={24} className="text-green-600" />
-                <span className="hidden sm:inline">{user.name}</span>
-              </button>
-            ) : (
-              <button onClick={() => setPage('profile')} className="bg-green-600 text-white px-4 py-2 rounded-lg">دخول</button>
-            )}
-          </div>
-        </div>
-      </nav>
-
-      <section className="relative overflow-hidden bg-gradient-to-r from-green-600 to-emerald-600 text-white">
-        <div className="absolute inset-0 bg-black/20" style={{ backgroundImage: 'url(https://images.unsplash.com/photo-1469474968028-56623f02e42e?ixlib=rb-4.0.3)', backgroundSize: 'cover', backgroundPosition: 'center', opacity: dark ? 0.1 : 0.2 }}></div>
-        <div className="relative container mx-auto px-4 py-24 md:py-32 text-center">
-          <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.8 }}>
-            <h1 className="text-3xl md:text-5xl font-bold mb-4">{t('heroTitle')}<br /><span className="text-yellow-300">{t('heroSubtitle')}</span></h1>
-            <p className="text-lg md:text-xl mb-8 max-w-2xl mx-auto">{t('heroDesc')}</p>
-            {!user ? (
-              <div className="flex gap-4 justify-center flex-wrap">
-                <button onClick={() => setPage('profile')} className="bg-yellow-400 text-gray-900 px-6 py-3 rounded-xl font-bold shadow-lg hover:bg-yellow-500 transition flex items-center gap-2"><span>{t('ctaStart')}</span> <FaArrowLeft /></button>
-                <button onClick={() => setPage('guides')} className="border-2 border-white text-white px-6 py-3 rounded-xl font-bold hover:bg-white/10 transition">{t('ctaExplore')}</button>
+    <div ref={contentRef} className={`${bgColor} ${textColor} h-full overflow-y-auto pb-20`} dir="rtl">
+      {/* الهيدر مع صورة المستخدم واسمه وتدرج أخضر */}
+      <div className="sticky top-0 z-20 bg-gradient-to-r from-green-500 to-emerald-600 text-white shadow-lg">
+        <div className="px-6 pt-6 pb-3">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-full bg-white/20 border-2 border-white/30 overflow-hidden flex-shrink-0">
+                {getUserAvatarUrl() ? (
+                  <img src={getUserAvatarUrl()} alt={user.fullName || user.name} className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-white text-xl">
+                    {user.fullName?.charAt(0) || user.name?.charAt(0) || '👤'}
+                  </div>
+                )}
               </div>
-            ) : (
-              <button onClick={() => setPage(user.type === 'guide' ? 'guideDashboard' : 'explore')} className="bg-yellow-400 text-gray-900 px-6 py-3 rounded-xl font-bold shadow-lg hover:bg-yellow-500 transition flex items-center gap-2 mx-auto"><span>{t('goToDashboard')}</span> <FaArrowLeft /></button>
-            )}
-          </motion.div>
-        </div>
-        <div className="absolute bottom-0 left-0 right-0"><svg viewBox="0 0 1440 120" fill="none"><path d="M0 120L60 105C120 90 240 60 360 45C480 30 600 30 720 37.5C840 45 960 60 1080 67.5C1200 75 1320 75 1380 75L1440 75V120H0Z" fill={dark ? '#1f2937' : 'white'} /></svg></div>
-      </section>
-
-      <section className={`py-12 ${cardBg}`}>
-        <div className="container mx-auto px-4">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
-            {stats.map((s, i) => (
-              <motion.div key={i} initial={{ opacity: 0, scale: 0.8 }} whileInView={{ opacity: 1, scale: 1 }} transition={{ delay: i*0.1 }}>
-                <div className="text-3xl md:text-4xl font-bold text-green-600">{s.value}</div>
-                <div className={secondaryText}>{s.label}</div>
-              </motion.div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className={`py-16 ${dark ? 'bg-gray-900' : 'bg-gray-50'}`}>
-        <div className="container mx-auto px-4">
-          <div className="text-center mb-12">
-            <h2 className="text-3xl font-bold">{t('featuresTitle')}</h2>
-            <p className={`text-lg ${secondaryText} max-w-2xl mx-auto`}>{t('featuresSub')}</p>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {features.map((f, idx) => (
-              <motion.div key={idx} initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} transition={{ delay: idx*0.1 }} className={`p-6 rounded-xl ${cardBg} shadow-lg border ${borderColor}`}>
-                <div className="text-green-600 mb-4">{f.icon}</div>
-                <h3 className="text-xl font-bold mb-2">{f.title}</h3>
-                <p className={secondaryText}>{f.desc}</p>
-              </motion.div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className={`py-16 ${cardBg}`}>
-        <div className="container mx-auto px-4">
-          <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
-            <div className="text-center flex-1">
-              <div className="flex items-center justify-center gap-2 mb-2">
-                <FaMapMarkerAlt className="text-green-600 text-2xl" />
-                <h2 className="text-2xl md:text-3xl font-bold">{t('nearbyTitle')}</h2>
+              <div>
+                <h1 className="text-xl font-bold">{user.fullName || user.name}</h1>
+                {user.type === 'guide' && (
+                  <div className="flex items-center mt-0.5"><Shield className="w-3 h-3 ml-1" /><span className="text-xs opacity-90">{lang === 'ar' ? 'مرشد سياحي موثق' : 'Verified Guide'}</span></div>
+                )}
               </div>
-              <p className={secondaryText}>{t('nearbySub')}</p>
-              {userLocation && (
-                <div className="text-xs text-green-600 mt-1">
-                  📍 {lang === 'ar' ? 'موقعك الحالي مفعل' : 'Your location enabled'}
-                </div>
-              )}
             </div>
-            <button
-              onClick={() => setIsAutoTracking(!isAutoTracking)}
-              className={`px-3 py-1.5 rounded-lg text-sm flex items-center gap-1 transition ${
-                isAutoTracking ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-green-600 hover:bg-green-700 text-white'
-              }`}
-            >
-              {isAutoTracking ? '🔴 ' + t('stopTracking') : '🟢 ' + t('startTracking')}
-            </button>
+            <div className="flex items-center gap-2">
+              <button onClick={() => setDark(!dark)} className="p-2 rounded-full bg-white/20 hover:bg-white/30 transition">{dark ? <Sun size={20} /> : <Moon size={20} />}</button>
+              <button onClick={() => setPage('notifications')} className="relative p-2 rounded-full bg-white/20 hover:bg-white/30 transition">
+                <Bell size={20} />
+                {unreadCount > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">{unreadCount > 99 ? '99+' : unreadCount}</span>}
+              </button>
+            </div>
           </div>
+          <div className="relative">
+            <Search className="absolute right-3 top-3.5 text-gray-200" size={20} />
+            <input 
+              type="text" 
+              placeholder={t('search')} 
+              className="w-full p-3 pr-10 rounded-xl bg-white/20 backdrop-blur-sm text-white placeholder-white/70 border border-white/30 focus:outline-none focus:border-white focus:bg-white/30 transition" 
+            />
+          </div>
+        </div>
+      </div>
 
-          {loading && (
-            <div className="text-center py-8">
-              <FaSpinner className="animate-spin h-8 w-8 text-green-600 mx-auto" />
-              <p className="mt-2">{t('loading')}</p>
-            </div>
-          )}
+      <div className="p-4">
+        <HeroAd lang={lang} setPage={setPage} />
 
-          {error && !loading && (
-            <div className="text-center py-8 bg-red-50 dark:bg-red-900/20 rounded-xl">
-              <p className="text-red-600 dark:text-red-400 mb-3">{error}</p>
-              <button onClick={handleRefresh} className="bg-green-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 mx-auto">
-                <FaLocationArrow size={14} /> {t('enableLocationBtn')}
-              </button>
-            </div>
-          )}
+        {/* تم إزالة الأيقونات الإضافية (الخريطة، القريبة، المرشدون، المفضلة) لأن الوظائف موجودة في الإعلان */}
+        
+        <h2 className="text-lg font-bold mb-4 text-gray-800 dark:text-white">{t('nearbyPrograms')}</h2>
+        <div className="flex flex-wrap justify-between items-center gap-3 mb-5">
+          <div className="flex gap-2">
+            <button onClick={toggleDisplayMode} className="px-3 py-1.5 rounded-lg text-sm bg-cyan-600 text-white shadow">{showAllMode ? t('nearby') : 'عرض الكل'}</button>
+            <button onClick={handleUpdateLocation} className="px-3 py-1.5 rounded-lg text-sm bg-blue-600 text-white shadow flex items-center gap-1"><FaLocationArrow size={14} /> {t('updateLocation')}</button>
+            <button onClick={handleRefresh} className="px-3 py-1.5 rounded-lg text-sm bg-gray-600 text-white shadow"><FaRedoAlt size={14} /> {t('refresh')}</button>
+          </div>
+          {userLocation && <div className="text-xs text-gray-500 dark:text-gray-400">{locationSource === 'manual' && t('usingManual')}{locationSource === 'gps' && t('usingGps')}{locationSource === 'default' && t('usingDefault')}</div>}
+        </div>
 
-          {!loading && !error && programs.length === 0 && (
-            <div className="text-center py-8 bg-gray-50 dark:bg-gray-800 rounded-xl">
-              <FaBoxOpen size={48} className="mx-auto text-gray-400 mb-2" />
-              <p>{t('noNearby')}</p>
-              <button onClick={handleRefresh} className="mt-4 bg-green-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 mx-auto">
-                <FaRedoAlt size={14} /> {t('refreshNearby')}
-              </button>
-            </div>
-          )}
+        {loading && !initialLoadDone && <div className="text-center py-12"><FaSpinner className="animate-spin h-10 w-10 text-green-600 mx-auto" /><p className="mt-3 text-gray-500">{t('loading')}</p></div>}
+        
+        {error && (
+          <div className="text-center py-10 bg-red-50 dark:bg-red-900/20 rounded-xl">
+            <p className="text-red-600 dark:text-red-400 mb-2">{error}</p>
+            <button onClick={handleRefresh} className="text-green-600 underline">{t('refresh')}</button>
+          </div>
+        )}
+        
+        {!loading && !error && !userLocation && (
+          <div className="text-center py-12 bg-yellow-50 dark:bg-yellow-900/20 rounded-xl">
+            <FaMapMarkerAlt size={48} className="mx-auto text-yellow-500 mb-3" />
+            <p className="mb-4 text-gray-700 dark:text-gray-300">{t('locationError')}</p>
+            <button onClick={handleGoToMap} className="bg-green-600 text-white px-5 py-2 rounded-lg">{t('updateLocation')}</button>
+          </div>
+        )}
+        
+        {!loading && !error && userLocation && displayedPrograms.length === 0 && (
+          <div className="text-center py-10 bg-gray-50 dark:bg-gray-800 rounded-xl">
+            <FaBoxOpen size={48} className="mx-auto text-gray-400" />
+            <p className="mt-2">{t('noPrograms')}</p>
+            {!showAllMode && <button onClick={toggleDisplayMode} className="mt-3 text-green-600 underline">عرض الكل</button>}
+          </div>
+        )}
 
-          {!loading && !error && programs.length > 0 && (
+        <AnimatePresence>
+          {!loading && userLocation && displayedPrograms.length > 0 && (
             <div className="space-y-5">
-              {programs.map(program => {
-                const images = (program.images || []).map(img => img.url);
-                const currentImg = images.length > 0 ? images[0] : (program.image ? buildImageUrl(program.image) : null);
-                const distance = program.distance !== null ? program.distance.toFixed(1) : null;
+              {displayedPrograms.map((program) => {
+                const images = program.images || [];
+                const total = images.length;
+                const idx = imageIndex[program.id] || 0;
+                const currentImg = images[idx] || (program.image ? buildImageUrl(program.image) : null);
+                const distance = program.distance !== Infinity ? program.distance.toFixed(1) : null;
                 const activity = getActivityType(program, lang);
                 const activityLabel = lang === 'ar' ? activity.ar : activity.en;
+                const isFav = favoriteIds.includes(program.id);
+                const guideAvatar = program.guide_avatar || (program.guide_id && guidesMap[program.guide_id]?.avatar) || (program.guide_name && guidesMap[program.guide_name]?.avatar) || null;
 
                 return (
-                  <div key={program.id} className="bg-white dark:bg-gray-800 rounded-xl shadow-md hover:shadow-lg transition overflow-hidden relative">
-                    <div className="relative w-full h-64 md:h-72 bg-gray-200">
+                  <motion.div 
+                    key={program.id} 
+                    initial={{ opacity: 0, y: 20 }} 
+                    animate={{ opacity: 1, y: 0 }} 
+                    exit={{ opacity: 0 }} 
+                    transition={{ duration: 0.3 }}
+                    className={`${cardBg} rounded-2xl shadow-md overflow-hidden border ${borderColor}`}
+                  >
+                    <div className="relative w-full bg-gray-200" style={{ minHeight: '280px', maxHeight: '420px' }}>
                       {currentImg ? (
-                        <img
-                          src={currentImg}
-                          alt={program.name}
-                          className="w-full h-full object-cover"
-                          onError={(e) => {
-                            e.target.onerror = null;
-                            e.target.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' viewBox='0 0 100 100'%3E%3Crect width='100%25' height='100%25' fill='%23f0f0f0'/%3E%3Ctext x='50%25' y='50%25' font-size='12' fill='%23999' text-anchor='middle' dy='.3em'%3E❌%3C/text%3E%3C/svg%3E";
-                          }}
-                        />
+                        <img src={currentImg} alt={program.name} className="w-full h-full object-cover" style={{ minHeight: '280px', maxHeight: '420px' }} onError={(e) => { e.target.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' viewBox='0 0 100 100'%3E%3Crect width='100%25' height='100%25' fill='%23e2e8f0'/%3E%3Ctext x='50%25' y='50%25' font-size='14' fill='%23999' text-anchor='middle' dy='.3em'%3E🏞️%3C/text%3E%3C/svg%3E"; }} />
                       ) : (
-                        <div className="w-full h-full flex flex-col items-center justify-center text-gray-400">
-                          <ImageIcon size={40} />
-                          <span className="text-sm mt-1">لا توجد صورة</span>
-                        </div>
+                        <div className="w-full h-64 flex flex-col items-center justify-center text-gray-400 bg-gray-100"><FaBoxOpen size={48} /><span className="text-sm mt-1">لا توجد صورة</span></div>
                       )}
-
-                      {images.length > 1 && (
+                      {total > 1 && (
                         <>
-                          <button className="absolute left-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full text-sm hover:bg-black/70 transition z-10">❮</button>
-                          <button className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full text-sm hover:bg-black/70 transition z-10">❯</button>
-                          <span className="absolute bottom-2 right-2 bg-black/60 text-white text-xs px-2 py-1 rounded-full z-10">1/{images.length}</span>
+                          <button onClick={(e) => prevImage(e, program.id, total)} className="absolute left-2 top-1/2 transform -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white p-2 rounded-full transition z-10">❮</button>
+                          <button onClick={(e) => nextImage(e, program.id, total)} className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white p-2 rounded-full transition z-10">❯</button>
+                          <div className="absolute top-2 right-2 bg-black/60 text-white text-xs px-2 py-1 rounded-full z-10">{idx+1}/{total}</div>
                         </>
                       )}
-
-                      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/50 to-transparent p-4 text-white">
-                        <div className="flex justify-between items-end">
-                          <div>
-                            <h3 className="font-bold text-lg leading-tight">{program.name}</h3>
-                            <div className="flex items-center gap-2 mt-1 flex-wrap">
-                              <span className="text-xs bg-purple-500/80 backdrop-blur-sm px-2 py-0.5 rounded-full">
-                                {activity.icon} {activityLabel}
-                              </span>
-                              {distance && (
-                                <span className="text-xs bg-blue-500/80 backdrop-blur-sm px-2 py-0.5 rounded-full flex items-center gap-1">
-                                  <Navigation size={12} /> {distance} كم
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                          <div className="text-left">
-                            <div className="text-sm font-semibold">{program.guide_name || 'مرشد سياحي'}</div>
-                            <div className="text-xs flex items-center gap-1 mt-0.5">
-                              <MapPin size={12} />
-                              <span className="truncate max-w-[120px]">{program.location || 'موقع البرنامج'}</span>
-                            </div>
-                          </div>
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent pointer-events-none" />
+                      <div className="absolute bottom-16 left-3 right-3 text-white pointer-events-none z-10">
+                        <h3 className="font-bold text-xl leading-tight drop-shadow-md">{program.name}</h3>
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs mt-1">
+                          <span className="bg-black/40 backdrop-blur-sm px-2 py-0.5 rounded-full flex items-center gap-1">{activity.icon} {activityLabel}</span>
+                          {distance && <span className="bg-black/40 backdrop-blur-sm px-2 py-0.5 rounded-full flex items-center gap-1"><Navigation size={10} /> {distance} {t('distance')}</span>}
+                          <span className="bg-black/40 backdrop-blur-sm px-2 py-0.5 rounded-full">{program.price} {t('price')}</span>
+                          <span className="flex items-center gap-1 bg-black/40 backdrop-blur-sm px-2 py-0.5 rounded-full"><FaStar size={10} className="text-yellow-400" /> {program.rating || 4.5}</span>
                         </div>
                         <div className="flex justify-between items-center mt-2">
                           <div className="flex items-center gap-2">
-                            <Star size={14} className="text-yellow-400 fill-current" />
-                            <span className="text-sm">{program.rating || 4.5}</span>
-                            <span className="text-sm font-bold bg-green-600/80 px-2 py-0.5 rounded-full">
-                              {program.price} ريال
-                            </span>
+                            {guideAvatar ? (
+                              <img src={guideAvatar} className="w-6 h-6 rounded-full object-cover border border-white/30" alt={program.guide_name} />
+                            ) : (
+                              <div className="w-6 h-6 rounded-full bg-gray-500 flex items-center justify-center text-white text-xs">{program.guide_name?.charAt(0) || 'G'}</div>
+                            )}
+                            <span className="text-sm font-medium">{program.guide_name || 'مرشد سياحي'}</span>
                           </div>
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => {
-                                if (!user) {
-                                  toast.error(lang === 'ar' ? 'يجب تسجيل الدخول أولاً' : 'Please login first');
-                                  setPage('profile');
-                                  return;
-                                }
-                                handleViewProgramOnMap(program.id);
-                              }}
-                              className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-sm flex items-center gap-1 transition"
-                            >
-                              <MapPin size={14} />
-                              {lang === 'ar' ? 'خريطة' : 'Map'}
-                            </button>
-                            <button
-                              onClick={() => {
-                                if (!user) {
-                                  toast.error(lang === 'ar' ? 'يجب تسجيل الدخول أولاً' : 'Please login first');
-                                  setPage('profile');
-                                  return;
-                                }
-                                toast.info(lang === 'ar' ? 'سيتم تفعيل الحجز قريباً' : 'Booking feature coming soon');
-                              }}
-                              className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1.5 rounded-lg text-sm flex items-center gap-1 transition"
-                            >
-                              <CalendarCheck size={14} />
-                              {lang === 'ar' ? 'احجز' : 'Book'}
-                            </button>
-                          </div>
+                          <span className="text-xs flex items-center gap-1"><MapPin size={10} /><span className="truncate max-w-[140px]">{program.location || 'موقع البرنامج'}</span></span>
+                        </div>
+                      </div>
+                      <div className="absolute bottom-2 left-3 right-3 z-20 flex justify-between items-center pointer-events-auto">
+                        <button onClick={() => toggleFavorite(program.id)} className="p-2 rounded-full transition hover:scale-110">
+                          <Heart size={20} className={isFav ? 'fill-red-500 text-red-500' : 'text-white drop-shadow'} />
+                        </button>
+                        <div className="flex gap-2">
+                          <button onClick={() => handleChat(program.guide_id, program.guide_name)} className="bg-blue-600/80 hover:bg-blue-700 text-white px-3 py-1.5 rounded-full text-xs font-medium flex items-center gap-1 transition backdrop-blur-sm"><MessageCircle size={12} /> <span>{t('chat')}</span></button>
+                          <button onClick={() => handleBooking(program)} disabled={bookingLoading} className="bg-purple-600/80 hover:bg-purple-700 text-white px-3 py-1.5 rounded-full text-xs font-medium flex items-center gap-1 transition backdrop-blur-sm disabled:opacity-50"><CalendarCheck size={12} /> <span>{t('book')}</span></button>
+                          <button onClick={() => handleViewOnMap(program.id)} className="bg-emerald-600/80 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-full text-xs font-medium flex items-center gap-1 transition backdrop-blur-sm"><FaMapMarkedAlt size={12} /> <span>{t('viewOnMap')}</span></button>
                         </div>
                       </div>
                     </div>
-                  </div>
+                  </motion.div>
                 );
               })}
             </div>
           )}
-        </div>
-      </section>
-
-      <section className={`py-16 ${dark ? 'bg-gray-900' : 'bg-gray-50'}`}>
-        <div className="container mx-auto px-4">
-          <div className="text-center mb-12">
-            <h2 className="text-3xl font-bold">{t('howItWorks')}</h2>
-            <p className={secondaryText}>{t('howItWorksSub')}</p>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            {[
-              { icon: '🔍', title: t('step1Title'), desc: t('step1Desc') },
-              { icon: '📅', title: t('step2Title'), desc: t('step2Desc') },
-              { icon: '🎉', title: t('step3Title'), desc: t('step3Desc') }
-            ].map((step, idx) => (
-              <motion.div key={idx} initial={{ opacity: 0, x: idx===0 ? -50 : idx===2 ? 50 : 0 }} whileInView={{ opacity: 1, x: 0 }} transition={{ delay: idx*0.2 }} className={`relative p-6 text-center rounded-xl ${cardBg} shadow border ${borderColor}`}>
-                <div className="text-5xl mb-3">{step.icon}</div>
-                <div className="absolute -top-4 right-4 w-10 h-10 bg-green-600 text-white rounded-full flex items-center justify-center font-bold">{idx+1}</div>
-                <h3 className="text-xl font-bold mb-2">{step.title}</h3>
-                <p className={secondaryText}>{step.desc}</p>
-              </motion.div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className={`py-16 ${cardBg}`}>
-        <div className="container mx-auto px-4">
-          <div className="text-center mb-12">
-            <h2 className="text-3xl font-bold">{t('testimonialsTitle')}</h2>
-            <p className={secondaryText}>{t('testimonialsSub')}</p>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {testimonials.map((tst, idx) => (
-              <motion.div key={idx} initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} transition={{ delay: idx*0.1 }} className={`p-6 rounded-xl ${cardBg} shadow border ${borderColor}`}>
-                <div className="flex items-center gap-4 mb-4">
-                  <img src={tst.image} alt={tst.name} className="w-12 h-12 rounded-full object-cover border-2 border-green-500" />
-                  <div><h4 className="font-bold">{tst.name}</h4><p className="text-sm text-gray-500">{tst.role}</p></div>
-                </div>
-                <div className="flex text-yellow-500 mb-3">{[...Array(tst.rating)].map((_,i) => <FaStar key={i} />)}</div>
-                <p className={`italic ${secondaryText}`}>"{tst.comment}"</p>
-              </motion.div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className="py-16 bg-gradient-to-r from-green-600 to-emerald-600 text-white">
-        <div className="container mx-auto px-4 text-center">
-          <h2 className="text-3xl font-bold mb-4">{t('ctaTitle')}</h2>
-          <p className="text-lg mb-8 max-w-2xl mx-auto">{t('ctaDesc')}</p>
-          <div className="flex gap-4 justify-center flex-wrap">
-            <button onClick={() => setPage('profile')} className="bg-yellow-400 text-gray-900 px-6 py-3 rounded-xl font-bold shadow-lg hover:bg-yellow-500 transition">{t('ctaRegister')}</button>
-            <button onClick={() => setPage('guides')} className="border-2 border-white text-white px-6 py-3 rounded-xl font-bold hover:bg-white/10 transition">{t('ctaBrowse')}</button>
-          </div>
-          <div className="flex flex-wrap justify-center gap-6 mt-8 text-sm">
-            <span className="flex items-center gap-2"><FaShieldAlt className="text-yellow-400" /> {t('securePayment')}</span>
-            <span className="flex items-center gap-2"><FaClock className="text-yellow-400" /> {t('support247')}</span>
-            <span className="flex items-center gap-2"><FaStar className="text-yellow-400" /> {t('verifiedGuides')}</span>
-          </div>
-        </div>
-      </section>
-
-      <footer className={`py-12 bg-gray-800 text-gray-300`}>
-        <div className="container mx-auto px-4">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
-            <div><h3 className="text-xl font-bold text-white mb-3">{t('appName')}</h3><p className="text-sm">{t('heroDesc')}</p></div>
-            <div><h4 className="font-bold text-white mb-3">{t('footerQuickLinks')}</h4><ul className="space-y-2"><li><button onClick={() => setPage('home')} className="hover:text-green-400 transition">{t('home')}</button></li><li><button onClick={() => setPage('guides')} className="hover:text-green-400 transition">{t('programs')}</button></li><li><button onClick={() => setPage('profile')} className="hover:text-green-400 transition">{t('about')}</button></li></ul></div>
-            <div><h4 className="font-bold text-white mb-3">{t('footerSupport')}</h4><ul className="space-y-2"><li><button className="hover:text-green-400 transition">{t('faq')}</button></li><li><button className="hover:text-green-400 transition">{t('privacy')}</button></li><li><button className="hover:text-green-400 transition">{t('terms')}</button></li></ul></div>
-            <div><h4 className="font-bold text-white mb-3">{t('footerContact')}</h4><div className="flex gap-4 text-2xl"><a href="#" className="hover:text-green-400">📱</a><a href="#" className="hover:text-green-400">📘</a><a href="#" className="hover:text-green-400">📷</a><a href="#" className="hover:text-green-400">🐦</a></div></div>
-          </div>
-          <div className="border-t border-gray-700 mt-8 pt-6 text-center text-sm">{t('footerRights')} © 2026 {t('appName')}</div>
-        </div>
-      </footer>
+        </AnimatePresence>
+      </div>
+      <ScrollTopButton />
     </div>
   );
 };
