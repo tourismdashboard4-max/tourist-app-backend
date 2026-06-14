@@ -1,7 +1,7 @@
 // client/src/App.jsx
 // ✅ النسخة النهائية - إصلاح عرض برامج المرشدين النشطة عند الضغط على زر "البرامج"
 // ✅ إصلاح أيقونة المفضلة في الصفحة الرئيسية لتنتقل إلى صفحة المفضلة
-
+import HomePage from './pages/HomePage';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from "framer-motion";
 import './index.css';
@@ -38,6 +38,7 @@ import DirectChatPage from './pages/DirectChatPage';
 import toast from 'react-hot-toast';
 import { WalletProvider, useWallet } from './contexts/WalletContext';
 import FavoritesPage from './pages/FavoritesPage';
+import MyTripsPage from './pages/MyTripsPage';
 import ProfilePage from './pages/ProfilePage';
 import ProfileDataPage from './pages/ProfileDataPage';
 
@@ -249,64 +250,7 @@ function BottomNav({ current, setCurrent, lang, user, setShowLogin }) {
   );
 }
 
-// ===================== 📍 Home Page =====================
-function HomePage({ lang, user, setPage, dark, setDark, locationEnabled, setLocationEnabled }) {
-  const t = (k) => LOCALES[lang][k] || k;
-  const [unreadCount, setUnreadCount] = useState(0);
-  useEffect(() => {
-    if (user?.id) {
-      const fetchUnreadCount = async () => {
-        try {
-          const response = await api.getUserNotifications({ status: 'unread', limit: 1 });
-          let count = 0;
-          if (response.success && response.pagination) count = response.pagination.total || 0;
-          else if (response.unreadCount !== undefined) count = response.unreadCount;
-          else if (response.data?.unreadCount !== undefined) count = response.data.unreadCount;
-          else if (Array.isArray(response.notifications)) count = response.notifications.filter(n => n.status === 'unread').length;
-          setUnreadCount(count);
-        } catch (error) { console.error(error); }
-      };
-      fetchUnreadCount();
-    } else setUnreadCount(0);
-  }, [user]);
-  return (
-    <div className="h-full overflow-y-auto pb-20 bg-gray-50 dark:bg-gray-900">
-      <div className="bg-gradient-to-r from-green-500 to-emerald-600 p-6 text-white">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            {user ? (
-              <>
-                <div className="w-12 h-12 rounded-full bg-white/20 border-2 border-white/30 overflow-hidden flex-shrink-0">
-                  {user.avatar ? <img src={user.avatar} alt={user.fullName || user.name} className="w-full h-full object-cover" onError={(e) => { e.target.onerror = null; e.target.style.display = 'none'; const parent = e.target.parentElement; if (parent) parent.innerHTML = '<div class="w-full h-full flex items-center justify-center text-white text-xl">👤</div>'; }} /> : <div className="w-full h-full flex items-center justify-center text-white text-xl">{user.fullName?.charAt(0) || user.name?.charAt(0) || '👤'}</div>}
-                </div>
-                <div><h1 className="text-xl font-bold">{user.fullName || user.name}</h1>{user.type === "guide" && <div className="flex items-center mt-0.5"><Shield className="w-3 h-3 ml-1" /><span className="text-xs opacity-90">مرشد سياحي موثق</span></div>}</div>
-              </>
-            ) : (
-              <div><h1 className="text-2xl font-bold">{t("welcome")}</h1><p className="text-white/90">{t("appName")}</p></div>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={() => setDark()} className="p-2 rounded-full bg-white/20 hover:bg-white/30 transition">{dark ? <Sun size={20} /> : <Moon size={20} />}</button>
-            {user && <button onClick={() => setPage("notifications")} className="relative p-2 rounded-full bg-white/20 hover:bg-white/30 transition"><Bell size={20} />{unreadCount > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">{unreadCount > 99 ? "99+" : unreadCount}</span>}</button>}
-          </div>
-        </div>
-        <div className="relative"><Search className="absolute right-3 top-3.5 text-gray-400" size={20} /><input type="text" placeholder={t("search")} className="w-full p-3 pr-10 rounded-xl bg-white/20 backdrop-blur-sm placeholder-white/70 border border-white/30 focus:outline-none focus:border-white focus:bg-white/30 transition" /></div>
-      </div>
-      <div className="p-4">
-        <h2 className="text-lg font-bold mb-4 text-gray-800 dark:text-white">{t("explore")}</h2>
-        <div className="grid grid-cols-4 gap-3 mb-6">
-          <button onClick={() => { if (!user) { alert(lang === 'ar' ? 'الرجاء تسجيل الدخول أولاً للوصول للخريطة' : 'Please login first to access the map'); return; } setPage("explore"); }} className="flex flex-col items-center p-3 bg-white dark:bg-gray-800 rounded-xl shadow-sm hover:shadow-md transition"><div className="w-12 h-12 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center mb-2"><MapPin className="text-blue-600 dark:text-blue-400" size={24} /></div><span className="text-xs font-medium dark:text-gray-200">الخريطة</span></button>
-          <div className="flex flex-col items-center p-3 bg-white dark:bg-gray-800 rounded-xl shadow-sm"><div className="w-12 h-12 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mb-2"><Package className="text-green-600 dark:text-green-400" size={24} /></div><span className="text-xs font-medium dark:text-gray-200">{t("nearbyPrograms")}</span></div>
-          <button onClick={() => setPage(user?.type === "guide" ? "guideDashboard" : "guides")} className="flex flex-col items-center p-3 bg-white dark:bg-gray-800 rounded-xl shadow-sm hover:shadow-md transition"><div className="w-12 h-12 bg-purple-100 dark:bg-purple-900/30 rounded-full flex items-center justify-center mb-2"><Users className="text-purple-600 dark:text-purple-400" size={24} /></div><span className="text-xs font-medium dark:text-gray-200">{user?.type === "guide" ? t("guideDashboard") : t("guides")}</span></button>
-          {/* ✅ زر المفضلة المعدل: يذهب إلى صفحة المفضلة وليس صفحتي */}
-          <button onClick={() => { if (!user) { alert(lang === 'ar' ? 'الرجاء تسجيل الدخول أولاً' : 'Please login first'); return; } setPage("favorites"); }} className="flex flex-col items-center p-3 bg-white dark:bg-gray-800 rounded-xl shadow-sm hover:shadow-md transition"><div className="w-12 h-12 bg-orange-100 dark:bg-orange-900/30 rounded-full flex items-center justify-center mb-2">{user?.type === "guide" ? <Archive className="text-orange-600 dark:text-orange-400" size={24} /> : <Heart className="text-orange-600 dark:text-orange-400" size={24} />}</div><span className="text-xs font-medium dark:text-gray-200">{user?.type === "guide" ? t("archiveTrips") : t("favorites")}</span></button>
-        </div>
-        <h2 className="text-lg font-bold mb-4 text-gray-800 dark:text-white">{t("nearbyPrograms")}</h2>
-        {!user ? <div className="bg-white dark:bg-gray-800 rounded-xl p-6 text-center shadow-sm"><p className="text-gray-600 dark:text-gray-400 mb-4">{lang === 'ar' ? 'سجل دخول لمشاهدة البرامج القريبة منك' : 'Login to see nearby programs'}</p><button onClick={() => setPage('profile')} className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition">{lang === 'ar' ? 'تسجيل الدخول' : 'Login'}</button></div> : <div className="bg-white dark:bg-gray-800 rounded-xl p-6 text-center shadow-sm"><p className="text-gray-600 dark:text-gray-400">{lang === 'ar' ? 'جاري تحميل البرامج القريبة...' : 'Loading nearby programs...'}</p></div>}
-      </div>
-    </div>
-  );
-}
+
 
 // ===================== 📋 صفحة تسجيل المرشد =====================
 function GuideRegistrationPage({ lang, onBack, onSubmit }) {
@@ -1480,6 +1424,7 @@ export function TouristAppPrototype() {
       <div className="flex-1 overflow-hidden relative -mt-2">
         {page === "home" && <HomePage lang={lang} user={user} setPage={setPage} dark={dark} setDark={toggleDarkMode} locationEnabled={locationEnabled} setLocationEnabled={setLocationEnabled} />}
         {page === "explore" && <ExplorePage lang={lang} mapContainerRef={mapContainerRef} setPage={setPage} user={user} unreadCount={unreadCount} dark={dark} />}
+        {page === "home" && <HomePage lang={lang} user={user} setPage={setPage} dark={dark} setDark={toggleDarkMode} />}
         {page === "directChat" && <DirectChatPage setPage={setPage} lang={lang} />}
         {page === "programs" && <div>صفحة البرامج العامة</div>}
         {page === "favorites" && <FavoritesPage lang={lang} setPage={setPage} user={user} />}
@@ -1491,6 +1436,7 @@ export function TouristAppPrototype() {
         {(page === "admin-support" || page === "adminSupport") && <AdminSupportPage setPage={setPage} />}
         {page === "admin-notifications" && <AdminNotificationsPage setPage={setPage} />}
         {page === "admin-upgrade-requests" && <AdminUpgradeRequestsPage setPage={setPage} />}
+        {page === 'myTrips' && <MyTripsPage lang={lang} user={user} setPage={setPage} />}
         {page === "events" && <EventsPage lang={lang} />}
         {page === "guides" && <GuidesPage lang={lang} user={user} setPage={setPage} />}
         {page === "guidePrograms" && <GuideProgramsPage lang={lang} user={user} setPage={setPage} />}
