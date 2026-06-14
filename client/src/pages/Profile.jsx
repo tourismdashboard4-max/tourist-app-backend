@@ -1,5 +1,9 @@
 // client/src/pages/Profile.jsx
-import React, { useState, useEffect } from 'react';
+// ✅ نسخة معدلة - إضافة دعم اسم المستخدم (username) القابل للتعديل
+// ✅ عرض الاسم الكامل، اسم المستخدم، البريد الإلكتروني، رقم الجوال مع إمكانية تعديل الاسم واسم المستخدم
+// ✅ دعم المحفظة والحسابات البنكية والفواتير
+
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useWallet } from '../contexts/WalletContext';
@@ -8,10 +12,12 @@ import {
   FaEdit, FaSave, FaTimes, FaWallet, FaEye, FaEyeSlash,
   FaArrowUp, FaArrowDown, FaSpinner, FaHistory, FaCreditCard,
   FaMoneyBillWave, FaChartLine, FaShieldAlt, FaCheckCircle,
-  FaStar, FaUsers, FaBriefcase, FaTachometerAlt
+  FaStar, FaUsers, FaBriefcase, FaTachometerAlt, FaCamera, FaTrashAlt,
+  FaAt // أيقونة @ لاسم المستخدم
 } from 'react-icons/fa';
 import toast from 'react-hot-toast';
 import { motion } from 'framer-motion';
+import api from '../services/apiService';
 
 const API_BASE = 'https://tourist-app-api.onrender.com';
 
@@ -39,8 +45,11 @@ const ProfilePage = () => {
   const [showWithdrawModal, setShowWithdrawModal] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [activeTab, setActiveTab] = useState('info');
+  const [avatarPreview, setAvatarPreview] = useState(null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const fileInputRef = useRef(null);
   
-  // --- حالة خاصة بالمرشد السياحي ---
+  // حالة خاصة بالمرشد السياحي
   const [guideStats, setGuideStats] = useState({
     totalRevenue: 0,
     activePrograms: 0,
@@ -58,6 +67,7 @@ const ProfilePage = () => {
         save: 'حفظ',
         cancel: 'إلغاء',
         fullName: 'الاسم الكامل',
+        username: 'اسم المستخدم',
         email: 'البريد الإلكتروني',
         phone: 'رقم الجوال',
         address: 'العنوان',
@@ -94,7 +104,9 @@ const ProfilePage = () => {
         activePrograms: 'برامج نشطة',
         totalParticipantsShort: 'إجمالي المشاركين',
         guideStatsTitle: 'إحصائيات البرامج (مرشد)',
-        goToDashboard: 'اذهب إلى لوحة التحكم'
+        goToDashboard: 'اذهب إلى لوحة التحكم',
+        changeAvatar: 'تغيير الصورة',
+        deleteAvatar: 'حذف الصورة'
       },
       en: {
         profile: 'Profile',
@@ -102,6 +114,7 @@ const ProfilePage = () => {
         save: 'Save',
         cancel: 'Cancel',
         fullName: 'Full Name',
+        username: 'Username',
         email: 'Email',
         phone: 'Phone',
         address: 'Address',
@@ -138,7 +151,9 @@ const ProfilePage = () => {
         activePrograms: 'Active Programs',
         totalParticipantsShort: 'Total Participants',
         guideStatsTitle: 'Program Statistics (Guide)',
-        goToDashboard: 'Go to Dashboard'
+        goToDashboard: 'Go to Dashboard',
+        changeAvatar: 'Change Picture',
+        deleteAvatar: 'Delete Picture'
       }
     };
     return texts[lang][key] || key;
@@ -158,6 +173,18 @@ const ProfilePage = () => {
       fetchGuideStats();
     }
   }, [isGuide, user?.id]);
+
+  // تحديث صورة المعاينة عند تغيير user
+  useEffect(() => {
+    if (user?.avatar_url) {
+      const avatarUrl = user.avatar_url.startsWith('http')
+        ? user.avatar_url
+        : `${API_BASE}${user.avatar_url}`;
+      setAvatarPreview(avatarUrl);
+    } else {
+      setAvatarPreview(null);
+    }
+  }, [user?.avatar_url]);
 
   const fetchGuideStats = async () => {
     setGuideStats(prev => ({ ...prev, loading: true }));
@@ -191,6 +218,7 @@ const ProfilePage = () => {
     if (user) {
       setEditedUser({
         fullName: user.fullName || user.name || '',
+        username: user.username || '',
         email: user.email || '',
         phone: user.phone || '',
         address: user.address || ''
@@ -198,17 +226,157 @@ const ProfilePage = () => {
     }
   }, [user]);
 
+  // حفظ التغييرات (الاسم واسم المستخدم)
   const handleSave = async () => {
     try {
-      const updated = { ...user, ...editedUser };
-      updateUser(updated);
-      toast.success('تم تحديث الملف الشخصي');
+      const updates = {};
+      if (editedUser.fullName !== (user.fullName || user.name)) {
+        updates.fullName = editedUser.fullName;
+      }
+      if (editedUser.username !== (user.username || '')) {
+        updates.username = editedUser.username;
+      }
+      
+      if (Object.keys(updates).length === 0) {
+        setIsEditing(false);
+        return;
+      }
+
+      console.log('Saving updates:', updates);
+      const response = await api.updateUserProfile(user.id, updates);
+      if (response.data.success) {
+        const updatedUser = { ...user, ...updates };
+        updateUser(updatedUser);
+        // تحديث localStorage
+        const storedUser = localStorage.getItem('user');
+        if (storedUser) {
+          const userObj = JSON.parse(storedUser);
+          userObj.fullName = updatedUser.fullName;
+          userObj.username = updatedUser.username;
+          localStorage.setItem('user', JSON.stringify(userObj));
+        }
+        toast.success('تم تحديث البيانات بنجاح');
+        
+        // إذا كان المستخدم مرشداً، إطلاق حدث لتحديث الصفحة الرئيسية
+        if (user?.isGuide) {
+          window.dispatchEvent(new CustomEvent('guideProfileUpdated', {
+            detail: { 
+              guideId: user.id, 
+              updatedData: { 
+                fullName: updates.fullName || user.fullName,
+                username: updates.username || user.username,
+                avatar_url: user.avatar_url 
+              } 
+            }
+          }));
+        }
+      } else {
+        toast.error(response.data.message || 'فشل تحديث البيانات');
+      }
       setIsEditing(false);
     } catch (error) {
-      toast.error('فشل التحديث');
+      console.error('Save error:', error);
+      toast.error('حدث خطأ أثناء حفظ التغييرات');
     }
   };
 
+  // رفع الصورة الشخصية
+  const handleAvatarChange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error('حجم الصورة يجب أن لا يتجاوز 2 ميجابايت');
+      return;
+    }
+    if (!file.type.startsWith('image/')) {
+      toast.error('الرجاء اختيار ملف صورة صالح');
+      return;
+    }
+    setUploadingAvatar(true);
+    const formData = new FormData();
+    formData.append('avatar', file);
+    try {
+      const response = await api.uploadAvatar(user.id, formData);
+      if (response.data.success) {
+        const newAvatarUrl = response.data.avatarUrl;
+        const updatedUser = { ...user, avatar_url: newAvatarUrl };
+        updateUser(updatedUser);
+        const storedUser = localStorage.getItem('user');
+        if (storedUser) {
+          const userObj = JSON.parse(storedUser);
+          userObj.avatar_url = newAvatarUrl;
+          localStorage.setItem('user', JSON.stringify(userObj));
+        }
+        const previewUrl = URL.createObjectURL(file);
+        setAvatarPreview(previewUrl);
+        toast.success('تم تحديث الصورة الشخصية بنجاح');
+        
+        // إذا كان المستخدم مرشداً، إطلاق حدث لتحديث الصفحة الرئيسية
+        if (user?.isGuide) {
+          window.dispatchEvent(new CustomEvent('guideProfileUpdated', {
+            detail: { 
+              guideId: user.id, 
+              updatedData: { 
+                fullName: user.fullName,
+                username: user.username,
+                avatar_url: newAvatarUrl 
+              } 
+            }
+          }));
+        }
+      } else {
+        toast.error(response.data.message || 'فشل رفع الصورة');
+      }
+    } catch (error) {
+      console.error('Avatar upload error:', error);
+      toast.error('حدث خطأ أثناء رفع الصورة');
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
+  // حذف الصورة الشخصية
+  const handleDeleteAvatar = async () => {
+    if (!window.confirm('هل أنت متأكد من حذف الصورة الشخصية؟')) return;
+    setUploadingAvatar(true);
+    try {
+      const response = await api.deleteAvatar(user.id);
+      if (response.data.success) {
+        const updatedUser = { ...user, avatar_url: null };
+        updateUser(updatedUser);
+        const storedUser = localStorage.getItem('user');
+        if (storedUser) {
+          const userObj = JSON.parse(storedUser);
+          userObj.avatar_url = null;
+          localStorage.setItem('user', JSON.stringify(userObj));
+        }
+        setAvatarPreview(null);
+        toast.success('تم حذف الصورة الشخصية');
+        
+        if (user?.isGuide) {
+          window.dispatchEvent(new CustomEvent('guideProfileUpdated', {
+            detail: { 
+              guideId: user.id, 
+              updatedData: { 
+                fullName: user.fullName,
+                username: user.username,
+                avatar_url: null 
+              } 
+            }
+          }));
+        }
+      } else {
+        toast.error(response.data.message || 'فشل حذف الصورة');
+      }
+    } catch (error) {
+      console.error('Avatar delete error:', error);
+      toast.error('حدث خطأ أثناء حذف الصورة');
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
+  // دوال المحفظة
   const handleDeposit = async () => {
     const amount = parseFloat(depositAmount);
     if (isNaN(amount) || amount <= 0) {
@@ -255,6 +423,9 @@ const ProfilePage = () => {
     });
   };
 
+  const displayName = user?.fullName?.trim() || (lang === 'ar' ? 'مستخدم' : 'User');
+  const displayUsername = user?.username?.trim();
+
   if (!user) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-teal-900 via-cyan-900 to-emerald-900 flex items-center justify-center">
@@ -270,7 +441,7 @@ const ProfilePage = () => {
         <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
           <div>
             <h1 className="text-2xl font-bold text-white">{t('profile')}</h1>
-            <p className="text-white/60 text-sm">مرحباً {user.fullName || user.name}</p>
+            <p className="text-white/60 text-sm">{lang === 'ar' ? 'مرحباً' : 'Welcome'} {displayName}</p>
           </div>
           <div className="flex gap-2">
             {!isEditing ? (
@@ -385,11 +556,6 @@ const ProfilePage = () => {
                 <FaTachometerAlt /> {t('goToDashboard')}
               </button>
             </div>
-            {guideStats.loading && (
-              <div className="flex justify-center mt-2">
-                <FaSpinner className="animate-spin text-white/80" />
-              </div>
-            )}
           </motion.div>
         )}
 
@@ -417,9 +583,55 @@ const ProfilePage = () => {
 
         {/* المحتوى حسب التبويب */}
         <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-6 border border-white/20">
-          {/* تبويب المعلومات الشخصية */}
+          {/* تبويب المعلومات الشخصية - يظهر الاسم، اسم المستخدم، البريد، الجوال */}
           {activeTab === 'info' && (
             <div className="space-y-4">
+              {/* صورة الملف الشخصي */}
+              <div className="flex flex-col items-center mb-6">
+                <div className="relative group">
+                  <div className="w-28 h-28 rounded-full bg-gradient-to-br from-teal-400 to-emerald-500 flex items-center justify-center text-white text-4xl font-bold overflow-hidden shadow-xl">
+                    {avatarPreview ? (
+                      <img src={avatarPreview} alt={displayName} className="w-full h-full object-cover" />
+                    ) : (
+                      displayName?.charAt(0).toUpperCase() || 'U'
+                    )}
+                  </div>
+                  <div className="absolute bottom-0 right-0 flex gap-1">
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className="bg-teal-600 hover:bg-teal-700 text-white p-2 rounded-full shadow-lg transition"
+                      disabled={uploadingAvatar}
+                      title={t('changeAvatar')}
+                    >
+                      <FaCamera size={14} />
+                    </button>
+                    {avatarPreview && (
+                      <button
+                        onClick={handleDeleteAvatar}
+                        className="bg-red-600 hover:bg-red-700 text-white p-2 rounded-full shadow-lg transition"
+                        disabled={uploadingAvatar}
+                        title={t('deleteAvatar')}
+                      >
+                        <FaTrashAlt size={14} />
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    className="hidden"
+                    accept="image/jpeg,image/png,image/jpg,image/gif,image/webp"
+                    onChange={handleAvatarChange}
+                  />
+                </div>
+                {uploadingAvatar && (
+                  <div className="mt-2 flex items-center gap-1 text-white/70 text-sm">
+                    <FaSpinner className="animate-spin" /> جاري رفع الصورة...
+                  </div>
+                )}
+              </div>
+
+              {/* الحقول: الاسم، اسم المستخدم، البريد، الجوال، العنوان، تاريخ الانضمام */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
                   <label className="block text-white/70 text-sm mb-1">{t('fullName')}</label>
@@ -431,7 +643,23 @@ const ProfilePage = () => {
                       className="w-full px-4 py-2 bg-white/10 border border-white/20 rounded-lg text-white focus:outline-none focus:border-teal-400"
                     />
                   ) : (
-                    <p className="text-white text-lg">{user.fullName || user.name || '—'}</p>
+                    <p className="text-white text-lg">{displayName}</p>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-white/70 text-sm mb-1 flex items-center gap-1">
+                    <FaAt size={12} /> {t('username')}
+                  </label>
+                  {isEditing ? (
+                    <input
+                      type="text"
+                      value={editedUser.username}
+                      onChange={(e) => setEditedUser({ ...editedUser, username: e.target.value })}
+                      className="w-full px-4 py-2 bg-white/10 border border-white/20 rounded-lg text-white focus:outline-none focus:border-teal-400"
+                      placeholder={lang === 'ar' ? 'اختياري' : 'optional'}
+                    />
+                  ) : (
+                    <p className="text-white">{displayUsername || (lang === 'ar' ? '—' : '—')}</p>
                   )}
                 </div>
                 <div>
