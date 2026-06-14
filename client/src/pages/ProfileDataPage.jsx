@@ -1,8 +1,7 @@
 // client/src/pages/ProfileDataPage.jsx
-// ✅ النسخة النهائية الكاملة - جميع النوافذ المنبثقة مكتوبة بالكامل، مع إضافة تحديث المرشدين
-// ✅ 3 حقول فقط في وضع التعديل (الاسم الكامل، البريد الإلكتروني للقراءة فقط، رقم الجوال مع التحقق)
-// ✅ عرض أيقونة اسم المستخدم أسفل زر التعديل وفي بطاقة الملف الشخصي
-// ✅ دعم كامل للمحفظة والحسابات البنكية والإيداع والسحب
+// ✅ Apple Pay + Samsung Wallet + بطاقة التاجر
+// ✅ إضافة حسابات بنكية لجميع المستخدمين للسحب
+// ✅ دعم كامل للمستخدم العادي والمرشد
 
 import React, { useState, useEffect } from 'react';
 import {
@@ -17,7 +16,17 @@ import api from '../services/apiService';
 
 const API_BASE_URL = 'https://tourist-app-api.onrender.com';
 
-// الحسابات الرئيسية الثابتة للتطبيق
+const isApplePayAvailable = () => window.ApplePaySession && ApplePaySession.canMakePayments();
+
+// التحقق من توفر Samsung Wallet
+const isSamsungWalletAvailable = () => {
+  return typeof window !== 'undefined' && 
+    (window.SamsungPay !== undefined || 
+     window.SamsungWallet !== undefined ||
+     (window.navigator && window.navigator.samsungWallet));
+};
+
+// حسابات التاجر الثابتة
 const DEPOSIT_CARD = {
   id: 'merchant_visa',
   number: '408859005066386',
@@ -34,8 +43,6 @@ const WITHDRAW_CARD = {
   isMerchant: true,
   label: { ar: 'حساب التاجر (مدى)', en: 'Merchant Mada Account' }
 };
-
-const isApplePayAvailable = () => window.ApplePaySession && ApplePaySession.canMakePayments();
 
 function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
   const { user: authUser, updateUser } = useAuth();
@@ -64,32 +71,31 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
   const [transactions, setTransactions] = useState([]);
   const [loadingTransactions, setLoadingTransactions] = useState(false);
   
-  // حالة الحسابات البنكية للمستخدم
+  // الحسابات البنكية (لجميع المستخدمين)
   const [bankAccounts, setBankAccounts] = useState([]);
   const [showAddBankAccount, setShowAddBankAccount] = useState(false);
   const [newBankAccount, setNewBankAccount] = useState({ accountName: '', accountNumber: '', bankName: '' });
   const [addingBankAccount, setAddingBankAccount] = useState(false);
-  const [selectedDepositAccount, setSelectedDepositAccount] = useState(null);
   const [selectedWithdrawAccount, setSelectedWithdrawAccount] = useState(null);
 
-  // تحديد ما إذا كان هذا الملف الشخصي للمستخدم الحالي أم لآخر
   const currentLoggedInUser = authUser || (() => {
     const stored = localStorage.getItem('user');
     return stored ? JSON.parse(stored) : null;
   })();
   const isOwnProfile = currentLoggedInUser?.id === userData?.id;
+  const isGuide = userData?.type === 'guide' || userData?.role === 'guide' || userData?.isGuide === true;
 
-  // تحميل الحسابات البنكية (للمستخدم نفسه فقط)
+  // تحميل الحسابات البنكية
   useEffect(() => {
     const fetchBankAccounts = async () => {
       if (!userData?.id || !isOwnProfile) return;
       try {
-        const response = await api.getBankAccounts(userData.id);
-        if (response.success && Array.isArray(response.accounts)) {
-          setBankAccounts(response.accounts);
-          if (response.accounts.length > 0) {
-            if (!selectedDepositAccount) setSelectedDepositAccount(response.accounts[0]);
-            if (!selectedWithdrawAccount) setSelectedWithdrawAccount(response.accounts[0]);
+        const stored = localStorage.getItem(`user_bank_accounts_${userData.id}`);
+        if (stored) {
+          const accounts = JSON.parse(stored);
+          setBankAccounts(accounts);
+          if (accounts.length > 0 && !selectedWithdrawAccount) {
+            setSelectedWithdrawAccount(accounts[0]);
           }
         } else {
           setBankAccounts([]);
@@ -102,7 +108,17 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
     fetchBankAccounts();
   }, [userData?.id, isOwnProfile]);
 
-  // جلب أحدث بيانات المستخدم من الخادم
+  useEffect(() => {
+    if (userData?.id && isOwnProfile) {
+      if (bankAccounts.length) {
+        localStorage.setItem(`user_bank_accounts_${userData.id}`, JSON.stringify(bankAccounts));
+      } else {
+        localStorage.removeItem(`user_bank_accounts_${userData.id}`);
+      }
+    }
+  }, [bankAccounts, userData?.id, isOwnProfile]);
+
+  // جلب أحدث بيانات المستخدم
   const fetchFreshUserData = async () => {
     if (!userData?.id) return;
     try {
@@ -135,9 +151,7 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
   };
 
   useEffect(() => {
-    if (userData?.id) {
-      fetchFreshUserData();
-    }
+    if (userData?.id) fetchFreshUserData();
   }, [userData?.id]);
 
   // تحميل الصورة الشخصية
@@ -152,7 +166,7 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
     }
   }, [userData?.avatar_url]);
 
-  // دوال الملف الشخصي (للمستخدم نفسه فقط)
+  // دوال الملف الشخصي (اختصار - كما هي)
   const handleEditToggle = () => { 
     if (!isOwnProfile) return;
     setIsEditing(!isEditing); 
@@ -225,9 +239,7 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
           userObj.fullName = editData.fullName;
           localStorage.setItem('user', JSON.stringify(userObj));
         }
-        
-        // ✅ تحديث بيانات المرشد في الصفحة الرئيسية إذا كان المستخدم مرشداً
-        if (userData?.isGuide) {
+        if (isGuide) {
           window.dispatchEvent(new CustomEvent('guideProfileUpdated', {
             detail: { 
               guideId: userData.id, 
@@ -238,7 +250,6 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
             }
           }));
         }
-        
         toast.success(lang === 'ar' ? 'تم تحديث الاسم بنجاح' : 'Name updated successfully');
         setIsEditing(false);
       } else {
@@ -288,9 +299,7 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
           userObj.avatar_url = data.avatarUrl;
           localStorage.setItem('user', JSON.stringify(userObj));
         }
-        
-        // ✅ تحديث صورة المرشد في الصفحة الرئيسية
-        if (userData?.isGuide) {
+        if (isGuide) {
           window.dispatchEvent(new CustomEvent('guideProfileUpdated', {
             detail: { 
               guideId: userData.id, 
@@ -301,7 +310,6 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
             }
           }));
         }
-        
         toast.success(lang === 'ar' ? 'تم تحديث الصورة الشخصية بنجاح' : 'Profile picture updated successfully');
       } else {
         toast.error(data.message || (lang === 'ar' ? 'فشل رفع الصورة' : 'Failed to upload image'));
@@ -337,9 +345,7 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
           userObj.avatar_url = null;
           localStorage.setItem('user', JSON.stringify(userObj));
         }
-        
-        // ✅ تحديث صورة المرشد في الصفحة الرئيسية (حذف الصورة)
-        if (userData?.isGuide) {
+        if (isGuide) {
           window.dispatchEvent(new CustomEvent('guideProfileUpdated', {
             detail: { 
               guideId: userData.id, 
@@ -350,7 +356,6 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
             }
           }));
         }
-        
         toast.success(lang === 'ar' ? 'تم حذف الصورة الشخصية' : 'Profile picture deleted');
       } else {
         toast.error(data.message || (lang === 'ar' ? 'فشل حذف الصورة' : 'Failed to delete image'));
@@ -363,56 +368,7 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
     }
   };
 
-  // ========== دوال الحسابات البنكية والإيداع والسحب (للمستخدم نفسه فقط) ==========
-  const handleAddBankAccount = async () => {
-    if (!isOwnProfile) return;
-    if (!newBankAccount.accountName.trim() || !newBankAccount.accountNumber.trim() || !newBankAccount.bankName.trim()) {
-      toast.error(lang === 'ar' ? 'الرجاء ملء جميع الحقول' : 'Please fill all fields');
-      return;
-    }
-    setAddingBankAccount(true);
-    try {
-      const response = await api.addBankAccount(userData.id, newBankAccount);
-      if (response.success) {
-        const addedAccount = response.account;
-        setBankAccounts(prev => [...prev, addedAccount]);
-        if (bankAccounts.length === 0) {
-          setSelectedDepositAccount(addedAccount);
-          setSelectedWithdrawAccount(addedAccount);
-        }
-        toast.success(lang === 'ar' ? 'تم إضافة الحساب البنكي بنجاح' : 'Bank account added successfully');
-        setShowAddBankAccount(false);
-        setNewBankAccount({ accountName: '', accountNumber: '', bankName: '' });
-      } else {
-        toast.error(response.message || (lang === 'ar' ? 'فشل إضافة الحساب' : 'Failed to add account'));
-      }
-    } catch (error) {
-      console.error(error);
-      toast.error(lang === 'ar' ? 'خطأ في الاتصال' : 'Connection error');
-    } finally {
-      setAddingBankAccount(false);
-    }
-  };
-
-  const handleDeleteBankAccount = async (accountId) => {
-    if (!isOwnProfile) return;
-    if (!window.confirm(lang === 'ar' ? 'هل أنت متأكد من حذف هذا الحساب؟' : 'Delete this account?')) return;
-    try {
-      const response = await api.deleteBankAccount(userData.id, accountId);
-      if (response.success) {
-        setBankAccounts(prev => prev.filter(acc => acc.id !== accountId));
-        if (selectedDepositAccount?.id === accountId) setSelectedDepositAccount(bankAccounts.find(acc => acc.id !== accountId) || null);
-        if (selectedWithdrawAccount?.id === accountId) setSelectedWithdrawAccount(bankAccounts.find(acc => acc.id !== accountId) || null);
-        toast.success(lang === 'ar' ? 'تم حذف الحساب' : 'Account deleted');
-      } else {
-        toast.error(response.message || (lang === 'ar' ? 'فشل الحذف' : 'Deletion failed'));
-      }
-    } catch (error) {
-      console.error(error);
-      toast.error(lang === 'ar' ? 'خطأ في الاتصال' : 'Connection error');
-    }
-  };
-
+  // ========== دوال الإيداع والسحب ==========
   const handleMerchantDeposit = async (amount) => {
     if (!isOwnProfile) return;
     setAddBalanceLoading(true);
@@ -439,43 +395,13 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
     }
   };
 
-  const handleBankDeposit = async (amount, account) => {
-    if (!isOwnProfile) return;
-    setAddBalanceLoading(true);
-    try {
-      const response = await api.depositWithAccount(userData.id, amount, account);
-      if (response.success) {
-        const newBalance = response.newBalance;
-        setBalance(newBalance);
-        const updatedUser = { ...userData, balance: newBalance };
-        setUserData(updatedUser);
-        if (updateUser) updateUser(updatedUser);
-        if (onUpdateUser) onUpdateUser(updatedUser);
-        toast.success(lang === 'ar' ? `✅ تم إضافة ${amount} ريال بنجاح. الرصيد الحالي: ${newBalance}` : `✅ Added ${amount} SAR. New balance: ${newBalance}`);
-        setShowAddBalance(false);
-        setAddAmount('');
-      } else {
-        toast.error(response.message || (lang === 'ar' ? 'فشل الإضافة' : 'Failed to add funds'));
-      }
-    } catch (error) {
-      console.error(error);
-      toast.error(lang === 'ar' ? 'خطأ في الاتصال' : 'Connection error');
-    } finally {
-      setAddBalanceLoading(false);
-    }
-  };
-
-  const handleApplePayDeposit = async () => {
+  const handleApplePayDeposit = async (amount) => {
     if (!isOwnProfile) return;
     if (!isApplePayAvailable()) {
       toast.error(lang === 'ar' ? 'Apple Pay غير متوفر على هذا الجهاز' : 'Apple Pay not available');
       return;
     }
-    const amount = parseFloat(addAmount);
-    if (isNaN(amount) || amount <= 0) {
-      toast.error(lang === 'ar' ? 'المبلغ غير صالح' : 'Invalid amount');
-      return;
-    }
+    setAddBalanceLoading(true);
     try {
       const token = localStorage.getItem('token');
       const sessionRes = await fetch(`${API_BASE_URL}/api/payments/apple-pay/session`, {
@@ -543,23 +469,55 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
     } catch (error) {
       console.error(error);
       toast.error(lang === 'ar' ? 'تعذر بدء جلسة Apple Pay' : 'Cannot start Apple Pay session');
+    } finally {
+      setAddBalanceLoading(false);
     }
   };
 
-  const handleWithdraw = async (amount) => {
+  // إضافة دالة Samsung Wallet (محاكاة مبدئية)
+  const handleSamsungWalletDeposit = async (amount) => {
     if (!isOwnProfile) return;
-    if (!selectedWithdrawAccount) {
-      toast.error(lang === 'ar' ? 'الرجاء اختيار حساب للسحب' : 'Please select a withdrawal account');
+    if (!isSamsungWalletAvailable()) {
+      toast.error(lang === 'ar' ? 'Samsung Wallet غير متوفر على هذا الجهاز' : 'Samsung Wallet not available');
       return;
     }
+    setAddBalanceLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      // هنا يجب استخدام API حقيقي لـ Samsung Wallet
+      // كمثال، سنستخدم نفس endpoint مؤقتاً
+      const response = await fetch(`${API_BASE_URL}/api/payments/samsung-pay/deposit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ amount, userId: userData.id })
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        const newBalance = data.newBalance;
+        setBalance(newBalance);
+        const updatedUser = { ...userData, balance: newBalance };
+        setUserData(updatedUser);
+        if (updateUser) updateUser(updatedUser);
+        if (onUpdateUser) onUpdateUser(updatedUser);
+        toast.success(lang === 'ar' ? `✅ تم إضافة ${amount} ريال عبر Samsung Wallet. الرصيد الحالي: ${newBalance}` : `✅ Added ${amount} SAR via Samsung Wallet. New balance: ${newBalance}`);
+        setShowAddBalance(false);
+        setAddAmount('');
+      } else {
+        toast.error(data.message || (lang === 'ar' ? 'فشلت عملية الدفع عبر Samsung Wallet' : 'Samsung Wallet payment failed'));
+      }
+    } catch (error) {
+      console.error(error);
+      toast.error(lang === 'ar' ? 'حدث خطأ أثناء الدفع عبر Samsung Wallet' : 'Error with Samsung Wallet payment');
+    } finally {
+      setAddBalanceLoading(false);
+    }
+  };
+
+  const handleWithdrawToMerchant = async (amount) => {
+    if (!isOwnProfile) return;
     setWithdrawLoading(true);
     try {
-      let response;
-      if (selectedWithdrawAccount.isMerchant) {
-        response = await api.withdrawToCard(userData.id, amount, selectedWithdrawAccount.number, selectedWithdrawAccount.holder);
-      } else {
-        response = await api.withdrawToAccount(userData.id, amount, selectedWithdrawAccount);
-      }
+      const response = await api.withdrawToCard(userData.id, amount, WITHDRAW_CARD.number, WITHDRAW_CARD.holder);
       if (response.success) {
         const newBalance = response.newBalance;
         setBalance(newBalance);
@@ -579,6 +537,67 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
     } finally {
       setWithdrawLoading(false);
     }
+  };
+
+  const handleWithdrawToBankAccount = async (amount, account) => {
+    if (!isOwnProfile) return;
+    if (!account) {
+      toast.error(lang === 'ar' ? 'الرجاء اختيار حساب بنكي للسحب' : 'Please select a bank account');
+      return;
+    }
+    setWithdrawLoading(true);
+    try {
+      const response = await api.withdrawToAccount(userData.id, amount, account);
+      if (response.success) {
+        const newBalance = response.newBalance;
+        setBalance(newBalance);
+        const updatedUser = { ...userData, balance: newBalance };
+        setUserData(updatedUser);
+        if (updateUser) updateUser(updatedUser);
+        if (onUpdateUser) onUpdateUser(updatedUser);
+        toast.success(lang === 'ar' ? `✅ تم سحب ${amount} ريال إلى حسابك البنكي بنجاح. الرصيد المتبقي: ${newBalance}` : `✅ Withdrew ${amount} SAR to your bank account. Remaining: ${newBalance}`);
+        setShowWithdraw(false);
+        setWithdrawAmount('');
+      } else {
+        toast.error(response.message || (lang === 'ar' ? 'فشل السحب' : 'Withdrawal failed'));
+      }
+    } catch (error) {
+      console.error(error);
+      toast.error(lang === 'ar' ? 'خطأ في الاتصال' : 'Connection error');
+    } finally {
+      setWithdrawLoading(false);
+    }
+  };
+
+  // دوال الحسابات البنكية
+  const handleAddBankAccount = async () => {
+    if (!isOwnProfile) return;
+    if (!newBankAccount.accountName.trim() || !newBankAccount.accountNumber.trim() || !newBankAccount.bankName.trim()) {
+      toast.error(lang === 'ar' ? 'الرجاء ملء جميع الحقول' : 'Please fill all fields');
+      return;
+    }
+    setAddingBankAccount(true);
+    const newAccount = {
+      id: Date.now().toString(),
+      ...newBankAccount,
+      accountNumber: newBankAccount.accountNumber.trim()
+    };
+    setBankAccounts(prev => [...prev, newAccount]);
+    if (bankAccounts.length === 0) setSelectedWithdrawAccount(newAccount);
+    toast.success(lang === 'ar' ? 'تم إضافة الحساب البنكي بنجاح' : 'Bank account added successfully');
+    setShowAddBankAccount(false);
+    setNewBankAccount({ accountName: '', accountNumber: '', bankName: '' });
+    setAddingBankAccount(false);
+  };
+
+  const handleDeleteBankAccount = async (accountId) => {
+    if (!isOwnProfile) return;
+    if (!window.confirm(lang === 'ar' ? 'هل أنت متأكد من حذف هذا الحساب؟' : 'Delete this account?')) return;
+    setBankAccounts(prev => prev.filter(acc => acc.id !== accountId));
+    if (selectedWithdrawAccount?.id === accountId) {
+      setSelectedWithdrawAccount(bankAccounts.find(acc => acc.id !== accountId) || null);
+    }
+    toast.success(lang === 'ar' ? 'تم حذف الحساب' : 'Account deleted');
   };
 
   const fetchTransactions = async () => {
@@ -617,7 +636,7 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
     }
   };
 
-  const openConfirmModal = (action, amount, account = null) => {
+  const openConfirmModal = (action, amount, method = null) => {
     if (amount <= 0 || isNaN(amount)) {
       toast.error(lang === 'ar' ? 'المبلغ يجب أن يكون أكبر من صفر' : 'Amount must be greater than zero');
       return;
@@ -628,25 +647,34 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
     }
     setConfirmAction(action);
     setConfirmAmount(amount);
-    if (action === 'deposit' && account) window.tempDepositAccount = account;
-    if (action === 'withdraw' && account) window.tempWithdrawAccount = account;
+    if (action === 'deposit') window.tempDepositMethod = method;
+    if (action === 'withdraw') window.tempWithdrawMethod = method;
     setShowConfirmModal(true);
   };
 
   const executeTransaction = async () => {
     setShowConfirmModal(false);
     if (confirmAction === 'deposit') {
-      if (window.tempDepositAccount) {
-        if (window.tempDepositAccount.isMerchant) await handleMerchantDeposit(confirmAmount);
-        else await handleBankDeposit(confirmAmount, window.tempDepositAccount);
-        window.tempDepositAccount = null;
-      } else await handleMerchantDeposit(confirmAmount);
+      if (window.tempDepositMethod === 'applepay') {
+        await handleApplePayDeposit(confirmAmount);
+      } else if (window.tempDepositMethod === 'samsungwallet') {
+        await handleSamsungWalletDeposit(confirmAmount);
+      } else {
+        await handleMerchantDeposit(confirmAmount);
+      }
+      window.tempDepositMethod = null;
     } else if (confirmAction === 'withdraw') {
-      if (window.tempWithdrawAccount) {
-        setSelectedWithdrawAccount(window.tempWithdrawAccount);
-        await handleWithdraw(confirmAmount);
+      if (window.tempWithdrawMethod === 'merchant') {
+        await handleWithdrawToMerchant(confirmAmount);
+      } else if (window.tempWithdrawMethod === 'bank_specific' && window.tempWithdrawAccount) {
+        await handleWithdrawToBankAccount(confirmAmount, window.tempWithdrawAccount);
         window.tempWithdrawAccount = null;
-      } else await handleWithdraw(confirmAmount);
+      } else if (selectedWithdrawAccount) {
+        await handleWithdrawToBankAccount(confirmAmount, selectedWithdrawAccount);
+      } else {
+        await handleWithdrawToMerchant(confirmAmount);
+      }
+      window.tempWithdrawMethod = null;
     }
     setConfirmAction(null);
     setConfirmAmount(0);
@@ -681,7 +709,7 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
       </div>
 
       <div className="p-4 space-y-4">
-        {/* Profile Card */}
+        {/* Profile Card (مختصر) */}
         <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg overflow-hidden border border-gray-100 dark:border-gray-700">
           <div className="relative h-24 bg-gradient-to-r from-green-500 to-emerald-600"></div>
           <div className="relative px-4 pb-5">
@@ -735,16 +763,11 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
                   </button>
                   {isEditing && (
                     <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-700/50 rounded-xl space-y-3">
-                      {/* الحقل 1: الاسم الكامل */}
                       <input type="text" name="fullName" value={editData.fullName} onChange={handleInputChange} placeholder={lang === 'ar' ? 'الاسم الكامل' : 'Full Name'} className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-green-500 outline-none dark:bg-gray-800" />
-                      
-                      {/* الحقل 2: البريد الإلكتروني (للقراءة فقط) */}
                       <div className="relative">
                         <input type="email" value={userData.email || ''} disabled className="w-full p-3 border rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed" />
                         <span className="absolute left-3 top-3 text-gray-400"><Mail size={18} /></span>
                       </div>
-                      
-                      {/* الحقل 3: رقم الجوال مع زر تحقق */}
                       <div className="space-y-2">
                         <div className="flex gap-2">
                           <input type="tel" name="phone" value={editData.phone} onChange={handleInputChange} placeholder={lang === 'ar' ? 'رقم الجوال' : 'Phone'} className="flex-1 p-3 border rounded-lg focus:ring-2 focus:ring-green-500 outline-none dark:bg-gray-800" />
@@ -771,22 +794,16 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
                           </div>
                         )}
                       </div>
-                      
                       <button onClick={handleSaveProfile} disabled={saveLoading} className="w-full py-2 bg-green-600 text-white rounded-lg">
                         {saveLoading ? (lang === 'ar' ? 'جاري الحفظ...' : 'Saving...') : (lang === 'ar' ? 'حفظ التغييرات' : 'Save Changes')}
                       </button>
                     </div>
                   )}
                 </div>
-                {/* عرض اسم المستخدم أسفل زر التعديل */}
                 <div className="mt-4 pt-2 border-t border-gray-100 dark:border-gray-700 text-center">
                   <div className="flex items-center justify-center gap-1 text-xs text-gray-500 dark:text-gray-400">
                     <AtSign size={12} />
-                    {displayUsername ? (
-                      <span>{displayUsername}</span>
-                    ) : (
-                      <span>{lang === 'ar' ? 'لم تتم إضافة اسم مستخدم' : 'No username added'}</span>
-                    )}
+                    {displayUsername ? <span>{displayUsername}</span> : <span>{lang === 'ar' ? 'لم تتم إضافة اسم مستخدم' : 'No username added'}</span>}
                   </div>
                 </div>
               </>
@@ -794,7 +811,6 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
           </div>
         </div>
 
-        {/* إذا كان الملف الشخصي للمستخدم نفسه، نعرض كامل البيانات (المحفظة، الحسابات البنكية، الفواتير) */}
         {isOwnProfile ? (
           <>
             {/* Contact Info */}
@@ -831,11 +847,11 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
                   <div className="flex gap-3">
                     <button onClick={() => setShowAddBalance(true)} className="flex-1 py-2.5 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-xl font-medium hover:bg-gray-200 dark:hover:bg-gray-600 transition transform hover:scale-[1.02] active:scale-98 flex items-center justify-center gap-2 shadow-sm">
                       <ArrowDownCircle size={18} className="text-green-600" />
-                      <span>{lang === 'ar' ? 'إضافة أموال' : 'Add Funds'}</span>
+                      <span>{lang === 'ar' ? 'إضافة رصيد' : 'Add Funds'}</span>
                     </button>
                     <button onClick={() => setShowWithdraw(true)} className="flex-1 py-2.5 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-xl font-medium hover:bg-gray-200 dark:hover:bg-gray-600 transition transform hover:scale-[1.02] active:scale-98 flex items-center justify-center gap-2 shadow-sm">
                       <ArrowUpCircle size={18} className="text-red-500" />
-                      <span>{lang === 'ar' ? 'سحب لحسابي الجاري' : 'Withdraw'}</span>
+                      <span>{lang === 'ar' ? 'سحب الرصيد' : 'Withdraw'}</span>
                     </button>
                   </div>
                 </div>
@@ -849,7 +865,7 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
                     <span className="font-medium">{lang === 'ar' ? 'حساباتي البنكية' : 'My Bank Accounts'}</span>
                   </div>
                   <button onClick={() => setShowAddBankAccount(true)} className="text-sm bg-green-600 text-white px-3 py-1 rounded-lg hover:bg-green-700 transition flex items-center gap-1">
-                    <Plus size={14} /> {lang === 'ar' ? 'إضافة حساب' : 'Add Account'}
+                    <Plus size={14} /> {lang === 'ar' ? 'إضافة حساب بنكي' : 'Add Account'}
                   </button>
                 </div>
                 {bankAccounts.length === 0 ? (
@@ -865,9 +881,6 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
                           <p className="text-sm text-gray-500">{account.bankName} - {account.accountNumber.slice(-4)}</p>
                         </div>
                         <div className="flex gap-2">
-                          <button onClick={() => setSelectedDepositAccount(account)} className={`px-2 py-1 text-xs rounded ${selectedDepositAccount?.id === account.id ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
-                            {lang === 'ar' ? 'إيداع' : 'Deposit'}
-                          </button>
                           <button onClick={() => setSelectedWithdrawAccount(account)} className={`px-2 py-1 text-xs rounded ${selectedWithdrawAccount?.id === account.id ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'}`}>
                             {lang === 'ar' ? 'سحب' : 'Withdraw'}
                           </button>
@@ -877,11 +890,6 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
                         </div>
                       </div>
                     ))}
-                  </div>
-                )}
-                {selectedDepositAccount && (
-                  <div className="p-2 text-xs text-green-600 text-center border-t">
-                    {lang === 'ar' ? `حساب الإيداع المختار: ${selectedDepositAccount.accountName}` : `Deposit account: ${selectedDepositAccount.accountName}`}
                   </div>
                 )}
                 {selectedWithdrawAccount && (
@@ -909,8 +917,6 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
               </div>
             </div>
 
-            {/* النوافذ المنبثقة (Popups) - جميعها مكتوبة بالكامل */}
-            
             {/* Add Bank Account Popup */}
             {showAddBankAccount && (
               <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowAddBankAccount(false)}>
@@ -929,19 +935,19 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
               </div>
             )}
 
-            {/* Deposit Popup */}
+            {/* Deposit Popup - مع Apple Pay و Samsung Wallet */}
             {showAddBalance && (
               <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowAddBalance(false)}>
                 <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-sm w-full p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
                   <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-xl font-bold flex items-center gap-2"><ArrowDownCircle className="text-green-600" /> {lang === 'ar' ? 'إضافة أموال' : 'Add Funds'}</h3>
+                    <h3 className="text-xl font-bold flex items-center gap-2"><ArrowDownCircle className="text-green-600" /> {lang === 'ar' ? 'إضافة رصيد' : 'Add Funds'}</h3>
                     <button onClick={() => setShowAddBalance(false)} className="p-1 rounded-full hover:bg-gray-100"><X size={20} /></button>
                   </div>
                   <input type="number" placeholder={lang === 'ar' ? 'المبلغ (ريال)' : 'Amount (SAR)'} value={addAmount} onChange={(e) => setAddAmount(e.target.value)} className="w-full p-3 border rounded-xl mb-4 focus:ring-2 focus:ring-green-500 outline-none" min="1" step="1" />
                   <div className="space-y-3">
                     {isApplePayAvailable() && (
                       <div className="border rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-700 transition">
-                        <button onClick={handleApplePayDeposit} className="w-full flex items-center justify-between">
+                        <button onClick={() => { const amount = parseFloat(addAmount); if (!isNaN(amount) && amount > 0) openConfirmModal('deposit', amount, 'applepay'); else toast.error(lang === 'ar' ? 'المبلغ غير صالح' : 'Invalid amount'); }} disabled={addBalanceLoading} className="w-full flex items-center justify-between">
                           <div className="flex items-center gap-3">
                             <Smartphone size={22} className="text-black dark:text-white" />
                             <div className="text-right">
@@ -953,8 +959,22 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
                         </button>
                       </div>
                     )}
+                    {isSamsungWalletAvailable() && (
+                      <div className="border rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-700 transition">
+                        <button onClick={() => { const amount = parseFloat(addAmount); if (!isNaN(amount) && amount > 0) openConfirmModal('deposit', amount, 'samsungwallet'); else toast.error(lang === 'ar' ? 'المبلغ غير صالح' : 'Invalid amount'); }} disabled={addBalanceLoading} className="w-full flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <Smartphone size={22} className="text-blue-600 dark:text-blue-400" />
+                            <div className="text-right">
+                              <p className="font-semibold">Samsung Wallet</p>
+                              <p className="text-xs text-gray-500">{lang === 'ar' ? 'دفع سريع وآمن' : 'Fast & secure'}</p>
+                            </div>
+                          </div>
+                          <span className="text-gray-400">→</span>
+                        </button>
+                      </div>
+                    )}
                     <div className="border rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-700 transition">
-                      <button onClick={() => { const amount = parseFloat(addAmount); if (!isNaN(amount) && amount > 0) openConfirmModal('deposit', amount, DEPOSIT_CARD); else toast.error(lang === 'ar' ? 'المبلغ غير صالح' : 'Invalid amount'); }} disabled={addBalanceLoading} className="w-full flex items-center justify-between">
+                      <button onClick={() => { const amount = parseFloat(addAmount); if (!isNaN(amount) && amount > 0) openConfirmModal('deposit', amount, 'merchant'); else toast.error(lang === 'ar' ? 'المبلغ غير صالح' : 'Invalid amount'); }} disabled={addBalanceLoading} className="w-full flex items-center justify-between">
                         <div className="flex items-center gap-3">
                           <CreditCard size={22} className="text-green-600" />
                           <div className="text-right">
@@ -962,22 +982,9 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
                             <p className="text-xs text-gray-500">{lang === 'ar' ? 'الدفع باستخدام بطاقة التاجر الرئيسية' : 'Pay using merchant card'}</p>
                           </div>
                         </div>
-                        {addBalanceLoading ? <div className="animate-spin h-5 w-5 border-2 border-green-600 border-t-transparent rounded-full"></div> : <span className="text-green-600">→</span>}
+                        <span className="text-green-600">→</span>
                       </button>
                     </div>
-                    {bankAccounts.length > 0 && (
-                      <div className="border rounded-xl p-3">
-                        <p className="text-sm font-medium mb-2">{lang === 'ar' ? 'اختر حسابك البنكي للإيداع' : 'Select your bank account for deposit'}</p>
-                        <div className="space-y-2">
-                          {bankAccounts.map(acc => (
-                            <button key={acc.id} onClick={() => { const amount = parseFloat(addAmount); if (!isNaN(amount) && amount > 0) openConfirmModal('deposit', amount, acc); else toast.error(lang === 'ar' ? 'المبلغ غير صالح' : 'Invalid amount'); }} className="w-full text-right p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition flex justify-between items-center">
-                              <span>{acc.accountName}</span>
-                              <span className={`text-xs ${selectedDepositAccount?.id === acc.id ? 'text-green-600' : 'text-gray-400'}`}>{selectedDepositAccount?.id === acc.id ? (lang === 'ar' ? 'محدد' : 'Selected') : ''}</span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
                   </div>
                 </div>
               </div>
@@ -988,32 +995,32 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
               <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowWithdraw(false)}>
                 <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-sm w-full p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
                   <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-xl font-bold flex items-center gap-2"><ArrowUpCircle className="text-red-600" /> {lang === 'ar' ? 'سحب أموال' : 'Withdraw Funds'}</h3>
+                    <h3 className="text-xl font-bold flex items-center gap-2"><ArrowUpCircle className="text-red-600" /> {lang === 'ar' ? 'سحب رصيد' : 'Withdraw Funds'}</h3>
                     <button onClick={() => setShowWithdraw(false)} className="p-1 rounded-full hover:bg-gray-100"><X size={20} /></button>
                   </div>
                   <input type="number" placeholder={lang === 'ar' ? 'المبلغ (ريال)' : 'Amount (SAR)'} value={withdrawAmount} onChange={(e) => setWithdrawAmount(e.target.value)} className="w-full p-3 border rounded-xl mb-2 focus:ring-2 focus:ring-red-500 outline-none" min="1" step="1" max={balance} />
                   <p className="text-xs text-gray-500 mb-4 flex items-center gap-1"><AlertCircle size={12} /> {lang === 'ar' ? `الرصيد المتاح: ${balance} ريال` : `Available: ${balance} SAR`}</p>
                   <div className="space-y-3">
                     <div className="border rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-700 transition">
-                      <button onClick={() => { const amount = parseFloat(withdrawAmount); if (!isNaN(amount) && amount > 0) openConfirmModal('withdraw', amount, WITHDRAW_CARD); else toast.error(lang === 'ar' ? 'المبلغ غير صالح' : 'Invalid amount'); }} disabled={withdrawLoading} className="w-full flex items-center justify-between">
+                      <button onClick={() => { const amount = parseFloat(withdrawAmount); if (!isNaN(amount) && amount > 0) openConfirmModal('withdraw', amount, 'merchant'); else toast.error(lang === 'ar' ? 'المبلغ غير صالح' : 'Invalid amount'); }} disabled={withdrawLoading} className="w-full flex items-center justify-between">
                         <div className="flex items-center gap-3">
                           <CreditCard size={22} className="text-red-600" />
                           <div className="text-right">
                             <p className="font-semibold">{WITHDRAW_CARD.label[lang]}</p>
-                            <p className="text-xs text-gray-500">{lang === 'ar' ? 'سحب إلى حساب التاجر الرئيسي' : 'Withdraw to merchant account'}</p>
+                            <p className="text-xs text-gray-500">{lang === 'ar' ? 'سحب إلى حساب التاجر' : 'Withdraw to merchant account'}</p>
                           </div>
                         </div>
-                        {withdrawLoading ? <div className="animate-spin h-5 w-5 border-2 border-red-600 border-t-transparent rounded-full"></div> : <span className="text-red-600">→</span>}
+                        <span className="text-red-600">→</span>
                       </button>
                     </div>
                     {bankAccounts.length > 0 && (
                       <div className="border rounded-xl p-3">
-                        <p className="text-sm font-medium mb-2">{lang === 'ar' ? 'اختر حسابك البنكي للسحب' : 'Select your bank account for withdrawal'}</p>
+                        <p className="text-sm font-medium mb-2">{lang === 'ar' ? 'اختر حسابك البنكي للسحب' : 'Select your bank account'}</p>
                         <div className="space-y-2">
                           {bankAccounts.map(acc => (
-                            <button key={acc.id} onClick={() => { setSelectedWithdrawAccount(acc); const amount = parseFloat(withdrawAmount); if (!isNaN(amount) && amount > 0) openConfirmModal('withdraw', amount, acc); else toast.error(lang === 'ar' ? 'المبلغ غير صالح' : 'Invalid amount'); }} className="w-full text-right p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition flex justify-between items-center">
-                              <span>{acc.accountName}</span>
-                              <span className={`text-xs ${selectedWithdrawAccount?.id === acc.id ? 'text-red-600' : 'text-gray-400'}`}>{selectedWithdrawAccount?.id === acc.id ? (lang === 'ar' ? 'محدد' : 'Selected') : ''}</span>
+                            <button key={acc.id} onClick={() => { window.tempWithdrawAccount = acc; const amount = parseFloat(withdrawAmount); if (!isNaN(amount) && amount > 0) openConfirmModal('withdraw', amount, 'bank_specific'); else toast.error(lang === 'ar' ? 'المبلغ غير صالح' : 'Invalid amount'); }} className="w-full text-right p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition flex justify-between items-center">
+                              <span>{acc.accountName} - {acc.bankName}</span>
+                              <span className="text-xs text-gray-400">→</span>
                             </button>
                           ))}
                         </div>
@@ -1034,11 +1041,20 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
                     </div>
                     <h3 className="text-xl font-bold mb-2">{confirmAction === 'deposit' ? (lang === 'ar' ? 'تأكيد الإيداع' : 'Confirm Deposit') : (lang === 'ar' ? 'تأكيد السحب' : 'Confirm Withdrawal')}</h3>
                     <p className="text-gray-600 dark:text-gray-400">{confirmAction === 'deposit' ? (lang === 'ar' ? `إضافة ${confirmAmount} ريال` : `Add ${confirmAmount} SAR`) : (lang === 'ar' ? `سحب ${confirmAmount} ريال` : `Withdraw ${confirmAmount} SAR`)}</p>
-                    {confirmAction === 'deposit' && window.tempDepositAccount && (
-                      <p className="text-xs text-green-600 mt-2">{lang === 'ar' ? `الحساب: ${window.tempDepositAccount.accountName || window.tempDepositAccount.label?.[lang] || 'بطاقة التاجر'}` : `Account: ${window.tempDepositAccount.accountName || window.tempDepositAccount.label?.[lang] || 'Merchant Card'}`}</p>
+                    {confirmAction === 'deposit' && window.tempDepositMethod === 'applepay' && (
+                      <p className="text-xs text-blue-600 mt-2">Apple Pay</p>
                     )}
-                    {confirmAction === 'withdraw' && window.tempWithdrawAccount && (
-                      <p className="text-xs text-red-600 mt-2">{lang === 'ar' ? `الحساب: ${window.tempWithdrawAccount.accountName || window.tempWithdrawAccount.label?.[lang] || 'حساب التاجر'}` : `Account: ${window.tempWithdrawAccount.accountName || window.tempWithdrawAccount.label?.[lang] || 'Merchant Account'}`}</p>
+                    {confirmAction === 'deposit' && window.tempDepositMethod === 'samsungwallet' && (
+                      <p className="text-xs text-blue-600 mt-2">Samsung Wallet</p>
+                    )}
+                    {confirmAction === 'deposit' && window.tempDepositMethod === 'merchant' && (
+                      <p className="text-xs text-green-600 mt-2">{lang === 'ar' ? 'بطاقة التاجر' : 'Merchant Card'}</p>
+                    )}
+                    {confirmAction === 'withdraw' && window.tempWithdrawMethod === 'merchant' && (
+                      <p className="text-xs text-red-600 mt-2">{lang === 'ar' ? 'حساب التاجر' : 'Merchant Account'}</p>
+                    )}
+                    {confirmAction === 'withdraw' && window.tempWithdrawMethod === 'bank_specific' && window.tempWithdrawAccount && (
+                      <p className="text-xs text-red-600 mt-2">{lang === 'ar' ? `الحساب البنكي: ${window.tempWithdrawAccount.accountName}` : `Bank account: ${window.tempWithdrawAccount.accountName}`}</p>
                     )}
                   </div>
                   <div className="flex gap-3">
@@ -1049,7 +1065,7 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
               </div>
             )}
 
-            {/* Invoices Modal */}
+            {/* Invoices Modal (مختصر) */}
             {showInvoices && (
               <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowInvoices(false)}>
                 <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-lg w-full max-h-[80vh] overflow-hidden shadow-xl" onClick={e => e.stopPropagation()}>
@@ -1092,7 +1108,6 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
             )}
           </>
         ) : (
-          // للمستخدمين الآخرين
           <div className="bg-white dark:bg-gray-800 rounded-xl p-6 text-center">
             <User size={48} className="mx-auto text-gray-400 mb-2" />
             <p className="text-gray-500">{lang === 'ar' ? 'هذا هو الملف الشخصي العام' : 'This is the public profile'}</p>
