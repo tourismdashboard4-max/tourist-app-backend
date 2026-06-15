@@ -95,7 +95,7 @@ const HomePage = ({ lang = 'ar', user, setPage, dark, setDark }) => {
   const t = (key) => LOCALES[lang]?.[key] || key;
 
   const [allPrograms, setAllPrograms] = useState([]);
-  const [userLocation, setUserLocation] = useState(null);
+  const [userLocation, setUserLocation] = useState(null); // ✅ تبدأ بـ null، لا يوجد موقع افتراضي
   const [userAccuracy, setUserAccuracy] = useState(null);
   const [locationSource, setLocationSource] = useState(null);
   const [showAllMode, setShowAllMode] = useState(false);
@@ -208,7 +208,10 @@ const HomePage = ({ lang = 'ar', user, setPage, dark, setDark }) => {
 
   // Fetch all active programs - ONLY AFTER REAL LOCATION
   const fetchAllPrograms = useCallback(async () => {
-    if (!user || !userLocation) return;
+    if (!user || !userLocation) {
+      console.log("⏳ Waiting for user location before fetching programs...");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -300,6 +303,7 @@ const HomePage = ({ lang = 'ar', user, setPage, dark, setDark }) => {
     retryCountRef.current = 0;
     setUserLocation(null);
     setAllPrograms([]);
+    initialLoadDone.current = false;
     startAutoTracking();
   };
 
@@ -354,7 +358,13 @@ const HomePage = ({ lang = 'ar', user, setPage, dark, setDark }) => {
     return withDist.filter(p => p.distance <= NEARBY_RADIUS_KM);
   }, [allPrograms, userLocation, showAllMode]);
 
-  const handleRefresh = () => fetchAllPrograms();
+  const handleRefresh = () => {
+    if (userLocation) {
+      fetchAllPrograms();
+    } else {
+      toast.info(t('waitingForLocation'));
+    }
+  };
   const toggleDisplayMode = () => setShowAllMode(prev => !prev);
 
   const handleChat = (guideId, guideName) => {
