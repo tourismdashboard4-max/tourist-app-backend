@@ -1,6 +1,6 @@
-// client/src/pages/ExplorePage.jsx
-// ✅ منع المستخدم من حجز برنامجه الخاص + منع تكرار الحجز لنفس البرنامج
-// ✅ إرسال طلبات الحجز كنوع 'general' مع metadata.is_booking=true لضمان وصولها للمرشد
+ // client/src/pages/ExplorePage.jsx
+// ✅ يعتمد على موقع المستخدم الحقيقي فقط، لا توجد مواقع افتراضية إلا عند فشل GPS
+// ✅ عرض البرامج القريبة مع المسافات الحقيقية بناءً على الموقع الفعلي
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { MapContainer, TileLayer, Marker, Popup, useMap, Circle } from "react-leaflet";
@@ -30,7 +30,7 @@ style.textContent = `
 document.head.appendChild(style);
 
 const API_BASE = "https://tourist-app-api.onrender.com";
-const DEFAULT_LOCATION = { lat: -2.333, lng: 34.833 };
+const DEFAULT_LOCATION = { lat: 24.774, lng: 46.713 };
 const LOCAL_BOOKINGS_KEY = (userId) => `local_bookings_${userId}`;
 const BOOKED_PROGRAMS_KEY = (userId) => `booked_programs_${userId}`;
 
@@ -91,7 +91,7 @@ const LOCALES = {
     kmAway: "كم",
     accuracyMeters: "متر",
     locating: "جاري تحديد موقعك الدقيق...",
-    locationFallback: "تم استخدام موقع افتراضي (تنزانيا) كبديل مؤقت",
+    locationFallback: "تم استخدام موقع افتراضي مؤقت",
     invalidLocation: "الموقع المستلم غير دقيق، جاري إعادة المحاولة",
     manualModeActive: "انقر على الخريطة لتحديد موقعك يدوياً",
     manualModeOff: "العودة إلى التحديد التلقائي",
@@ -133,7 +133,7 @@ const LOCALES = {
     kmAway: "km",
     accuracyMeters: "m",
     locating: "Locating you accurately...",
-    locationFallback: "Using default location (Tanzania) as temporary fallback",
+    locationFallback: "Using temporary default location",
     invalidLocation: "Received location is invalid, retrying...",
     manualModeActive: "Click on map to set your location manually",
     manualModeOff: "Back to auto location",
@@ -187,10 +187,10 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
   const [bookingLoading, setBookingLoading] = useState(false);
   const [favoriteIds, setFavoriteIds] = useState([]);
   const [showOnlyNearby, setShowOnlyNearby] = useState(true);
-  const [nearbyRadius] = useState(50);
+  const [nearbyRadius] = useState(145); // 145 km
   const [isLocating, setIsLocating] = useState(false);
   const [manualMode, setManualMode] = useState(false);
-  const [mapCenter, setMapCenter] = useState([DEFAULT_LOCATION.lat, DEFAULT_LOCATION.lng]);
+  const [mapCenter, setMapCenter] = useState(null);
   const [mapZoom, setMapZoom] = useState(12);
   
   const watchIdRef = useRef(null);
@@ -199,7 +199,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
   const initialZoomDone = useRef(false);
   const [guidesMap, setGuidesMap] = useState({});
 
-  // ✅ قائمة البرامج التي تم حجزها مسبقاً (لتعطيل الزر)
   const [bookedPrograms, setBookedPrograms] = useState(() => {
     if (!user?.id) return new Set();
     const stored = localStorage.getItem(BOOKED_PROGRAMS_KEY(user.id));
@@ -264,7 +263,7 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     toast.success(isFav ? t('removedFromFavorites') : t('addedToFavorites'));
   };
 
-  // جلب البرامج
+  // جلب البرامج النشطة
   const fetchProgramsFromAPI = useCallback(async () => {
     try {
       const response = await fetch(`${API_BASE}/api/programs`);
@@ -505,7 +504,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     setPage('directChat');
   };
 
-  // ✅ دالة الحجز المعدلة (تمنع تكرار الحجز والحجز الخاص)
   const handleBooking = async (program) => {
     if (!user) {
       toast.error(t('loginRequired'));
@@ -553,32 +551,10 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
       console.log('📥 Booking response:', result);
       if (result.success) {
         toast.success(t('requestSent'));
-        
-        // حفظ الحجز محلياً (للمستخدم العادي والمرشد)
-        const localBooking = {
-          id: Date.now(),
-          user_id: user.id,
-          user_name: user.name || user.fullName,
-          program_id: program.id,
-          program_name: program.name,
-          program_price: program.price,
-          user_balance: user.balance || 0,
-          created_at: new Date().toISOString(),
-          status: 'pending',
-          guide_id: program.guide_id
-        };
-        const key = LOCAL_BOOKINGS_KEY(user.id);
-        const existing = localStorage.getItem(key);
-        let bookings = existing ? JSON.parse(existing) : [];
-        bookings.push(localBooking);
-        localStorage.setItem(key, JSON.stringify(bookings));
-        
-        // إضافة البرنامج إلى قائمة البرامج المحجوزة (لتعطيل الزر)
         const newBookedSet = new Set(bookedPrograms);
         newBookedSet.add(program.id);
         setBookedPrograms(newBookedSet);
         localStorage.setItem(BOOKED_PROGRAMS_KEY(user.id), JSON.stringify([...newBookedSet]));
-        
       } else {
         toast.error(result.message || t('bookingFailed'));
       }
@@ -634,8 +610,10 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
       if (program) {
         setSelectedProgram(program);
         fetchProgramImages(program);
-        setMapCenter([program.lat, program.lng]);
-        setMapZoom(14);
+        if (program.lat && program.lng) {
+          setMapCenter([program.lat, program.lng]);
+          setMapZoom(14);
+        }
         localStorage.removeItem('selectedProgramId');
       } else localStorage.removeItem('selectedProgramId');
     }
@@ -653,9 +631,12 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     );
   }
 
+  const tileLayerUrl = dark
+    ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+    : "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
+
   return (
     <div className="h-full flex flex-col pb-24">
-      {/* الهيدر */}
       <div className="bg-gradient-to-r from-green-500 to-emerald-600 p-4 text-white flex-shrink-0 z-10 shadow-md">
         <div className="flex justify-between items-center mb-3">
           <div className="flex items-center gap-3">
@@ -706,9 +687,9 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
         </div>
       </div>
 
-      {/* الخريطة */}
       <div ref={mapContainerRef} className="flex-1 w-full relative z-0">
-        <MapContainer key={`map-${mapCenter[0]}-${mapCenter[1]}`} center={mapCenter} zoom={mapZoom} style={{ height: "100%", width: "100%" }} zoomSnap={0.5} zoomDelta={0.5} wheelPxPerZoomLevel={120} whenCreated={(map) => {
+        {userLocation ? (
+          <MapContainer key={`map-${userLocation[0]}-${userLocation[1]}-${dark}`} center={userLocation} zoom={14} style={{ height: "100%", width: "100%" }} zoomSnap={0.5} zoomDelta={0.5} wheelPxPerZoomLevel={120} whenCreated={(map) => {
             leafletMapRef.current = map;
             map.on('click', handleMapClick);
             if (map.attributionControl) map.attributionControl.remove();
@@ -716,19 +697,29 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
             map.setMinZoom(6);
             map.setMaxZoom(18);
           }}>
-          {dark ? (<TileLayer attribution="" url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" subdomains="abcd" />) : (<TileLayer attribution="" url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png" subdomains="abcd" />)}
-          <MapController center={mapCenter} zoom={mapZoom} />
-          {!manualMode && userLocation && userAccuracy && userAccuracy < 1000 && (<AccuracyCircle center={userLocation} radius={userAccuracy} />)}
-          {displayedPrograms.map(program => {
-            const color = isOwnProgram(program) ? "#9b59b6" : "#10b981";
-            const markerIcon = L.divIcon({ className: "custom-marker", html: `<div style="background-color: ${color}; width: 28px; height: 28px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 5px rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; font-size: 16px;">🏞️</div>`, iconSize: [28, 28], popupAnchor: [0, -14] });
-            return (<Marker key={program.id} position={[program.lat, program.lng]} icon={markerIcon} eventHandlers={{ click: () => { setSelectedProgram(program); fetchProgramImages(program); if (leafletMapRef.current) leafletMapRef.current.flyTo([program.lat, program.lng], 14, { duration: 1.2 }); } }}><Popup><div className="text-center"><strong>{program.name}</strong><br />{program.guide_name}<br />{program.price} ريال</div></Popup></Marker>);
-          })}
-          {userLocation && (<Marker position={userLocation} icon={L.divIcon({ className: "user-marker", html: `<div style="background-color: ${manualMode ? '#f59e0b' : '#3b82f6'}; width: 22px; height: 22px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 10px rgba(0,0,0,0.3);"></div>`, iconSize: [22, 22] })}><Popup>{manualMode ? "📍 موقع محدد يدوياً" : `موقعك (دقة ${Math.round(userAccuracy)} م)`}</Popup></Marker>)}
-        </MapContainer>
+            <TileLayer url={tileLayerUrl} subdomains="abcd" />
+            <MapController center={userLocation} zoom={14} />
+            {!manualMode && userAccuracy && userAccuracy < 1000 && (<AccuracyCircle center={userLocation} radius={userAccuracy} />)}
+            <Marker position={userLocation}>
+              <Popup>{manualMode ? "📍 موقع محدد يدوياً" : `موقعك (دقة ${Math.round(userAccuracy)} م)`}</Popup>
+            </Marker>
+            {displayedPrograms.map(program => {
+              const color = isOwnProgram(program) ? "#9b59b6" : "#10b981";
+              const markerIcon = L.divIcon({ className: "custom-marker", html: `<div style="background-color: ${color}; width: 28px; height: 28px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 5px rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; font-size: 16px;">🏞️</div>`, iconSize: [28, 28], popupAnchor: [0, -14] });
+              return (
+                <Marker key={program.id} position={[program.lat, program.lng]} icon={markerIcon} eventHandlers={{ click: () => { setSelectedProgram(program); fetchProgramImages(program); if (leafletMapRef.current) leafletMapRef.current.flyTo([program.lat, program.lng], 14, { duration: 1.2 }); } }}>
+                  <Popup><div className="text-center"><strong>{program.name}</strong><br />{program.guide_name}<br />{program.price} ريال</div></Popup>
+                </Marker>
+              );
+            })}
+          </MapContainer>
+        ) : (
+          <div className="flex items-center justify-center h-full bg-gray-200 dark:bg-gray-800">
+            <p>{lang === 'ar' ? 'جاري تحميل موقعك...' : 'Loading your location...'}</p>
+          </div>
+        )}
       </div>
 
-      {/* بطاقة البرنامج المحدد */}
       {selectedProgram && (
         <div className="absolute bottom-28 left-0 right-0 z-30 px-2 transition-all duration-300">
           <div className={`${dark ? 'bg-gray-800' : 'bg-white'} rounded-2xl shadow-2xl overflow-hidden border ${dark ? 'border-gray-700' : 'border-gray-200'}`}>
