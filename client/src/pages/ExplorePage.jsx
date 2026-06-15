@@ -1,6 +1,7 @@
- // client/src/pages/ExplorePage.jsx
-// ✅ يعتمد على موقع المستخدم الحقيقي فقط، لا توجد مواقع افتراضية إلا عند فشل GPS
-// ✅ عرض البرامج القريبة مع المسافات الحقيقية بناءً على الموقع الفعلي
+cat > ~/tourist-app-backend-main/client/src/pages/ExplorePage.jsx << 'EOF'
+// client/src/pages/ExplorePage.jsx
+// ✅ عرض البرامج القريبة حتى 254 كم (مثل HomePage)
+// ✅ تتبع دقيق لموقع المستخدم الحقيقي
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { MapContainer, TileLayer, Marker, Popup, useMap, Circle } from "react-leaflet";
@@ -13,7 +14,6 @@ import {
 import toast from "react-hot-toast";
 import { FaBoxOpen, FaSpinner } from 'react-icons/fa';
 
-// إصلاح أيقونات Leaflet
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png",
@@ -21,7 +21,6 @@ L.Icon.Default.mergeOptions({
   shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png",
 });
 
-// إخفاء التذييل عبر CSS
 const style = document.createElement('style');
 style.textContent = `
   .leaflet-control-attribution { display: none !important; }
@@ -30,7 +29,6 @@ style.textContent = `
 document.head.appendChild(style);
 
 const API_BASE = "https://tourist-app-api.onrender.com";
-const DEFAULT_LOCATION = { lat: 24.774, lng: 46.713 };
 const LOCAL_BOOKINGS_KEY = (userId) => `local_bookings_${userId}`;
 const BOOKED_PROGRAMS_KEY = (userId) => `booked_programs_${userId}`;
 
@@ -187,7 +185,8 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
   const [bookingLoading, setBookingLoading] = useState(false);
   const [favoriteIds, setFavoriteIds] = useState([]);
   const [showOnlyNearby, setShowOnlyNearby] = useState(true);
-  const [nearbyRadius] = useState(145); // 145 km
+  // ✅ تم تغيير المسافة إلى 254 كم (مثل HomePage)
+  const [nearbyRadius] = useState(254);
   const [isLocating, setIsLocating] = useState(false);
   const [manualMode, setManualMode] = useState(false);
   const [mapCenter, setMapCenter] = useState(null);
@@ -205,7 +204,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     return stored ? new Set(JSON.parse(stored)) : new Set();
   });
 
-  // جلب خريطة المرشدين
   useEffect(() => {
     const fetchGuidesMap = async () => {
       try {
@@ -236,7 +234,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     fetchGuidesMap();
   }, []);
 
-  // المفضلة
   useEffect(() => {
     if (user?.id) {
       const saved = localStorage.getItem(`favorites_${user.id}`);
@@ -263,7 +260,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     toast.success(isFav ? t('removedFromFavorites') : t('addedToFavorites'));
   };
 
-  // جلب البرامج النشطة
   const fetchProgramsFromAPI = useCallback(async () => {
     try {
       const response = await fetch(`${API_BASE}/api/programs`);
@@ -329,7 +325,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     }
   }, []);
 
-  // معرف المرشد (UUID)
   const getUserGuideUuid = useCallback(async () => {
     if (!user?.id) return null;
     const userIdStr = String(user.id);
@@ -359,7 +354,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     return guideIdStr === currentGuideId;
   }, [user, userUuid]);
 
-  // حساب المسافات
   const programsWithDistance = useMemo(() => {
     if (!userLocation) return programs.map(p => ({ ...p, distance: Infinity }));
     return programs.map(p => ({
@@ -379,7 +373,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     return filtered;
   }, [programsWithDistance, showMyProgramsOnly, user, userUuid, showOnlyNearby, nearbyRadius, userLocation]);
 
-  // دوال الموقع
   const updateUserLocationState = (lat, lng, accuracy, isManual = false) => {
     setUserLocation([lat, lng]);
     setUserAccuracy(accuracy);
@@ -401,7 +394,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     if (manualMode) return;
     if (!navigator.geolocation) {
       toast.error(t('locationError'));
-      updateUserLocationState(DEFAULT_LOCATION.lat, DEFAULT_LOCATION.lng, 10000, false);
       return;
     }
     setIsLocating(true);
@@ -416,10 +408,9 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
             toast.error(t('invalidLocation'), { duration: 3000 });
             return;
           } else {
-            updateUserLocationState(DEFAULT_LOCATION.lat, DEFAULT_LOCATION.lng, 10000, false);
-            toast.error(t('locationFallback'), { duration: 5000 });
             setIsLocating(false);
             toast.dismiss('locating');
+            toast.error(t('locationError'));
             retryCountRef.current = 0;
           }
           return;
@@ -438,10 +429,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
         toast.error(msg);
         setLocationActive(false);
         setIsLocating(false);
-        updateUserLocationState(DEFAULT_LOCATION.lat, DEFAULT_LOCATION.lng, 10000, false);
-        if (error.code !== error.PERMISSION_DENIED) {
-          toast.error(t('locationFallback'), { duration: 5000 });
-        }
       },
       { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
     );
@@ -571,7 +558,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     setPage('explore');
   };
 
-  // تحميل البيانات الأولية
   useEffect(() => {
     fetchProgramsFromAPI();
     const interval = setInterval(fetchProgramsFromAPI, 30000);
@@ -579,28 +565,9 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
   }, [fetchProgramsFromAPI]);
 
   useEffect(() => {
-    const savedLocation = localStorage.getItem('manual_user_location');
-    if (savedLocation && !manualMode) {
-      try {
-        const data = JSON.parse(savedLocation);
-        if (data.coords && data.coords.length === 2) {
-          const lng = data.coords[0];
-          const lat = data.coords[1];
-          if (isValidLocation(lat, lng)) {
-            updateUserLocationState(lat, lng, data.accuracy || 50, true);
-            setManualMode(true);
-          } else {
-            localStorage.removeItem('manual_user_location');
-            startAutoTracking();
-          }
-        } else {
-          startAutoTracking();
-        }
-      } catch(e) { startAutoTracking(); }
-    } else {
-      startAutoTracking();
-    }
-  }, []);
+    if (user) startAutoTracking();
+    return () => { if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current); };
+  }, [user, startAutoTracking]);
 
   useEffect(() => {
     if (programs.length === 0) return;
@@ -768,3 +735,4 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
 }
 
 export default ExplorePage;
+EOF
