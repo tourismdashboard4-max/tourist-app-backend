@@ -1,6 +1,7 @@
+cat > ~/tourist-app-backend-main/client/src/pages/HomePage.jsx << 'EOF'
 // client/src/pages/HomePage.jsx
-// ✅ يعتمد على موقع المستخدم الحقيقي فقط، لا توجد مواقع افتراضية إلا عند فشل GPS
-// ✅ يتم تحديث البرامج القريبة تلقائياً بناءً على الموقع الفعلي
+// ✅ إصدار نهائي: لا يجلب البرامج إلا بعد الحصول على موقع GPS حقيقي
+// ✅ لا يستخدم أي موقع افتراضي (الرياض) لعرض البرامج
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -13,7 +14,6 @@ import {
 } from 'react-icons/fa';
 
 const API_BASE = 'https://tourist-app-api.onrender.com';
-const DEFAULT_LOCATION = { lat: 24.774, lng: 46.713 };
 const NEARBY_RADIUS_KM = 254;
 
 const buildImageUrl = (url) => {
@@ -52,11 +52,12 @@ const LOCALES = {
     loginRequired: 'الرجاء تسجيل الدخول أولاً', distance: 'كم', price: 'ريال', rating: 'تقييم',
     chat: 'دردشة', book: 'احجز', viewOnMap: 'خريطة', addToFavorites: 'مفضلة', removeFromFavorites: 'تمت الإزالة',
     requestSent: 'تم إرسال طلب الحجز بنجاح', bookingFailed: 'فشل إرسال طلب الحجز', locationUpdated: 'تم تحديث الموقع',
-    usingGps: '📍 GPS', usingDefault: '📍 الموقع الافتراضي', updateLocation: 'تحديث موقعي', refresh: 'تحديث',
+    usingGps: '📍 GPS', updateLocation: 'تحديث موقعي', refresh: 'تحديث',
     connectionError: 'فشل الاتصال بالإنترنت', locationError: 'تعذر تحديد موقعك، حاول مرة أخرى',
     locationPermissionDenied: 'الوصول إلى الموقع ممنوع', accuracyMeters: 'متر', locating: 'جاري تحديد موقعك الدقيق...',
-    invalidLocation: 'الموقع المستلم غير دقيق', locationFallback: 'تم استخدام موقع افتراضي مؤقت',
-    retryLocation: 'إعادة المحاولة', showNearby: 'القريبة فقط', showAll: 'عرض الكل',
+    invalidLocation: 'الموقع المستلم غير دقيق', retryLocation: 'إعادة المحاولة', showNearby: 'القريبة فقط', showAll: 'عرض الكل',
+    waitingForLocation: '⏳ جاري الحصول على موقعك الحقيقي...',
+    allowLocation: 'الرجاء السماح للتطبيق بالوصول إلى موقعك',
   },
   en: {
     appName: 'Tourist App', welcome: 'Welcome', search: 'Search...',
@@ -64,11 +65,12 @@ const LOCALES = {
     loginRequired: 'Please login first', distance: 'km', price: 'SAR', rating: 'Rating',
     chat: 'Chat', book: 'Book', viewOnMap: 'Map', addToFavorites: 'Favorite', removeFromFavorites: 'Removed',
     requestSent: 'Booking request sent', bookingFailed: 'Booking failed', locationUpdated: 'Location updated',
-    usingGps: '📍 GPS', usingDefault: '📍 Default', updateLocation: 'Update location', refresh: 'Refresh',
+    usingGps: '📍 GPS', updateLocation: 'Update location', refresh: 'Refresh',
     connectionError: 'Connection failed', locationError: 'Could not determine your location',
     locationPermissionDenied: 'Location permission denied', accuracyMeters: 'm', locating: 'Locating you accurately...',
-    invalidLocation: 'Invalid location', locationFallback: 'Using temporary default location',
-    retryLocation: 'Retry', showNearby: 'Nearby only', showAll: 'Show all',
+    invalidLocation: 'Invalid location', retryLocation: 'Retry', showNearby: 'Nearby only', showAll: 'Show all',
+    waitingForLocation: '⏳ Getting your real location...',
+    allowLocation: 'Please allow the app to access your location',
   }
 };
 
@@ -105,6 +107,7 @@ const HomePage = ({ lang = 'ar', user, setPage, dark, setDark }) => {
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [imageIndex, setImageIndex] = useState({});
   const [isLocating, setIsLocating] = useState(false);
+  const [waitingForLocation, setWaitingForLocation] = useState(true);
 
   const watchIdRef = useRef(null);
   const retryCountRef = useRef(0);
@@ -203,9 +206,9 @@ const HomePage = ({ lang = 'ar', user, setPage, dark, setDark }) => {
     return null;
   }, [guidesMap]);
 
-  // Fetch all active programs
+  // Fetch all active programs - ONLY AFTER REAL LOCATION
   const fetchAllPrograms = useCallback(async () => {
-    if (!user) return;
+    if (!user || !userLocation) return;
     setLoading(true);
     setError(null);
     try {
@@ -229,25 +232,27 @@ const HomePage = ({ lang = 'ar', user, setPage, dark, setDark }) => {
     } finally {
       setLoading(false);
     }
-  }, [fetchFullProgram, t, user]);
+  }, [fetchFullProgram, t, user, userLocation]);
 
-  // Location tracking - REAL GPS
+  // REAL GPS TRACKING - NO DEFAULT LOCATION
   const updateUserLocationState = (lat, lng, accuracy) => {
     setUserLocation({ lat, lng });
     setUserAccuracy(accuracy);
     setLocationSource('gps');
-    console.log(`📍 User location: ${lat}, ${lng} (accuracy: ${accuracy}m)`);
+    setWaitingForLocation(false);
+    console.log(`📍 REAL GPS location: ${lat}, ${lng} (accuracy: ${accuracy}m)`);
+    toast.success(t('locationUpdated') + ` (${Math.round(accuracy)} ${t('accuracyMeters')})`, { duration: 2000 });
   };
 
   const startAutoTracking = useCallback(() => {
     if (!navigator.geolocation) {
       toast.error(t('locationError'));
-      setUserLocation(DEFAULT_LOCATION);
-      setLocationSource('default');
-      toast.warning(t('locationFallback'), { duration: 5000 });
+      setWaitingForLocation(false);
+      setError(t('locationError'));
       return;
     }
     setIsLocating(true);
+    setWaitingForLocation(true);
     toast.loading(t('locating'), { id: 'locating' });
     if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
     watchIdRef.current = navigator.geolocation.watchPosition(
@@ -259,11 +264,10 @@ const HomePage = ({ lang = 'ar', user, setPage, dark, setDark }) => {
             toast.error(t('invalidLocation'), { duration: 3000 });
             return;
           } else {
-            setUserLocation(DEFAULT_LOCATION);
-            setLocationSource('default');
-            toast.warning(t('locationFallback'), { duration: 5000 });
             setIsLocating(false);
             toast.dismiss('locating');
+            toast.error(t('locationError'));
+            setWaitingForLocation(false);
             retryCountRef.current = 0;
           }
           return;
@@ -272,20 +276,20 @@ const HomePage = ({ lang = 'ar', user, setPage, dark, setDark }) => {
         updateUserLocationState(latitude, longitude, accuracy);
         setIsLocating(false);
         toast.dismiss('locating');
-        toast.success(t('locationUpdated') + ` (${Math.round(accuracy)} ${t('accuracyMeters')})`, { duration: 2000 });
       },
       (error) => {
         console.error(error);
         toast.dismiss('locating');
         let msg = t('locationError');
-        if (error.code === error.PERMISSION_DENIED) msg = t('locationPermissionDenied');
-        toast.error(msg);
-        setIsLocating(false);
-        setUserLocation(DEFAULT_LOCATION);
-        setLocationSource('default');
-        if (error.code !== error.PERMISSION_DENIED) {
-          toast.warning(t('locationFallback'), { duration: 5000 });
+        if (error.code === error.PERMISSION_DENIED) {
+          msg = t('locationPermissionDenied');
+          toast.error(msg);
+          setWaitingForLocation(false);
+        } else {
+          toast.error(msg);
+          setWaitingForLocation(false);
         }
+        setIsLocating(false);
       },
       { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
     );
@@ -294,6 +298,8 @@ const HomePage = ({ lang = 'ar', user, setPage, dark, setDark }) => {
   const handleRetryLocation = () => {
     if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
     retryCountRef.current = 0;
+    setUserLocation(null);
+    setAllPrograms([]);
     startAutoTracking();
   };
 
@@ -302,11 +308,15 @@ const HomePage = ({ lang = 'ar', user, setPage, dark, setDark }) => {
     return () => { if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current); };
   }, [user, startAutoTracking]);
 
-  // Load programs when user location is available
+  // Load programs ONLY when REAL user location is available
   useEffect(() => {
-    if (userLocation && !initialLoadDone.current) fetchAllPrograms();
-    else if (userLocation && initialLoadDone.current) fetchAllPrograms();
-  }, [userLocation, fetchAllPrograms]);
+    if (userLocation && !initialLoadDone.current) {
+      fetchAllPrograms();
+    } else if (userLocation && initialLoadDone.current && showAllMode === false) {
+      // Refresh if needed
+      fetchAllPrograms();
+    }
+  }, [userLocation, fetchAllPrograms, showAllMode]);
 
   // Notifications
   useEffect(() => {
@@ -331,7 +341,7 @@ const HomePage = ({ lang = 'ar', user, setPage, dark, setDark }) => {
     return () => clearInterval(interval);
   }, [user]);
 
-  // Filter and sort programs based on user location
+  // Filter and sort programs based on REAL user location
   const displayedPrograms = useMemo(() => {
     if (!userLocation || allPrograms.length === 0) return [];
     const withDist = allPrograms.map(p => {
@@ -454,17 +464,47 @@ const HomePage = ({ lang = 'ar', user, setPage, dark, setDark }) => {
         <h2 className="text-lg font-bold mb-4 text-gray-800 dark:text-white">{t('nearbyPrograms')}</h2>
         <div className="flex flex-wrap justify-between items-center gap-3 mb-5">
           <div className="flex gap-2">
-            <button onClick={toggleDisplayMode} className="px-3 py-1.5 rounded-lg text-sm bg-cyan-600 text-white shadow">{showAllMode ? t('showNearby') : t('showAll')}</button>
+            <button onClick={toggleDisplayMode} className="px-3 py-1.5 rounded-lg text-sm bg-cyan-600 text-white shadow disabled:opacity-50" disabled={!userLocation}>{showAllMode ? t('showNearby') : t('showAll')}</button>
             <button onClick={handleRetryLocation} disabled={isLocating} className="px-3 py-1.5 rounded-lg text-sm bg-blue-600 text-white shadow flex items-center gap-1 disabled:opacity-50"><Crosshair size={14} className={isLocating ? "animate-pulse" : ""} /> {t('updateLocation')}</button>
-            <button onClick={handleRefresh} className="px-3 py-1.5 rounded-lg text-sm bg-gray-600 text-white shadow"><FaRedoAlt size={14} /> {t('refresh')}</button>
+            <button onClick={handleRefresh} className="px-3 py-1.5 rounded-lg text-sm bg-gray-600 text-white shadow disabled:opacity-50" disabled={!userLocation}><FaRedoAlt size={14} /> {t('refresh')}</button>
           </div>
-          {userLocation && <div className="text-xs text-gray-500 dark:text-gray-400">{locationSource === 'gps' && `${t('usingGps')} (±${Math.round(userAccuracy)}${t('accuracyMeters')})`}{locationSource === 'default' && t('usingDefault')}</div>}
+          {locationSource === 'gps' && userAccuracy && <div className="text-xs text-gray-500 dark:text-gray-400">{t('usingGps')} (±{Math.round(userAccuracy)}{t('accuracyMeters')})</div>}
         </div>
 
-        {loading && !initialLoadDone.current && <div className="text-center py-12"><FaSpinner className="animate-spin h-10 w-10 text-green-600 mx-auto" /><p className="mt-3 text-gray-500">{t('loading')}</p></div>}
-        {error && <div className="text-center py-10 bg-red-50 dark:bg-red-900/20 rounded-xl"><p className="text-red-600 dark:text-red-400 mb-2">{error}</p><button onClick={handleRefresh} className="text-green-600 underline">{t('refresh')}</button></div>}
-        {!loading && !error && !userLocation && <div className="text-center py-12 bg-yellow-50 dark:bg-yellow-900/20 rounded-xl"><MapPin size={48} className="mx-auto text-yellow-500 mb-3" /><p className="mb-4 text-gray-700 dark:text-gray-300">{t('locationError')}</p><button onClick={handleRetryLocation} className="bg-green-600 text-white px-5 py-2 rounded-lg">{t('retryLocation')}</button></div>}
-        {!loading && !error && userLocation && displayedPrograms.length === 0 && <div className="text-center py-10 bg-gray-50 dark:bg-gray-800 rounded-xl"><FaBoxOpen size={48} className="mx-auto text-gray-400" /><p className="mt-2">{t('noPrograms')}</p>{!showAllMode && <button onClick={toggleDisplayMode} className="mt-3 text-green-600 underline">{t('showAll')}</button>}</div>}
+        {waitingForLocation && !userLocation && (
+          <div className="text-center py-12 bg-blue-50 dark:bg-blue-900/20 rounded-xl">
+            <Crosshair size={48} className="mx-auto text-blue-500 mb-3 animate-pulse" />
+            <p className="mb-2 text-blue-700 dark:text-blue-300">{t('locating')}</p>
+            <p className="text-sm text-gray-500">{t('allowLocation')}</p>
+          </div>
+        )}
+
+        {!waitingForLocation && !userLocation && !error && (
+          <div className="text-center py-12 bg-yellow-50 dark:bg-yellow-900/20 rounded-xl">
+            <MapPin size={48} className="mx-auto text-yellow-500 mb-3" />
+            <p className="mb-4 text-gray-700 dark:text-gray-300">{t('locationError')}</p>
+            <button onClick={handleRetryLocation} className="bg-green-600 text-white px-5 py-2 rounded-lg">{t('retryLocation')}</button>
+          </div>
+        )}
+
+        {error && !userLocation && (
+          <div className="text-center py-10 bg-red-50 dark:bg-red-900/20 rounded-xl">
+            <p className="text-red-600 dark:text-red-400 mb-2">{error}</p>
+            <button onClick={handleRefresh} className="text-green-600 underline">{t('refresh')}</button>
+          </div>
+        )}
+
+        {loading && !initialLoadDone.current && userLocation && (
+          <div className="text-center py-12"><FaSpinner className="animate-spin h-10 w-10 text-green-600 mx-auto" /><p className="mt-3 text-gray-500">{t('loading')}</p></div>
+        )}
+
+        {!loading && !error && userLocation && displayedPrograms.length === 0 && (
+          <div className="text-center py-10 bg-gray-50 dark:bg-gray-800 rounded-xl">
+            <FaBoxOpen size={48} className="mx-auto text-gray-400" />
+            <p className="mt-2">{t('noPrograms')}</p>
+            {!showAllMode && <button onClick={toggleDisplayMode} className="mt-3 text-green-600 underline">{t('showAll')}</button>}
+          </div>
+        )}
 
         <AnimatePresence>
           {!loading && userLocation && displayedPrograms.length > 0 && (
@@ -521,3 +561,4 @@ const HomePage = ({ lang = 'ar', user, setPage, dark, setDark }) => {
 };
 
 export default HomePage;
+EOF
