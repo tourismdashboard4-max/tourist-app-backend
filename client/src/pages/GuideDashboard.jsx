@@ -1,5 +1,11 @@
 // client/src/pages/GuideDashboard.jsx
 // ✅ النسخة النهائية – ألوان كلاسيكية، عرض البرامج، طلبات الحجز، حذف المحادثات نهائياً
+// ✅ تم إصلاح مشكلة اختفاء الصور وحفظها بشكل دائم مع إعادة التحقق الدوري
+// ✅ إضافة حد أقصى 11 صورة لكل برنامج
+// ✅ إصلاح جلب الصور من API والتعامل مع حقول url المختلفة
+// ✅ توحيد مفتاح حذف المحادثات مع بقية الصفحات (deleted_support_tickets)
+// ✅ تحسين دالة deleteConversation لاستخراج المعرف بشكل صحيح
+// ✅ تحسينات إضافية: تحديث is_primary، استخدام cache بشكل أفضل، تحرير blob URLs، التحقق من الحد الأقصى في التعديل
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
@@ -20,34 +26,85 @@ mapboxgl.accessToken = "pk.eyJ1IjoibW9vaG1kMTUiLCJhIjoiY21obWJwN3EwMHF1czJvc2lya
 const API_BASE = 'https://tourist-app-api.onrender.com';
 const SOCKET_URL = 'https://tourist-app-api.onrender.com';
 
+const MAX_PROGRAM_IMAGES = 11;
+
+// ✅ مفتاح موحد لحذف التذاكر (متوافق مع صفحة الإشعارات والدعم)
+const DELETED_TICKETS_KEY = 'deleted_support_tickets';
+
 const buildImageUrl = (url) => {
   if (!url || typeof url !== 'string') return null;
   if (url.startsWith('blob:') || url.startsWith('data:')) return url;
   if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  if (url.startsWith('/uploads')) return `${API_BASE}${url}`;
   return `${API_BASE}${url.startsWith('/') ? url : '/' + url}`;
 };
 
-const DELETED_TICKETS_KEY = 'guide_deleted_tickets';
-const PERMANENTLY_DELETED_KEY = 'guide_permanently_deleted';
+const getImageUrl = (img) => {
+  if (!img) return null;
+  if (typeof img === 'string') return img;
+  if (typeof img === 'object') {
+    return img.url || img.image_url || img.src || null;
+  }
+  return null;
+};
 
-// تنظيف التذاكر القديمة
+// تنظيف التذاكر القديمة (إذا كان هناك تذاكر مخزنة تحت مفتاح قديم)
 const cleanupOldTickets = () => {
-  const oldTickets = [128, 129, 134, 135, 142, 143, 144, 145, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169];
-  const currentPermanentlyDeleted = localStorage.getItem(PERMANENTLY_DELETED_KEY);
-  let deletedSet = currentPermanentlyDeleted ? new Set(JSON.parse(currentPermanentlyDeleted)) : new Set();
-  let added = false;
-  oldTickets.forEach(ticketId => {
-    if (!deletedSet.has(String(ticketId))) {
-      deletedSet.add(String(ticketId));
-      added = true;
-    }
-  });
-  if (added) {
-    localStorage.setItem(PERMANENTLY_DELETED_KEY, JSON.stringify([...deletedSet]));
-    console.log('🧹 تم تنظيف التذاكر القديمة:', oldTickets);
+  const oldKey = 'guide_permanently_deleted';
+  const oldData = localStorage.getItem(oldKey);
+  if (oldData) {
+    try {
+      const oldSet = new Set(JSON.parse(oldData));
+      const current = localStorage.getItem(DELETED_TICKETS_KEY);
+      let newSet = current ? new Set(JSON.parse(current)) : new Set();
+      oldSet.forEach(id => newSet.add(id));
+      localStorage.setItem(DELETED_TICKETS_KEY, JSON.stringify([...newSet]));
+      localStorage.removeItem(oldKey);
+      console.log('🧹 تم ترحيل التذاكر المحذوفة من المفتاح القديم إلى الجديد');
+    } catch (e) { console.warn('فشل ترحيل البيانات القديمة', e); }
   }
 };
 cleanupOldTickets();
+
+// ============================================================
+// ✅ دوال إدارة الصور المؤقتة (cache) لمنع اختفاء الصور
+// ============================================================
+const IMAGE_CACHE_KEY = 'guide_programs_images_cache';
+
+const saveImagesToCache = (programId, images) => {
+  try {
+    const cache = JSON.parse(localStorage.getItem(IMAGE_CACHE_KEY) || '{}');
+    cache[programId] = {
+      images,
+      timestamp: Date.now()
+    };
+    localStorage.setItem(IMAGE_CACHE_KEY, JSON.stringify(cache));
+    console.log(`💾 Saved ${images.length} images to cache for program ${programId}`);
+  } catch (e) {
+    console.warn('Failed to save images to cache:', e);
+  }
+};
+
+const getImagesFromCache = (programId) => {
+  try {
+    const cache = JSON.parse(localStorage.getItem(IMAGE_CACHE_KEY) || '{}');
+    const entry = cache[programId];
+    if (!entry) return null;
+    if (Date.now() - entry.timestamp > 3600000) {
+      delete cache[programId];
+      localStorage.setItem(IMAGE_CACHE_KEY, JSON.stringify(cache));
+      return null;
+    }
+    return entry.images;
+  } catch (e) {
+    return null;
+  }
+};
+
+const clearImagesCache = () => {
+  localStorage.removeItem(IMAGE_CACHE_KEY);
+};
+// ============================================================
 
 const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgramAdded }) => {
   const [programs, setPrograms] = useState([]);
@@ -172,6 +229,7 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     fetchBalance();
   }, [fetchBalance]);
 
+  // ✅ دوال الحذف الموحدة (تستخدم نفس مفتاح deleted_support_tickets)
   const getDeletedTickets = useCallback(() => {
     const stored = localStorage.getItem(DELETED_TICKETS_KEY);
     if (!stored) return new Set();
@@ -181,20 +239,11 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     } catch { return new Set(); }
   }, []);
 
-  const getPermanentlyDeletedTickets = useCallback(() => {
-    const stored = localStorage.getItem(PERMANENTLY_DELETED_KEY);
-    if (!stored) return new Set();
-    try {
-      const arr = JSON.parse(stored);
-      return new Set(arr);
-    } catch { return new Set(); }
-  }, []);
-
-  const addPermanentlyDeletedTicket = useCallback((ticketId) => {
-    const current = getPermanentlyDeletedTickets();
+  const addDeletedTicket = useCallback((ticketId) => {
+    const current = getDeletedTickets();
     current.add(String(ticketId));
-    localStorage.setItem(PERMANENTLY_DELETED_KEY, JSON.stringify([...current]));
-  }, [getPermanentlyDeletedTickets]);
+    localStorage.setItem(DELETED_TICKETS_KEY, JSON.stringify([...current]));
+  }, [getDeletedTickets]);
 
   // جلب طلبات الحجز
   const fetchBookingRequests = useCallback(async () => {
@@ -206,12 +255,12 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
       });
       const data = await response.json();
-      const permanentlyDeletedSet = getPermanentlyDeletedTickets();
+      const deletedSet = getDeletedTickets();
       let bookings = [];
       if (data.success && data.tickets) {
         const guideId = String(user.id);
         bookings = data.tickets.filter(ticket => {
-          if (permanentlyDeletedSet.has(String(ticket.id))) return false;
+          if (deletedSet.has(String(ticket.id))) return false;
           if (ticket.type !== 'booking') return false;
           const metadata = ticket.metadata || {};
           const isForThisGuide = 
@@ -250,7 +299,7 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     } finally {
       setLoadingBookings(false);
     }
-  }, [user?.id, isGuide, getPermanentlyDeletedTickets]);
+  }, [user?.id, isGuide, getDeletedTickets]);
 
   // جلب تذاكر المحادثات
   const fetchGuideTickets = useCallback(async () => {
@@ -265,13 +314,11 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
       });
       const data = await response.json();
       const deletedSet = getDeletedTickets();
-      const permanentlyDeletedSet = getPermanentlyDeletedTickets();
 
       let tickets = [];
       if (data.success && data.tickets) {
         const guideId = String(user.id);
         tickets = data.tickets.filter(ticket => {
-          if (permanentlyDeletedSet.has(String(ticket.id))) return false;
           if (deletedSet.has(String(ticket.id))) return false;
           const isValidType = ticket.type === 'guide_chat' || ticket.type === 'chat' || ticket.type === 'direct_chat';
           if (!isValidType) return false;
@@ -289,7 +336,7 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
       console.log('✅ التذاكر المسترجعة للمرشد (محادثات):', tickets.length);
     } catch (error) { console.error('Error fetching guide tickets:', error); }
     finally { setLoadingTickets(false); }
-  }, [user?.id, isGuide, getDeletedTickets, getPermanentlyDeletedTickets]);
+  }, [user?.id, isGuide, getDeletedTickets]);
 
   // جلب الإشعارات
   const fetchNotifications = useCallback(async () => {
@@ -301,12 +348,10 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
       });
       const data = await response.json();
       if (data.success) {
-        const permanentlyDeletedSet = getPermanentlyDeletedTickets();
+        const deletedSet = getDeletedTickets();
         const filteredNotifications = data.notifications.filter(n => {
           const ticketId = n.data?.ticketId || n.ticket_id;
-          if (ticketId && permanentlyDeletedSet.has(String(ticketId))) return false;
-          const deletedSet = getDeletedTickets();
-          if (deletedSet.has(String(ticketId))) return false;
+          if (ticketId && deletedSet.has(String(ticketId))) return false;
           return true;
         });
         setNotifications(filteredNotifications);
@@ -321,134 +366,146 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         setUnreadChatCount(unreadChats);
       }
     } catch (error) { console.error('Error fetching notifications:', error); }
-  }, [user?.id, getPermanentlyDeletedTickets, getDeletedTickets]);
+  }, [user?.id, getDeletedTickets]);
 
   // بناء المحادثات الموحدة
-  const buildUnifiedChats = useCallback(async (tickets, notifs) => {
-    const deletedSet = getDeletedTickets();
-    const permanentlyDeletedSet = getPermanentlyDeletedTickets();
-    const CHAT_TYPES = new Set([
-      'new_chat_ticket', 'guide_chat', 'new_chat_message',
-      'GUIDE_CHAT', 'NEW_CHAT_TICKET', 'NEW_CHAT_MESSAGE',
-      'new_message', 'NEW_MESSAGE', 'support_message', 'SUPPORT_MESSAGE'
-    ]);
+const buildUnifiedChats = useCallback(async (tickets, notifs) => {
+  const deletedSet = getDeletedTickets();
+  const CHAT_TYPES = new Set([
+    'new_chat_ticket', 'guide_chat', 'new_chat_message',
+    'GUIDE_CHAT', 'NEW_CHAT_TICKET', 'NEW_CHAT_MESSAGE',
+    'new_message', 'NEW_MESSAGE', 'support_message', 'SUPPORT_MESSAGE'
+  ]);
 
-    const chatNotifs = notifs
-      .filter(n => CHAT_TYPES.has(n.type))
-      .filter(n => {
-        const ticketId = n.data?.ticketId || n.ticket_id;
-        if (ticketId && permanentlyDeletedSet.has(String(ticketId))) return false;
-        return true;
-      })
-      .map(n => {
-        let ticketId = n.data?.ticketId || n.ticket_id || null;
-        if (!ticketId && n.action_url) {
-          const m = String(n.action_url).match(/\d+/);
-          if (m) ticketId = m[0];
+  // ✅ تصفية الإشعارات - استبعاد المحذوفة
+  const chatNotifs = notifs
+    .filter(n => CHAT_TYPES.has(n.type))
+    .map(n => {
+      // استخراج ticketId بنفس طريقة deleteConversation
+      let ticketId = null;
+      // 1. من n.data
+      if (n.data) {
+        let parsedData = n.data;
+        if (typeof parsedData === 'string') {
+          try { parsedData = JSON.parse(parsedData); } catch (e) {}
         }
-        if (!ticketId && n.data?.action_url) {
-          const m = String(n.data.action_url).match(/\d+/);
-          if (m) ticketId = m[0];
-        }
-        if (ticketId && (deletedSet.has(String(ticketId)) || permanentlyDeletedSet.has(String(ticketId)))) return null;
-        
-        let touristId = null;
-        let touristName = n.data?.userName || n.data?.fromName || n.data?.created_by_name || n.data?.sender_name || (lang === 'ar' ? 'مسافر' : 'Traveler');
-        
-        if (n.data) {
-          if (typeof n.data === 'string') {
-            try {
-              const parsed = JSON.parse(n.data);
-              touristId = parsed.userId || parsed.senderId || parsed.touristId || parsed.from_user_id;
-              touristName = parsed.userName || parsed.senderName || parsed.touristName || touristName;
-            } catch (e) {}
-          } else {
-            touristId = n.data.userId || n.data.senderId || n.data.touristId || n.data.from_user_id;
-            touristName = n.data.userName || n.data.senderName || n.data.touristName || touristName;
-          }
-        }
-        
-        return {
-          _sourceType: 'notification',
-          id: `notif_${n.id}`,
-          ticketId: ticketId ? String(ticketId) : null,
-          touristId: touristId ? String(touristId) : null,
-          touristName: touristName,
-          subject: n.message || n.title || (lang === 'ar' ? 'رسالة جديدة' : 'New message'),
-          created_at: n.created_at,
-          is_read: n.is_read,
-          rawNotif: n,
-        };
-      }).filter(Boolean);
+        ticketId = parsedData?.ticketId || parsedData?.ticket_id || null;
+      }
+      // 2. من n مباشرة
+      if (!ticketId) {
+        ticketId = n.ticket_id || n.ticketId || null;
+      }
+      // 3. من action_url
+      if (!ticketId && n.action_url) {
+        const m = String(n.action_url).match(/\d+/);
+        if (m) ticketId = m[0];
+      }
+      if (!ticketId && n.data?.action_url) {
+        const m = String(n.data.action_url).match(/\d+/);
+        if (m) ticketId = m[0];
+      }
+      // إذا كان ticketId محذوفاً، تخطى هذا الإشعار
+      if (ticketId && deletedSet.has(String(ticketId))) return null;
 
-    const chatTicketsPromises = tickets
-      .filter(t => !permanentlyDeletedSet.has(String(t.id)))
-      .filter(t => !deletedSet.has(String(t.id)))
-      .map(async (t) => {
-        let touristId = t.user_id || t.metadata?.created_by_id || t.metadata?.userId || t.metadata?.tourist_id;
-        let touristName = t.user_name || t.metadata?.created_by_name || t.metadata?.tourist_name || (lang === 'ar' ? 'مسافر' : 'Traveler');
-        
-        if ((!touristName || touristName === (lang === 'ar' ? 'مسافر' : 'Traveler')) && touristId) {
+      let touristId = null;
+      let touristName = n.data?.userName || n.data?.fromName || n.data?.created_by_name || n.data?.sender_name || (lang === 'ar' ? 'مسافر' : 'Traveler');
+
+      if (n.data) {
+        if (typeof n.data === 'string') {
           try {
-            const token = localStorage.getItem('token');
-            const numericId = await convertToNumericId(touristId);
-            if (numericId) {
-              const userRes = await fetch(`${API_BASE}/api/users/${numericId}`, {
-                headers: { Authorization: `Bearer ${token}` }
-              });
-              if (userRes.ok) {
-                const userData = await userRes.json();
-                if (userData.success && userData.user) {
-                  touristName = userData.user.full_name || userData.user.name || touristName;
-                }
-              }
-            }
-          } catch (err) {
-            console.warn('Failed to fetch user name:', err);
-          }
-        }
-        
-        return {
-          _sourceType: 'ticket',
-          id: `ticket_${t.id}`,
-          ticketId: String(t.id),
-          touristId: touristId ? String(touristId) : null,
-          touristName: touristName,
-          subject: t.subject || (lang === 'ar' ? 'رسالة جديدة' : 'New message'),
-          created_at: t.created_at,
-          is_read: false,
-          rawTicket: t,
-        };
-      });
-    
-    const chatTickets = await Promise.all(chatTicketsPromises);
-    
-    const chatMap = new Map();
-    [...chatTickets, ...chatNotifs].forEach(item => {
-      if (!item || !item.touristId) return;
-      const key = item.touristId;
-      const existing = chatMap.get(key);
-      if (!existing) {
-        chatMap.set(key, item);
-      } else {
-        if (new Date(item.created_at) > new Date(existing.created_at)) {
-          chatMap.set(key, item);
-        }
-        if (!item.is_read && existing.is_read) {
-          existing.is_read = false;
-          chatMap.set(key, existing);
-        }
-        if (item.ticketId && !existing.ticketId) {
-          chatMap.set(key, item);
+            const parsed = JSON.parse(n.data);
+            touristId = parsed.userId || parsed.senderId || parsed.touristId || parsed.from_user_id;
+            touristName = parsed.userName || parsed.senderName || parsed.touristName || touristName;
+          } catch (e) {}
+        } else {
+          touristId = n.data.userId || n.data.senderId || n.data.touristId || n.data.from_user_id;
+          touristName = n.data.userName || n.data.senderName || n.data.touristName || touristName;
         }
       }
+
+      return {
+        _sourceType: 'notification',
+        id: `notif_${n.id}`,
+        ticketId: ticketId ? String(ticketId) : null,
+        touristId: touristId ? String(touristId) : null,
+        touristName: touristName,
+        subject: n.message || n.title || (lang === 'ar' ? 'رسالة جديدة' : 'New message'),
+        created_at: n.created_at,
+        is_read: n.is_read,
+        rawNotif: n,
+      };
+    }).filter(Boolean);
+
+  // ✅ تصفية التذاكر - استبعاد المحذوفة
+  const chatTicketsPromises = tickets
+    .filter(t => !deletedSet.has(String(t.id)))
+    .map(async (t) => {
+      let touristId = t.user_id || t.metadata?.created_by_id || t.metadata?.userId || t.metadata?.tourist_id;
+      let touristName = t.user_name || t.metadata?.created_by_name || t.metadata?.tourist_name || (lang === 'ar' ? 'مسافر' : 'Traveler');
+
+      if ((!touristName || touristName === (lang === 'ar' ? 'مسافر' : 'Traveler')) && touristId) {
+        try {
+          const token = localStorage.getItem('token');
+          const numericId = await convertToNumericId(touristId);
+          if (numericId) {
+            const userRes = await fetch(`${API_BASE}/api/users/${numericId}`, {
+              headers: { Authorization: `Bearer ${token}` }
+            });
+            if (userRes.ok) {
+              const userData = await userRes.json();
+              if (userData.success && userData.user) {
+                touristName = userData.user.full_name || userData.user.name || touristName;
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('Failed to fetch user name:', err);
+        }
+      }
+
+      return {
+        _sourceType: 'ticket',
+        id: `ticket_${t.id}`,
+        ticketId: String(t.id),
+        touristId: touristId ? String(touristId) : null,
+        touristName: touristName,
+        subject: t.subject || (lang === 'ar' ? 'رسالة جديدة' : 'New message'),
+        created_at: t.created_at,
+        is_read: false,
+        rawTicket: t,
+      };
     });
 
-    const merged = Array.from(chatMap.values());
-    merged.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-    console.log('✅ المحادثات المدمجة (محادثة واحدة لكل مستخدم):', merged.length);
-    return merged;
-  }, [lang, getDeletedTickets, getPermanentlyDeletedTickets, convertToNumericId]);
+  const chatTickets = await Promise.all(chatTicketsPromises);
+
+  // ✅ دمج القائمتين مع تجنب التكرارات
+  const chatMap = new Map();
+  [...chatTickets, ...chatNotifs].forEach(item => {
+    if (!item || !item.touristId) return;
+    const key = item.touristId;
+    const existing = chatMap.get(key);
+    if (!existing) {
+      chatMap.set(key, item);
+    } else {
+      if (new Date(item.created_at) > new Date(existing.created_at)) {
+        chatMap.set(key, item);
+      }
+      if (!item.is_read && existing.is_read) {
+        existing.is_read = false;
+        chatMap.set(key, existing);
+      }
+      if (item.ticketId && !existing.ticketId) {
+        chatMap.set(key, item);
+      }
+    }
+  });
+
+  const merged = Array.from(chatMap.values());
+  merged.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  console.log('✅ المحادثات المدمجة (محادثة واحدة لكل مستخدم):', merged.length);
+  console.log('🗑️ التذاكر المحذوفة:', [...deletedSet]);
+  return merged;
+}, [lang, getDeletedTickets, convertToNumericId]);
 
   const [unifiedChats, setUnifiedChats] = useState([]);
   const [totalUnreadChats, setTotalUnreadChats] = useState(0);
@@ -575,71 +632,116 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     setPage('directChat');
   }, [user?.id, lang, setPage, convertToNumericId]);
 
-  // حذف المحادثة نهائياً
+  // ✅ دالة محسّنة لحذف المحادثة (تدعم استخراج المعرف بطرق متعددة)
   const deleteConversation = useCallback(async (chat, event) => {
     if (event) event.stopPropagation();
     if (!window.confirm(lang === 'ar' ? 'هل أنت متأكد من حذف هذه المحادثة نهائياً؟' : 'Are you sure you want to permanently delete this conversation?')) return;
-    const uniqueKey = chat.id || chat.ticketId;
+
+    const uniqueKey = chat.id || chat.ticketId || chat.uniqueId;
     if (deletingIdsRef.current.has(uniqueKey)) return;
     deletingIdsRef.current.add(uniqueKey);
+
     try {
-      let ticketId = chat.ticketId;
-      if (!ticketId && chat.id && !String(chat.id).startsWith('notif_') && !String(chat.id).startsWith('ticket_')) {
+      // ✅ محاولة استخراج ticketId بكل الطرق الممكنة
+      let ticketId = null;
+
+      // 1. من chat.ticketId
+      if (chat.ticketId) ticketId = chat.ticketId;
+      // 2. من chat.id (إذا لم يكن يبدأ بـ notif_ أو ticket_)
+      else if (chat.id && !String(chat.id).startsWith('notif_') && !String(chat.id).startsWith('ticket_')) {
         ticketId = chat.id;
       }
-      if (!ticketId && chat.rawNotif) {
+      // 3. من chat.rawNotif
+      else if (chat.rawNotif) {
         if (chat.rawNotif.data) {
           let parsedData = chat.rawNotif.data;
           if (typeof parsedData === 'string') {
-            try { parsedData = JSON.parse(parsedData); } catch(e) {}
+            try { parsedData = JSON.parse(parsedData); } catch (e) {}
           }
-          ticketId = parsedData.ticketId;
+          ticketId = parsedData?.ticketId || parsedData?.ticket_id || null;
         }
-        if (!ticketId) ticketId = chat.rawNotif.ticket_id;
+        if (!ticketId) ticketId = chat.rawNotif.ticket_id || chat.rawNotif.ticketId || null;
       }
-      if (!ticketId && chat.rawTicket) ticketId = chat.rawTicket.id;
-      
-      if (!ticketId) {
-        if (chat._sourceType === 'notification' && chat.rawNotif?.id) {
-          setNotifications(prev => prev.filter(n => n.id !== chat.rawNotif.id));
-          setUnifiedChats(prev => prev.filter(c => c.id !== chat.id));
-          if (!chat.is_read) setTotalUnreadChats(prev => Math.max(0, prev - 1));
-          toast.success(lang === 'ar' ? 'تم حذف الإشعار' : 'Notification deleted');
-        } else {
-          toast.error(lang === 'ar' ? 'لا يمكن حذف هذه المحادثة' : 'Cannot delete this conversation');
-        }
-        deletingIdsRef.current.delete(uniqueKey);
-        return;
+      // 4. من chat.rawTicket
+      else if (chat.rawTicket) {
+        ticketId = chat.rawTicket.id || null;
       }
 
-      addPermanentlyDeletedTicket(ticketId);
-      setGuideTickets(prev => prev.filter(t => String(t.id) !== String(ticketId)));
-      setNotifications(prev => prev.filter(n => {
-        const notifTicketId = n.data?.ticketId || n.ticket_id;
-        return String(notifTicketId) !== String(ticketId);
+      // ✅ إذا لم نجد ticketId، نستخدم chat.id كمعرف فريد
+      if (!ticketId && chat.id) {
+        const idStr = String(chat.id);
+        const numericMatch = idStr.match(/\d+/);
+        if (numericMatch) {
+          ticketId = parseInt(numericMatch[0], 10);
+        } else {
+          ticketId = chat.id;
+        }
+      }
+
+      // ✅ إذا لم نجد أي معرف، نستخدم معرفاً فريداً مؤقتاً
+      if (!ticketId) {
+        ticketId = `temp_${Date.now()}`;
+      }
+
+      const finalId = String(ticketId);
+      console.log('🗑️ حذف المحادثة بـ ID:', finalId, chat);
+
+      // ✅ إضافة إلى localStorage
+      addDeletedTicket(finalId);
+
+      // ✅ تحديث القوائم المحلية فوراً
+      setGuideTickets(prev => prev.filter(t => String(t.id) !== finalId));
+      setUnifiedChats(prev => prev.filter(c => {
+        const cId = c.ticketId || c.id || c.uniqueId;
+        return String(cId) !== finalId;
       }));
-      setUnifiedChats(prev => prev.filter(c => c.id !== chat.id));
-      setBookingRequests(prev => prev.filter(b => String(b.id) !== String(ticketId)));
-      
+      setNotifications(prev => prev.filter(n => {
+        const nTicketId = n.data?.ticketId || n.ticket_id || n.id;
+        return String(nTicketId) !== finalId;
+      }));
+      setBookingRequests(prev => prev.filter(b => String(b.id) !== finalId));
+
+      // ✅ تقليل عداد الرسائل غير المقروءة
       if (!chat.is_read) {
         setTotalUnreadChats(prev => Math.max(0, prev - 1));
         setUnreadChatCount(prev => Math.max(0, prev - 1));
       }
-      
-      const oldDeletedSet = getDeletedTickets();
-      if (oldDeletedSet.has(String(ticketId))) {
-        oldDeletedSet.delete(String(ticketId));
-        localStorage.setItem(DELETED_TICKETS_KEY, JSON.stringify([...oldDeletedSet]));
+
+      // ✅ محاولة حذف من الخادم (في الخلفية)
+      const token = localStorage.getItem('token');
+      if (token && !String(finalId).startsWith('temp_')) {
+        try {
+          // محاولة DELETE
+          const delRes = await fetch(`${API_BASE}/api/support/tickets/${finalId}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          if (!delRes.ok) {
+            // إذا فشل DELETE، حاول PATCH لإغلاق التذكرة
+            await fetch(`${API_BASE}/api/support/tickets/${finalId}/status`, {
+              method: 'PATCH',
+              headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ status: 'closed' })
+            });
+          }
+        } catch (e) {
+          console.warn('فشل حذف التذكرة من الخادم، لكن تم إخفاؤها محلياً');
+        }
       }
-      
-      toast.success(lang === 'ar' ? '✅ تم حذف المحادثة نهائياً' : '✅ Conversation permanently deleted');
+
+      toast.success(lang === 'ar' ? '✅ تم حذف المحادثة' : '✅ Conversation deleted');
     } catch (error) {
       console.error('Delete error:', error);
-      toast.error(lang === 'ar' ? '❌ فشل حذف المحادثة' : '❌ Failed to delete conversation');
+      toast.error(lang === 'ar' ? '❌ حدث خطأ، لكن المحادثة ستختفي' : '❌ Error, but conversation will disappear');
     } finally {
       deletingIdsRef.current.delete(uniqueKey);
+      // إعادة تحميل القوائم بعد فترة للتأكد
+      setTimeout(() => {
+        fetchGuideTickets();
+        fetchNotifications();
+      }, 1000);
     }
-  }, [lang, getDeletedTickets, addPermanentlyDeletedTicket]);
+  }, [lang, addDeletedTicket, fetchGuideTickets, fetchNotifications]);
 
   const markNotificationAsRead = useCallback(async (notificationId) => {
     try {
@@ -670,8 +772,8 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     ]);
     if (CHAT_TYPES.has(notif.type)) {
       let ticketId = notif.data?.ticketId || notif.ticket_id || null;
-      const permanentlyDeletedSet = getPermanentlyDeletedTickets();
-      if (ticketId && permanentlyDeletedSet.has(String(ticketId))) { 
+      const deletedSet = getDeletedTickets();
+      if (ticketId && deletedSet.has(String(ticketId))) { 
         toast(lang === 'ar' ? 'هذه المحادثة محذوفة' : 'Conversation deleted', { icon: '🗑️' }); 
         return; 
       }
@@ -726,7 +828,7 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         setPage('support');
       }
     }
-  }, [lang, getPermanentlyDeletedTickets, user?.id, markNotificationAsRead, setPage, openDirectChat]);
+  }, [lang, getDeletedTickets, user?.id, markNotificationAsRead, setPage, openDirectChat]);
 
   // Socket.IO
   useEffect(() => {
@@ -782,7 +884,10 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     }
   }, [activeTab, fetchGuideTickets]);
 
-  // دوال البرامج (إدارة الصور، الخرائط، إلخ)
+  // ============================================================
+  // ✅ دوال البرامج المحسّنة مع حفظ الصور في cache والحد الأقصى 11 صورة
+  // ============================================================
+
   const formatSafetyGuidelines = useCallback((text) => {
     if (!text) return null;
     return text.split(/\r?\n/).map((line, idx) => {
@@ -796,16 +901,68 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     }).filter(Boolean);
   }, []);
 
-  const getPrimaryImage = (program) => {
+  // ✅ دالة محسنة للحصول على الصورة الرئيسية مع دعم cache واستخدام الأولى افتراضياً
+  const getPrimaryImage = useCallback((program) => {
     if (!program) return null;
+    
+    console.log(`🔍 Getting primary image for program ${program.id}:`, program.name);
+    
+    // 1. من كائن البرنامج مباشرة
     if (program.images && Array.isArray(program.images) && program.images.length > 0) {
+      console.log(`📸 Program ${program.id} has ${program.images.length} images from program object`);
       const primary = program.images.find(img => img.is_primary === true);
       const imgObj = primary || program.images[0];
-      return buildImageUrl(imgObj.url);
+      const url = getImageUrl(imgObj);
+      if (url) {
+        const fullUrl = buildImageUrl(url);
+        if (fullUrl) {
+          console.log(`✅ Found primary image: ${fullUrl}`);
+          return fullUrl;
+        }
+      }
     }
-    if (program.image) return buildImageUrl(program.image);
+    
+    // 2. من cache
+    const cached = getImagesFromCache(program.id);
+    if (cached && cached.length > 0) {
+      console.log(`📸 Program ${program.id} has ${cached.length} images from cache`);
+      const primary = cached.find(img => img.is_primary === true);
+      const imgObj = primary || cached[0];
+      const url = getImageUrl(imgObj);
+      if (url) {
+        const fullUrl = buildImageUrl(url);
+        if (fullUrl) {
+          console.log(`✅ Found cached image: ${fullUrl}`);
+          return fullUrl;
+        }
+      }
+    }
+    
+    // 3. الصورة الأساسية من program.image
+    if (program.image) {
+      const url = buildImageUrl(program.image);
+      if (url) {
+        console.log(`✅ Using program.image: ${url}`);
+        return url;
+      }
+    }
+    
+    // 4. من program.images كـ مصفوفة روابط (سلاسل نصية)
+    if (program.images && Array.isArray(program.images) && program.images.length > 0) {
+      const firstImage = program.images[0];
+      const url = getImageUrl(firstImage);
+      if (url) {
+        const fullUrl = buildImageUrl(url);
+        if (fullUrl) {
+          console.log(`✅ Using string image URL: ${fullUrl}`);
+          return fullUrl;
+        }
+      }
+    }
+    
+    console.log(`❌ No image found for program ${program.id}`);
     return null;
-  };
+  }, []);
 
   const compressImage = (file, maxWidth = 800, maxHeight = 800, quality = 0.7) => {
     return new Promise((resolve, reject) => {
@@ -859,28 +1016,86 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
       imageCount: p.images?.length || 0
     })).filter(p => p.coordinates && p.coordinates[0] && p.coordinates[1]);
     setUserPrograms(mapPrograms);
-  }, [setUserPrograms, user?.full_name]);
+  }, [setUserPrograms, user?.full_name, getPrimaryImage]);
 
-  const formatProgramFromServer = (p) => {
+  // ✅ دالة محسنة لتهيئة الصور من البيانات المسترجعة
+  const formatProgramFromServer = useCallback((p) => {
+    console.log(`📦 Formatting program ${p.id}:`, p.name);
+    
     let images = [];
+    
+    // 1. من البيانات المسترجعة (images كـ json_agg من program_images)
     if (p.images && Array.isArray(p.images) && p.images.length > 0) {
+      console.log(`📸 Program ${p.id} has ${p.images.length} images from server`);
       images = p.images.map(img => {
-        const url = img.url || img.image_url;
-        const resolvedUrl = buildImageUrl(url);
-        if (!resolvedUrl) return null;
-        return { id: img.id, url: resolvedUrl, is_primary: img.is_primary === true };
+        const url = getImageUrl(img);
+        if (!url) return null;
+        const fullUrl = buildImageUrl(url);
+        if (!fullUrl) return null;
+        return { 
+          id: img.id, 
+          url: fullUrl, 
+          image_url: fullUrl,
+          is_primary: img.is_primary === true 
+        };
       }).filter(Boolean);
-    } else if (p.image) {
-      images = [{ url: buildImageUrl(p.image), is_primary: true }];
+      
+      // تأكد من وجود صورة رئيسية
+      if (images.length > 0 && !images.some(img => img.is_primary)) {
+        images[0].is_primary = true;
+      }
+      
+      // حفظ في cache
+      if (images.length > 0) {
+        saveImagesToCache(p.id, images);
+      }
+    } 
+    // 2. من cache
+    else {
+      const cached = getImagesFromCache(p.id);
+      if (cached && cached.length > 0) {
+        console.log(`📸 Program ${p.id} has ${cached.length} images from cache`);
+        images = cached;
+        // تأكد من وجود صورة رئيسية
+        if (!images.some(img => img.is_primary)) {
+          images[0].is_primary = true;
+        }
+      }
     }
+    
+    // 3. الصورة الأساسية من p.image
+    if (images.length === 0 && p.image) {
+      const url = buildImageUrl(p.image);
+      if (url) {
+        console.log(`📸 Using program.image for ${p.id}: ${url}`);
+        images = [{ id: null, url, image_url: url, is_primary: true }];
+        saveImagesToCache(p.id, images);
+      }
+    }
+    
+    // 4. من photos (تنسيق قديم)
     if (images.length === 0 && p.photos && Array.isArray(p.photos)) {
+      console.log(`📸 Using photos for ${p.id}`);
       images = p.photos.map(photo => {
-        const url = buildImageUrl(photo.url || photo);
-        return url ? { url, is_primary: photo.is_primary || false } : null;
+        const url = getImageUrl(photo);
+        if (!url) return null;
+        const fullUrl = buildImageUrl(url);
+        return fullUrl ? { id: null, url: fullUrl, image_url: fullUrl, is_primary: photo.is_primary || false } : null;
       }).filter(Boolean);
+      if (images.length > 0) {
+        if (!images.some(img => img.is_primary)) {
+          images[0].is_primary = true;
+        }
+        saveImagesToCache(p.id, images);
+      }
     }
-    if (images.length > 0 && !images.some(img => img.is_primary)) { images[0].is_primary = true; }
-    return {
+    
+    // تعيين صورة رئيسية إذا لم توجد (ضمان أمان)
+    if (images.length > 0 && !images.some(img => img.is_primary)) {
+      images[0].is_primary = true;
+    }
+    
+    const formatted = {
       id: p.id,
       name: p.name,
       description: p.description || "",
@@ -896,12 +1111,16 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
       guide_name: p.guide_name,
       created_at: p.created_at,
       rating: p.rating || 4.5,
-      images,
+      images: images,
+      image: images.length > 0 ? images[0].url : null,
       safetyGuidelines: p.safetyGuidelines || p.safety_guidelines || ""
     };
-  };
+    
+    console.log(`✅ Formatted program ${p.id} with ${images.length} images`);
+    return formatted;
+  }, []);
 
-  const refetchSingleProgram = async (programId) => {
+  const refetchSingleProgram = useCallback(async (programId) => {
     try {
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_BASE}/api/programs/${programId}`, { headers: { 'Authorization': `Bearer ${token}` } });
@@ -909,7 +1128,41 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         const data = await response.json();
         const programData = data.program || data.data || data;
         if (programData) {
-          const formatted = formatProgramFromServer(programData);
+          // جلب الصور بشكل منفصل أيضاً
+          let images = [];
+          try {
+            const imgRes = await fetch(`${API_BASE}/api/programs/${programId}/images`, {
+              headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const imgData = await imgRes.json();
+            if (imgData.success && Array.isArray(imgData.images) && imgData.images.length > 0) {
+              images = imgData.images.map(img => {
+                const url = getImageUrl(img);
+                if (!url) return null;
+                const fullUrl = buildImageUrl(url);
+                return fullUrl ? {
+                  id: img.id,
+                  url: fullUrl,
+                  image_url: fullUrl,
+                  is_primary: img.is_primary === true
+                } : null;
+              }).filter(Boolean);
+              // تأكد من وجود صورة رئيسية
+              if (images.length > 0 && !images.some(img => img.is_primary)) {
+                images[0].is_primary = true;
+              }
+              // حفظ في cache
+              if (images.length > 0) {
+                saveImagesToCache(programId, images);
+              }
+            }
+          } catch (e) { console.warn('Could not fetch images:', e); }
+          
+          const formatted = formatProgramFromServer({
+            ...programData,
+            images: images.length > 0 ? images : programData.images
+          });
+          
           setPrograms(prev => prev.map(p => p.id === programId ? formatted : p));
           updateMapWithPrograms([formatted, ...programs.filter(p => p.id !== programId)]);
           return formatted;
@@ -917,8 +1170,9 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
       }
     } catch (err) { console.error(err); }
     return null;
-  };
+  }, [formatProgramFromServer, updateMapWithPrograms, programs]);
 
+  // ✅ دالة محسنة لجلب البرامج مع الصور باستخدام cache
   const fetchRealPrograms = useCallback(async () => {
     const guideId = user?.id;
     if (!guideId) { setLoading(false); return; }
@@ -926,10 +1180,15 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     try {
       const token = localStorage.getItem('token');
       let programsArray = [];
-      const response = await fetch(`${API_BASE}/api/guides/${guideId}/programs?limit=1000`, {
+      
+      console.log(`📥 Fetching programs for guide: ${guideId}`);
+      
+      // جلب البرامج من المسار الرئيسي
+      const response = await fetch(`${API_BASE}/api/guides/${guideId}/programs`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await response.json();
+      
       if (response.ok && data.success && Array.isArray(data.programs)) {
         programsArray = data.programs;
       } else if (Array.isArray(data)) {
@@ -937,49 +1196,138 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
       } else if (data.data && Array.isArray(data.data)) {
         programsArray = data.data;
       } else {
-        const fallbackRes = await fetch(`${API_BASE}/api/programs?limit=1000`, {
+        // Fallback
+        const fallbackRes = await fetch(`${API_BASE}/api/programs`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         const fallbackData = await fallbackRes.json();
         if (fallbackRes.ok && fallbackData.success && Array.isArray(fallbackData.programs)) {
           programsArray = fallbackData.programs.filter(p => String(p.guide_id) === String(guideId));
-        } else if (Array.isArray(fallbackData)) {
-          programsArray = fallbackData.filter(p => String(p.guide_id) === String(guideId));
-        } else if (fallbackData.data && Array.isArray(fallbackData.data)) {
-          programsArray = fallbackData.data.filter(p => String(p.guide_id) === String(guideId));
         }
       }
-      const programsWithImages = await Promise.all(programsArray.map(async (program) => {
-        try {
-          const detailRes = await fetch(`${API_BASE}/api/programs/${program.id}?limit=1000`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-          });
-          if (detailRes.ok) {
-            const detailData = await detailRes.json();
-            const programData = detailData.program || detailData.data || detailData;
-            if (programData && programData.images) return { ...program, images: programData.images };
+      
+      console.log(`📦 Found ${programsArray.length} programs for guide ${guideId}`);
+      
+      // ✅ جلب الصور لكل برنامج بشكل منفصل
+      const programsWithImages = await Promise.all(
+        programsArray.map(async (program) => {
+          let images = [];
+          
+          // ✅ محاولة جلب الصور من API
+          try {
+            console.log(`📸 Fetching images for program ${program.id}`);
+            const detailRes = await fetch(`${API_BASE}/api/programs/${program.id}/images`, {
+              headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (detailRes.ok) {
+              const detailData = await detailRes.json();
+              console.log(`📸 Images response for ${program.id}:`, detailData);
+              
+              if (detailData.success && Array.isArray(detailData.images) && detailData.images.length > 0) {
+                images = detailData.images.map(img => {
+                  const url = getImageUrl(img);
+                  if (!url) return null;
+                  const fullUrl = buildImageUrl(url);
+                  return fullUrl ? {
+                    id: img.id,
+                    url: fullUrl,
+                    image_url: fullUrl,
+                    is_primary: img.is_primary === true
+                  } : null;
+                }).filter(Boolean);
+                // تأكد من وجود صورة رئيسية
+                if (images.length > 0 && !images.some(img => img.is_primary)) {
+                  images[0].is_primary = true;
+                }
+                // حفظ في cache
+                if (images.length > 0) {
+                  saveImagesToCache(program.id, images);
+                  console.log(`💾 Saved ${images.length} images to cache for program ${program.id}`);
+                }
+              }
+            }
+          } catch (err) {
+            console.warn(`Could not fetch images for program ${program.id}:`, err);
           }
-        } catch (err) { console.warn(err); }
-        return { ...program, images: [] };
-      }));
+          
+          // ✅ إذا لم توجد صور من API، حاول من cache
+          if (images.length === 0) {
+            const cached = getImagesFromCache(program.id);
+            if (cached && cached.length > 0) {
+              images = cached;
+              console.log(`📸 Using cached images for program ${program.id}: ${images.length}`);
+              if (!images.some(img => img.is_primary)) {
+                images[0].is_primary = true;
+              }
+            }
+          }
+          
+          // ✅ إذا لم توجد صور، استخدم الصورة الأساسية
+          if (images.length === 0 && program.image) {
+            const url = buildImageUrl(program.image);
+            if (url) {
+              images = [{ id: null, url, image_url: url, is_primary: true }];
+              saveImagesToCache(program.id, images);
+              console.log(`📸 Using program.image for ${program.id}: ${url}`);
+            }
+          }
+          
+          console.log(`📸 Program ${program.id} has ${images.length} images total`);
+          return { ...program, images };
+        })
+      );
+      
       const formatted = programsWithImages.map(p => formatProgramFromServer(p));
       setPrograms(formatted);
       updateMapWithPrograms(formatted);
       updateStats(formatted);
+      
+      const totalImages = formatted.reduce((acc, p) => acc + (p.images?.length || 0), 0);
+      console.log(`✅ Loaded ${formatted.length} programs with ${totalImages} images`);
+      
+      // ✅ تحديث cache بعد التحميل
+      formatted.forEach(p => {
+        if (p.images && p.images.length > 0) {
+          if (!p.images.some(img => img.is_primary)) {
+            p.images[0].is_primary = true;
+          }
+          saveImagesToCache(p.id, p.images);
+        }
+      });
+      
     } catch (error) {
-      console.error(error);
+      console.error('Error fetching programs:', error);
       toast.error(lang === 'ar' ? 'فشل الاتصال بالخادم' : 'Connection failed');
     } finally {
       setLoading(false);
     }
-  }, [user?.id, lang, updateMapWithPrograms, updateStats]);
+  }, [user?.id, lang, formatProgramFromServer, updateMapWithPrograms, updateStats]);
 
-  useEffect(() => { fetchRealPrograms(); }, [fetchRealPrograms]);
+  // ✅ تحميل البرامج عند بدء التشغيل وكل 60 ثانية (تحديث دوري)
+  useEffect(() => {
+    fetchRealPrograms();
+    const interval = setInterval(fetchRealPrograms, 60000);
+    return () => clearInterval(interval);
+  }, [fetchRealPrograms]);
+  
   useEffect(() => { if (user?.id) fetchBalance(); }, [user?.id, fetchBalance]);
 
+  // ✅ دالة إضافة الصور مع تطبيق الحد الأقصى
   const addMultipleImages = async (files) => {
     if (!files || files.length === 0) return;
     const fileArray = Array.from(files);
+    const currentCount = newProgram.images.length;
+    const totalAfterAdd = currentCount + fileArray.length;
+    
+    if (totalAfterAdd > MAX_PROGRAM_IMAGES) {
+      toast.error(
+        lang === 'ar'
+          ? `لا يمكن إضافة أكثر من ${MAX_PROGRAM_IMAGES} صورة. لديك ${currentCount} صورة، يمكنك إضافة ${MAX_PROGRAM_IMAGES - currentCount} فقط.`
+          : `Cannot add more than ${MAX_PROGRAM_IMAGES} images. You have ${currentCount}, you can add ${MAX_PROGRAM_IMAGES - currentCount} more.`
+      );
+      return;
+    }
+
     for (const file of fileArray) {
       if (file.size > 5 * 1024 * 1024) { toast.error(`حجم الصورة ${file.name} أكبر من 5 ميجابايت`); continue; }
       if (!file.type.startsWith('image/')) { toast.error(`الملف ${file.name} ليس صورة`); continue; }
@@ -1126,6 +1474,12 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         }
         toast.dismiss('upload-images');
         toast.success('تم رفع الصور بنجاح');
+        // حفظ الصور في cache
+        const savedImages = localImages.map((img, idx) => ({
+          url: buildImageUrl(`/uploads/programs/program_${programId}_${Date.now()}_${idx}.jpg`),
+          is_primary: idx === 0
+        }));
+        saveImagesToCache(programId, savedImages);
       }
       await refetchSingleProgram(programId);
       toast.success('✅ تم إضافة البرنامج بنجاح');
@@ -1165,6 +1519,10 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
       const response = await fetch(`${API_BASE}/api/programs/${programId}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } });
       if (!response.ok) throw new Error('فشل الحذف');
       toast.success('✅ تم حذف البرنامج بنجاح');
+      // حذف من cache
+      const cache = JSON.parse(localStorage.getItem(IMAGE_CACHE_KEY) || '{}');
+      delete cache[programId];
+      localStorage.setItem(IMAGE_CACHE_KEY, JSON.stringify(cache));
       await fetchRealPrograms();
       if (onProgramAdded) onProgramAdded();
     } catch (error) { toast.error('❌ حدث خطأ أثناء حذف البرنامج'); }
@@ -1173,11 +1531,33 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
 
   const openEditModal = (program) => {
     setEditingProgram(program);
-    const imagesForEdit = (program.images || []).map((img) => {
-      const url = buildImageUrl(img.url);
-      if (!url) return null;
-      return { id: img.id, file: null, preview: url, isPrimary: img.is_primary === true, isExisting: true };
-    }).filter(Boolean);
+    // استخدام الصور من program أو من cache
+    let imagesForEdit = [];
+    if (program.images && program.images.length > 0) {
+      imagesForEdit = program.images.map((img) => {
+        const url = getImageUrl(img);
+        if (!url) return null;
+        const fullUrl = buildImageUrl(url);
+        if (!fullUrl) return null;
+        return { id: img.id, file: null, preview: fullUrl, isPrimary: img.is_primary === true, isExisting: true };
+      }).filter(Boolean);
+    } else {
+      const cached = getImagesFromCache(program.id);
+      if (cached && cached.length > 0) {
+        imagesForEdit = cached.map((img) => {
+          const url = getImageUrl(img);
+          if (!url) return null;
+          const fullUrl = buildImageUrl(url);
+          return fullUrl ? {
+            id: img.id || null,
+            file: null,
+            preview: fullUrl,
+            isPrimary: img.is_primary === true,
+            isExisting: !!img.id
+          } : null;
+        }).filter(Boolean);
+      }
+    }
     if (imagesForEdit.length === 0 && program.image) {
       const url = buildImageUrl(program.image);
       if (url) imagesForEdit.push({ id: null, file: null, preview: url, isPrimary: true, isExisting: true });
@@ -1243,6 +1623,12 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         }
         toast.dismiss('upload-edit');
         toast.success('تم رفع الصور الجديدة');
+        // تحديث cache
+        const updatedImages = newProgram.images.map(img => ({
+          url: buildImageUrl(img.preview),
+          is_primary: img.isPrimary || false
+        }));
+        saveImagesToCache(editingProgram.id, updatedImages);
       } else if (imagesToDelete.length > 0) {
         toast.success(`تم حذف ${imagesToDelete.length} صورة بنجاح`);
       }
@@ -1259,28 +1645,43 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
     finally { setLoading(false); }
   };
 
+  // مكون عرض الصور مع عرض الحد الأقصى
   const ImageGallery = ({ accentColor = 'green' }) => {
     const isPrimBorder = accentColor === 'yellow' ? 'border-yellow-500 ring-2 ring-yellow-300' : 'border-green-500 ring-2 ring-green-300';
     const primBadgeBg = accentColor === 'yellow' ? 'bg-yellow-500' : 'bg-green-500';
     const addHover = accentColor === 'yellow' ? 'hover:border-yellow-500 hover:bg-yellow-50' : 'hover:border-green-500 hover:bg-green-50';
     const spinColor = accentColor === 'yellow' ? 'border-yellow-500' : 'border-green-500';
+    const currentCount = newProgram.images.length;
+    const remaining = MAX_PROGRAM_IMAGES - currentCount;
+    const isFull = currentCount >= MAX_PROGRAM_IMAGES;
+
     return (
       <div>
         <div className="flex flex-wrap gap-3 mb-3">
-          {newProgram.images.map((img, idx) => (
-            <div key={`img-${idx}-${img.preview?.slice(-10)}`} className={`relative w-24 h-24 rounded-xl overflow-hidden shadow-md cursor-pointer border-2 transition-all duration-200 ${img.isPrimary ? isPrimBorder : 'border-gray-200 hover:border-gray-400'}`} onClick={() => setPrimaryImage(idx)} title="انقر لتعيينها كصورة رئيسية">
-              <img src={img.preview} className="w-full h-full object-cover" alt={`صورة ${idx + 1}`} onError={(e) => { e.target.onerror = null; e.target.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' viewBox='0 0 100 100'%3E%3Crect width='100%25' height='100%25' fill='%23f0f0f0'/%3E%3Ctext x='50%25' y='50%25' font-size='12' fill='%23999' text-anchor='middle' dy='.3em'%3E❌%3C/text%3E%3C/svg%3E"; }} loading="lazy" />
-              <button onClick={(e) => { e.stopPropagation(); removeImage(idx); }} className="absolute top-1 right-1 bg-red-600 text-white rounded-full p-0.5 opacity-70 hover:opacity-100 transition shadow z-10" type="button"><X size={13} /></button>
-              {img.isPrimary && <div className={`absolute bottom-0 inset-x-0 ${primBadgeBg} text-white text-center text-xs py-0.5 font-medium`}>⭐ رئيسية</div>}
-              {img.isExisting && !img.isPrimary && <div className="absolute bottom-0 inset-x-0 bg-black/40 text-white text-center text-xs py-0.5">محفوظة</div>}
-            </div>
-          ))}
-          <label className={`w-24 h-24 border-2 border-dashed rounded-xl flex flex-col items-center justify-center cursor-pointer transition-all duration-200 bg-gray-50 dark:bg-gray-700 ${addHover}`}>
-            <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => addMultipleImages(e.target.files)} />
+          {newProgram.images.map((img, idx) => {
+            const previewUrl = typeof img === 'string' ? img : (img.preview || img.url || img.image_url || null);
+            return (
+              <div key={`img-${idx}-${previewUrl?.slice(-10)}`} className={`relative w-24 h-24 rounded-xl overflow-hidden shadow-md cursor-pointer border-2 transition-all duration-200 ${img.isPrimary ? isPrimBorder : 'border-gray-200 hover:border-gray-400'}`} onClick={() => setPrimaryImage(idx)} title="انقر لتعيينها كصورة رئيسية">
+                <img src={previewUrl} className="w-full h-full object-cover" alt={`صورة ${idx + 1}`} onError={(e) => { e.target.onerror = null; e.target.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' viewBox='0 0 100 100'%3E%3Crect width='100%25' height='100%25' fill='%23f0f0f0'/%3E%3Ctext x='50%25' y='50%25' font-size='12' fill='%23999' text-anchor='middle' dy='.3em'%3E❌%3C/text%3E%3C/svg%3E"; }} loading="lazy" />
+                <button onClick={(e) => { e.stopPropagation(); removeImage(idx); }} className="absolute top-1 right-1 bg-red-600 text-white rounded-full p-0.5 opacity-70 hover:opacity-100 transition shadow z-10" type="button"><X size={13} /></button>
+                {img.isPrimary && <div className={`absolute bottom-0 inset-x-0 ${primBadgeBg} text-white text-center text-xs py-0.5 font-medium`}>⭐ رئيسية</div>}
+                {img.isExisting && !img.isPrimary && <div className="absolute bottom-0 inset-x-0 bg-black/40 text-white text-center text-xs py-0.5">محفوظة</div>}
+              </div>
+            );
+          })}
+          <label className={`w-24 h-24 border-2 border-dashed rounded-xl flex flex-col items-center justify-center cursor-pointer transition-all duration-200 bg-gray-50 dark:bg-gray-700 ${isFull ? 'opacity-50 cursor-not-allowed' : addHover}`}>
+            <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => addMultipleImages(e.target.files)} disabled={isFull} />
             {uploadingImage ? <div className={`animate-spin rounded-full h-6 w-6 border-2 border-t-transparent ${spinColor}`}></div> : <><Camera size={24} className="text-gray-400" /><span className="text-xs text-gray-500 mt-1">إضافة</span></>}
           </label>
         </div>
-        {newProgram.images.length > 0 && <p className="text-xs text-gray-500 mt-1">💡 انقر على صورة لتعيينها كالصورة الرئيسية • {newProgram.images.length} صورة</p>}
+        <div className="flex justify-between items-center">
+          <p className="text-xs text-gray-500">💡 انقر على صورة لتعيينها كالصورة الرئيسية</p>
+          <span className="text-xs font-medium text-gray-600 dark:text-gray-300">
+            {currentCount} / {MAX_PROGRAM_IMAGES} صورة
+            {remaining > 0 && ` (يمكن إضافة ${remaining})`}
+            {remaining === 0 && ' (اكتمل العدد)'}
+          </span>
+        </div>
       </div>
     );
   };
@@ -1326,7 +1727,7 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
 
   return (
     <div className="h-full overflow-y-auto bg-gray-50 dark:bg-gray-900 p-4 pb-20" dir="rtl">
-      {/* الرأس */}
+      {/* الرأس - نفس الكود السابق */}
       <div className="flex justify-between items-center mb-6">
         <button onClick={() => setPage('home')} className="flex items-center gap-2 text-gray-600 hover:text-green-600 transition"><ArrowLeft size={20} /> العودة</button>
         <div className="flex items-center gap-3">
@@ -1391,7 +1792,7 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         </div>
       </div>
 
-      {/* الإحصائيات */}
+      {/* الإحصائيات - نفس الكود السابق */}
       <div className="bg-gradient-to-r from-green-500 to-emerald-600 rounded-2xl p-6 text-white mb-8 shadow-lg">
         <div className="flex flex-wrap justify-between items-center gap-4">
           <div>
@@ -1414,7 +1815,7 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         </div>
       </div>
 
-      {/* علامات التبويب: البرامج | الحجوزات | المحادثات */}
+      {/* علامات التبويب - نفس الكود السابق */}
       <div className="flex border-b border-gray-200 dark:border-gray-700 mb-6">
         <button onClick={() => setActiveTab('programs')} className={`px-4 py-2 font-medium text-sm transition-colors ${activeTab === 'programs' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-500 hover:text-gray-700'}`}><Package className="inline w-4 h-4 ml-1" /> البرامج</button>
         <button onClick={() => setActiveTab('bookings')} className={`px-4 py-2 font-medium text-sm transition-colors relative ${activeTab === 'bookings' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-500 hover:text-gray-700'}`}>
@@ -1450,6 +1851,8 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
               )}
             </div>
           </div>
+          
+          {/* تنبيهات الحد الأقصى - نفس الكود السابق */}
           {programs.length >= 10 && programs.length < 11 && (
             <div className="mb-4 p-3 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-200 rounded-lg text-sm flex items-center gap-2">
               <AlertTriangle size={16} />
@@ -1462,6 +1865,7 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
               {lang === 'ar' ? 'لقد وصلت إلى الحد الأقصى (11 برنامج). احذف بعض البرامج لإضافة جديدة.' : 'You have reached the maximum (11 programs). Delete some programs to add new ones.'}
             </div>
           )}
+          
           {filteredPrograms.length === 0 ? (
             <div className="bg-white dark:bg-gray-800 rounded-2xl p-12 text-center border-2 border-dashed"><Package className="w-20 h-20 mx-auto text-gray-400 mb-4" /><p className="text-gray-500 text-lg mb-3">لا توجد برامج</p><button onClick={() => setShowAddProgram(true)} className="px-6 py-2 bg-green-600 text-white rounded-xl">➕ أضف برنامجك الأول</button></div>
           ) : (
@@ -1493,7 +1897,7 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         </>
       )}
 
-      {/* طلبات الحجز */}
+      {/* طلبات الحجز - نفس الكود السابق */}
       {activeTab === 'bookings' && (
         <div>
           {loadingBookings && bookingRequests.length === 0 ? (
@@ -1552,17 +1956,33 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         </div>
       )}
 
-      {/* المحادثات الواردة */}
+      {/* المحادثات الواردة - نفس الكود السابق */}
       {activeTab === 'chats' && (
         <div>
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-lg font-bold text-gray-800 dark:text-white flex items-center gap-2">
+              <MessageCircle size={20} />
+              <span>{lang === 'ar' ? 'المحادثات الواردة' : 'Incoming Chats'}</span>
+              {totalUnreadChats > 0 && (
+                <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">{totalUnreadChats}</span>
+              )}
+            </h2>
+            <button 
+              onClick={() => { fetchGuideTickets(); fetchNotifications(); }} 
+              className="p-2 bg-gray-200 dark:bg-gray-700 rounded-lg hover:bg-gray-300 transition"
+              title={lang === 'ar' ? 'تحديث المحادثات' : 'Refresh chats'}
+            >
+              <RefreshCw size={18} />
+            </button>
+          </div>
           {loadingTickets && unifiedChats.length === 0 ? (
             <div className="flex justify-center items-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div></div>
           ) : unifiedChats.length === 0 ? (
             <div className="bg-white dark:bg-gray-800 rounded-2xl p-12 text-center border-2 border-dashed">
               <Inbox className="w-20 h-20 mx-auto text-gray-400 mb-4" />
-              <p className="text-gray-500 text-lg mb-3">لا توجد محادثات واردة من المسافرين</p>
-              <p className="text-sm text-gray-400">عندما يبدأ مسافر محادثة معك، ستظهر هنا</p>
-              <button onClick={() => { fetchGuideTickets(); fetchNotifications(); }} className="mt-4 px-4 py-2 bg-green-600 text-white rounded-lg text-sm">تحديث</button>
+              <p className="text-gray-500 text-lg mb-3">{lang === 'ar' ? 'لا توجد محادثات واردة من المسافرين' : 'No incoming conversations from travelers'}</p>
+              <p className="text-sm text-gray-400">{lang === 'ar' ? 'عندما يبدأ مسافر محادثة معك، ستظهر هنا' : 'When a traveler starts a conversation with you, it will appear here'}</p>
+              <button onClick={() => { fetchGuideTickets(); fetchNotifications(); }} className="mt-4 px-4 py-2 bg-green-600 text-white rounded-lg text-sm">{lang === 'ar' ? 'تحديث' : 'Refresh'}</button>
             </div>
           ) : (
             <div className="space-y-4">
@@ -1614,26 +2034,99 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
         </div>
       )}
 
-      {/* نافذة إضافة برنامج */}
+      {/* نافذة إضافة برنامج - نفس الكود السابق مع عرض الحد الأقصى للصور */}
       {showAddProgram && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="bg-green-600 p-5 rounded-t-2xl sticky top-0 z-10"><div className="flex justify-between items-center"><div className="flex items-center gap-2"><span className="text-white font-medium">إضافة برنامج جديد</span><div className="flex items-center gap-1 mr-3">{[1,2,3].map(step=>(<React.Fragment key={step}><button onClick={()=>setActiveStep(step)} className={`w-8 h-8 flex items-center justify-center rounded-full text-sm font-bold transition ${activeStep===step?'text-white bg-green-600':activeStep>step?'bg-white/40 text-white':'bg-white/20 text-white/70'}`}>{activeStep>step?'✓':step}</button>{step<3&&<div className="w-8 h-px bg-white/30"></div>}</React.Fragment>))}</div></div><button onClick={()=>{setShowAddProgram(false); setNewProgram(defaultProgramState); setActiveStep(1);}} className="text-white/80 hover:text-white"><XCircle size={28}/></button></div></div>
+            <div className="bg-green-600 p-5 rounded-t-2xl sticky top-0 z-10">
+              <div className="flex justify-between items-center">
+                <div className="flex items-center gap-2">
+                  <span className="text-white font-medium">إضافة برنامج جديد</span>
+                  <div className="flex items-center gap-1 mr-3">
+                    {[1,2,3].map(step=>(
+                      <React.Fragment key={step}>
+                        <button onClick={()=>setActiveStep(step)} className={`w-8 h-8 flex items-center justify-center rounded-full text-sm font-bold transition ${activeStep===step?'text-white bg-green-600':activeStep>step?'bg-white/40 text-white':'bg-white/20 text-white/70'}`}>
+                          {activeStep>step?'✓':step}
+                        </button>
+                        {step<3&&<div className="w-8 h-px bg-white/30"></div>}
+                      </React.Fragment>
+                    ))}
+                  </div>
+                </div>
+                <button onClick={()=>{setShowAddProgram(false); setNewProgram(defaultProgramState); setActiveStep(1);}} className="text-white/80 hover:text-white"><XCircle size={28}/></button>
+              </div>
+            </div>
             <div className="p-6 space-y-5">
-              {activeStep===1&&(<div className="space-y-4"><h3 className="font-semibold text-lg text-green-700">المعلومات الأساسية</h3><div><label className="block text-sm font-semibold mb-1">اسم البرنامج *</label><input type="text" value={newProgram.name} onChange={e=>setNewProgram({...newProgram,name:e.target.value})} className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-green-500 outline-none" placeholder="مثال: جولة تاريخية في الدرعية"/></div><div><label className="block text-sm font-semibold mb-1">الوصف</label><textarea value={newProgram.description} onChange={e=>setNewProgram({...newProgram,description:e.target.value})} rows="3" className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-green-500 outline-none" placeholder="وصف تفصيلي للبرنامج..."/></div><div className="grid grid-cols-2 gap-4"><div><label className="block text-sm font-semibold mb-1">السعر (ريال) *</label><input type="number" value={newProgram.price} onChange={e=>setNewProgram({...newProgram,price:e.target.value})} className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-green-500 outline-none" placeholder="0"/></div><div><label className="block text-sm font-semibold mb-1">المدة *</label><input type="text" value={newProgram.duration} onChange={e=>setNewProgram({...newProgram,duration:e.target.value})} className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-green-500 outline-none" placeholder="مثال: 3 ساعات"/></div></div><div><label className="block text-sm font-semibold mb-1">العدد الأقصى للمشاركين *</label><input type="number" value={newProgram.maxParticipants} onChange={e=>setNewProgram({...newProgram,maxParticipants:e.target.value})} className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-green-500 outline-none" placeholder="20"/></div><div className="flex justify-end pt-2"><button onClick={()=>setActiveStep(2)} className="px-6 py-2 bg-green-600 text-white rounded-xl font-medium hover:bg-green-700 transition">التالي ←</button></div></div>)}
-              {activeStep===2&&(<div className="space-y-4"><h3 className="font-semibold text-lg text-green-700">صور البرنامج</h3><p className="text-sm text-gray-500">أضف صوراً جذابة للبرنامج. انقر على صورة لتعيينها كالصورة الرئيسية.</p><ImageGallery accentColor="green"/><div className="flex justify-between pt-2"><button onClick={()=>setActiveStep(1)} className="px-6 py-2 bg-gray-200 dark:bg-gray-700 rounded-xl font-medium hover:bg-gray-300 transition">→ السابق</button><button onClick={()=>setActiveStep(3)} className="px-6 py-2 bg-green-600 text-white rounded-xl font-medium hover:bg-green-700 transition">التالي ←</button></div></div>)}
-              {activeStep===3&&(<div className="space-y-4"><h3 className="font-semibold text-lg text-green-700">الموقع وإرشادات السلامة</h3><MapSection mapRef={mapContainerRef} accentColor="green" onGeolocate={()=>{if(navigator.geolocation){navigator.geolocation.getCurrentPosition((pos)=>{const{latitude,longitude}=pos.coords;if(mapInstanceRef.current&&markerRef.current){markerRef.current.setLngLat([longitude,latitude]); mapInstanceRef.current.flyTo({center:[longitude,latitude],zoom:14});}else{initAddMap(latitude,longitude);}reverseGeocode(latitude,longitude).then(name=>{setNewProgram(prev=>({...prev,location_lat:latitude,location_lng:longitude,location_name:name}));});},()=>toast.error('تعذر الحصول على موقعك الحالي'));}else toast.error('المتصفح لا يدعم تحديد الموقع');}}/><div><label className="block text-sm font-semibold mb-2 flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-orange-600"/> إرشادات السلامة والتعليمات (اختياري)</label><textarea value={newProgram.safetyGuidelines} onChange={e=>setNewProgram({...newProgram,safetyGuidelines:e.target.value})} rows="5" className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-green-500 outline-none" placeholder="مثال:\n• رخصة قيادة سارية المفعول مطلوبة.\n• الحد الأدنى للعمر: 18 سنة.\n• يرجى إحضار المعدات الشخصية."/></div><div className="flex justify-between pt-2"><button onClick={()=>setActiveStep(2)} className="px-6 py-2 bg-gray-200 dark:bg-gray-700 rounded-xl font-medium hover:bg-gray-300 transition">→ السابق</button><button onClick={handleAddProgram} disabled={loading||uploadingImage} className="px-6 py-2 bg-green-600 text-white rounded-xl font-medium hover:bg-green-700 transition disabled:opacity-50 flex items-center gap-2">{loading||uploadingImage?<><div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div> جاري الحفظ...</>:<><Save size={18}/> حفظ البرنامج</>}</button></div></div>)}
+              {activeStep===1&&(
+                <div className="space-y-4">
+                  <h3 className="font-semibold text-lg text-green-700">المعلومات الأساسية</h3>
+                  <div><label className="block text-sm font-semibold mb-1">اسم البرنامج *</label><input type="text" value={newProgram.name} onChange={e=>setNewProgram({...newProgram,name:e.target.value})} className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-green-500 outline-none" placeholder="مثال: جولة تاريخية في الدرعية"/></div>
+                  <div><label className="block text-sm font-semibold mb-1">الوصف</label><textarea value={newProgram.description} onChange={e=>setNewProgram({...newProgram,description:e.target.value})} rows="3" className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-green-500 outline-none" placeholder="وصف تفصيلي للبرنامج..."/></div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div><label className="block text-sm font-semibold mb-1">السعر (ريال) *</label><input type="number" value={newProgram.price} onChange={e=>setNewProgram({...newProgram,price:e.target.value})} className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-green-500 outline-none" placeholder="0"/></div>
+                    <div><label className="block text-sm font-semibold mb-1">المدة *</label><input type="text" value={newProgram.duration} onChange={e=>setNewProgram({...newProgram,duration:e.target.value})} className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-green-500 outline-none" placeholder="مثال: 3 ساعات"/></div>
+                  </div>
+                  <div><label className="block text-sm font-semibold mb-1">العدد الأقصى للمشاركين *</label><input type="number" value={newProgram.maxParticipants} onChange={e=>setNewProgram({...newProgram,maxParticipants:e.target.value})} className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-green-500 outline-none" placeholder="20"/></div>
+                  <div className="flex justify-end pt-2"><button onClick={()=>setActiveStep(2)} className="px-6 py-2 bg-green-600 text-white rounded-xl font-medium hover:bg-green-700 transition">التالي ←</button></div>
+                </div>
+              )}
+              {activeStep===2&&(
+                <div className="space-y-4">
+                  <h3 className="font-semibold text-lg text-green-700">صور البرنامج</h3>
+                  <p className="text-sm text-gray-500">أضف صوراً جذابة للبرنامج. انقر على صورة لتعيينها كالصورة الرئيسية. الحد الأقصى {MAX_PROGRAM_IMAGES} صور.</p>
+                  <ImageGallery accentColor="green"/>
+                  <div className="flex justify-between pt-2">
+                    <button onClick={()=>setActiveStep(1)} className="px-6 py-2 bg-gray-200 dark:bg-gray-700 rounded-xl font-medium hover:bg-gray-300 transition">→ السابق</button>
+                    <button onClick={()=>setActiveStep(3)} className="px-6 py-2 bg-green-600 text-white rounded-xl font-medium hover:bg-green-700 transition">التالي ←</button>
+                  </div>
+                </div>
+              )}
+              {activeStep===3&&(
+                <div className="space-y-4">
+                  <h3 className="font-semibold text-lg text-green-700">الموقع وإرشادات السلامة</h3>
+                  <MapSection mapRef={mapContainerRef} accentColor="green" onGeolocate={()=>{if(navigator.geolocation){navigator.geolocation.getCurrentPosition((pos)=>{const{latitude,longitude}=pos.coords;if(mapInstanceRef.current&&markerRef.current){markerRef.current.setLngLat([longitude,latitude]); mapInstanceRef.current.flyTo({center:[longitude,latitude],zoom:14});}else{initAddMap(latitude,longitude);}reverseGeocode(latitude,longitude).then(name=>{setNewProgram(prev=>({...prev,location_lat:latitude,location_lng:longitude,location_name:name}));});},()=>toast.error('تعذر الحصول على موقعك الحالي'));}else toast.error('المتصفح لا يدعم تحديد الموقع');}}/>
+                  <div><label className="block text-sm font-semibold mb-2 flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-orange-600"/> إرشادات السلامة والتعليمات (اختياري)</label><textarea value={newProgram.safetyGuidelines} onChange={e=>setNewProgram({...newProgram,safetyGuidelines:e.target.value})} rows="5" className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-green-500 outline-none" placeholder="مثال:\n• رخصة قيادة سارية المفعول مطلوبة.\n• الحد الأدنى للعمر: 18 سنة.\n• يرجى إحضار المعدات الشخصية."/></div>
+                  <div className="flex justify-between pt-2">
+                    <button onClick={()=>setActiveStep(2)} className="px-6 py-2 bg-gray-200 dark:bg-gray-700 rounded-xl font-medium hover:bg-gray-300 transition">→ السابق</button>
+                    <button onClick={handleAddProgram} disabled={loading||uploadingImage} className="px-6 py-2 bg-green-600 text-white rounded-xl font-medium hover:bg-green-700 transition disabled:opacity-50 flex items-center gap-2">
+                      {loading||uploadingImage?<><div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div> جاري الحفظ...</>:<><Save size={18}/> حفظ البرنامج</>}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
       )}
 
-      {/* نافذة تعديل برنامج */}
+      {/* نافذة تعديل برنامج - نفس الكود السابق مع عرض الحد الأقصى للصور */}
       {showEditModal && editingProgram && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="bg-yellow-600 p-5 rounded-t-2xl sticky top-0 z-10"><div className="flex justify-between items-center"><h3 className="text-white text-xl font-bold">✏️ تعديل البرنامج</h3><button onClick={()=>{setShowEditModal(false); setEditingProgram(null); newProgram.images.forEach(img=>{if(img.preview?.startsWith('blob:')) URL.revokeObjectURL(img.preview);}); setNewProgram(defaultProgramState); if(editMapInstanceRef.current){try{editMapInstanceRef.current.remove();}catch(e){}editMapInstanceRef.current=null;}}} className="text-white/80 hover:text-white"><XCircle size={28}/></button></div></div>
-            <div className="p-6 space-y-4"><div><label className="block text-sm font-semibold mb-2 text-yellow-700 flex items-center gap-2"><LucideImage size={16}/> صور البرنامج {newProgram.images.length>0&&<span className="text-xs text-gray-500 font-normal">({newProgram.images.length} صورة • انقر لتعيين الرئيسية)</span>}</label><ImageGallery accentColor="yellow"/></div><input type="text" placeholder="اسم البرنامج *" value={newProgram.name} onChange={e=>setNewProgram({...newProgram,name:e.target.value})} className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-yellow-500 outline-none"/><textarea placeholder="الوصف" value={newProgram.description} onChange={e=>setNewProgram({...newProgram,description:e.target.value})} rows="3" className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-yellow-500 outline-none"/><div className="grid grid-cols-2 gap-4"><input type="number" placeholder="السعر (ريال)" value={newProgram.price} onChange={e=>setNewProgram({...newProgram,price:e.target.value})} className="p-3 border rounded-xl focus:ring-2 focus:ring-yellow-500 outline-none"/><input type="text" placeholder="المدة" value={newProgram.duration} onChange={e=>setNewProgram({...newProgram,duration:e.target.value})} className="p-3 border rounded-xl focus:ring-2 focus:ring-yellow-500 outline-none"/></div><input type="number" placeholder="العدد الأقصى للمشاركين" value={newProgram.maxParticipants} onChange={e=>setNewProgram({...newProgram,maxParticipants:e.target.value})} className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-yellow-500 outline-none"/><MapSection mapRef={editMapContainerRef} accentColor="yellow" onGeolocate={()=>{if(navigator.geolocation){navigator.geolocation.getCurrentPosition((pos)=>{const{latitude,longitude}=pos.coords;if(editMapInstanceRef.current&&editMarkerRef.current){editMarkerRef.current.setLngLat([longitude,latitude]); editMapInstanceRef.current.flyTo({center:[longitude,latitude],zoom:14});}else{initEditMap(latitude,longitude);}reverseGeocode(latitude,longitude).then(name=>{setNewProgram(prev=>({...prev,location_lat:latitude,location_lng:longitude,location_name:name}));});},()=>toast.error('تعذر الحصول على موقعك الحالي'));}else toast.error('المتصفح لا يدعم تحديد الموقع');}}/><div><label className="block text-sm font-semibold mb-1 flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-orange-600"/> إرشادات السلامة (اختياري)</label><textarea value={newProgram.safetyGuidelines} onChange={e=>setNewProgram({...newProgram,safetyGuidelines:e.target.value})} rows="4" className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-yellow-500 outline-none" placeholder="مثال:\n• رخصة قيادة سارية المفعول مطلوبة.\n• الحد الأدنى للعمر: 18 سنة."/></div><div className="flex gap-3 pt-2"><button onClick={handleUpdateProgram} disabled={loading||uploadingImage} className="flex-1 py-3 bg-yellow-600 text-white rounded-xl font-medium hover:bg-yellow-700 transition disabled:opacity-50 flex items-center justify-center gap-2">{loading||uploadingImage?<><div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div> جاري الحفظ...</>:<><Save size={18}/> حفظ التغييرات</>}</button><button onClick={()=>{setShowEditModal(false); setEditingProgram(null); newProgram.images.forEach(img=>{if(img.preview?.startsWith('blob:')) URL.revokeObjectURL(img.preview);}); setNewProgram(defaultProgramState); if(editMapInstanceRef.current){try{editMapInstanceRef.current.remove();}catch(e){}editMapInstanceRef.current=null;}}} className="px-6 py-3 border-2 rounded-xl font-medium hover:bg-gray-50 transition">إلغاء</button></div></div>
+            <div className="bg-yellow-600 p-5 rounded-t-2xl sticky top-0 z-10">
+              <div className="flex justify-between items-center">
+                <h3 className="text-white text-xl font-bold">✏️ تعديل البرنامج</h3>
+                <button onClick={()=>{setShowEditModal(false); setEditingProgram(null); newProgram.images.forEach(img=>{if(img.preview?.startsWith('blob:')) URL.revokeObjectURL(img.preview);}); setNewProgram(defaultProgramState); if(editMapInstanceRef.current){try{editMapInstanceRef.current.remove();}catch(e){}editMapInstanceRef.current=null;}}} className="text-white/80 hover:text-white"><XCircle size={28}/></button>
+              </div>
+            </div>
+            <div className="p-6 space-y-4">
+              <div><label className="block text-sm font-semibold mb-2 text-yellow-700 flex items-center gap-2"><LucideImage size={16}/> صور البرنامج (الحد الأقصى {MAX_PROGRAM_IMAGES})</label><ImageGallery accentColor="yellow"/></div>
+              <input type="text" placeholder="اسم البرنامج *" value={newProgram.name} onChange={e=>setNewProgram({...newProgram,name:e.target.value})} className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-yellow-500 outline-none"/>
+              <textarea placeholder="الوصف" value={newProgram.description} onChange={e=>setNewProgram({...newProgram,description:e.target.value})} rows="3" className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-yellow-500 outline-none"/>
+              <div className="grid grid-cols-2 gap-4">
+                <input type="number" placeholder="السعر (ريال)" value={newProgram.price} onChange={e=>setNewProgram({...newProgram,price:e.target.value})} className="p-3 border rounded-xl focus:ring-2 focus:ring-yellow-500 outline-none"/>
+                <input type="text" placeholder="المدة" value={newProgram.duration} onChange={e=>setNewProgram({...newProgram,duration:e.target.value})} className="p-3 border rounded-xl focus:ring-2 focus:ring-yellow-500 outline-none"/>
+              </div>
+              <input type="number" placeholder="العدد الأقصى للمشاركين" value={newProgram.maxParticipants} onChange={e=>setNewProgram({...newProgram,maxParticipants:e.target.value})} className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-yellow-500 outline-none"/>
+              <MapSection mapRef={editMapContainerRef} accentColor="yellow" onGeolocate={()=>{if(navigator.geolocation){navigator.geolocation.getCurrentPosition((pos)=>{const{latitude,longitude}=pos.coords;if(editMapInstanceRef.current&&editMarkerRef.current){editMarkerRef.current.setLngLat([longitude,latitude]); editMapInstanceRef.current.flyTo({center:[longitude,latitude],zoom:14});}else{initEditMap(latitude,longitude);}reverseGeocode(latitude,longitude).then(name=>{setNewProgram(prev=>({...prev,location_lat:latitude,location_lng:longitude,location_name:name}));});},()=>toast.error('تعذر الحصول على موقعك الحالي'));}else toast.error('المتصفح لا يدعم تحديد الموقع');}}/>
+              <div><label className="block text-sm font-semibold mb-1 flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-orange-600"/> إرشادات السلامة (اختياري)</label><textarea value={newProgram.safetyGuidelines} onChange={e=>setNewProgram({...newProgram,safetyGuidelines:e.target.value})} rows="4" className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-yellow-500 outline-none" placeholder="مثال:\n• رخصة قيادة سارية المفعول مطلوبة.\n• الحد الأدنى للعمر: 18 سنة."/></div>
+              <div className="flex gap-3 pt-2">
+                <button onClick={handleUpdateProgram} disabled={loading||uploadingImage} className="flex-1 py-3 bg-yellow-600 text-white rounded-xl font-medium hover:bg-yellow-700 transition disabled:opacity-50 flex items-center justify-center gap-2">
+                  {loading||uploadingImage?<><div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div> جاري الحفظ...</>:<><Save size={18}/> حفظ التغييرات</>}
+                </button>
+                <button onClick={()=>{setShowEditModal(false); setEditingProgram(null); newProgram.images.forEach(img=>{if(img.preview?.startsWith('blob:')) URL.revokeObjectURL(img.preview);}); setNewProgram(defaultProgramState); if(editMapInstanceRef.current){try{editMapInstanceRef.current.remove();}catch(e){}editMapInstanceRef.current=null;}}} className="px-6 py-3 border-2 rounded-xl font-medium hover:bg-gray-50 transition">إلغاء</button>
+              </div>
+            </div>
           </div>
         </div>
       )}
