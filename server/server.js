@@ -237,10 +237,66 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(morgan('dev'));
 
-// ===================== إعداد رفع الصور =====================
+// ===================== إعداد رفع الصور وخدمة الملفات =====================
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// ✅ إنشاء مجلدات التحميل
+const uploadsDir = path.join(__dirname, 'uploads');
+const programsDir = path.join(uploadsDir, 'programs');
+const avatarsDir = path.join(uploadsDir, 'avatars');
+
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+if (!fs.existsSync(programsDir)) fs.mkdirSync(programsDir, { recursive: true });
+if (!fs.existsSync(avatarsDir)) fs.mkdirSync(avatarsDir, { recursive: true });
+
+console.log(`📁 Uploads directory: ${uploadsDir}`);
+console.log(`📁 Programs images: ${programsDir}`);
+console.log(`📁 Avatars: ${avatarsDir}`);
+
+// ✅ خدمة الملفات الثابتة مع إعدادات CORS
+app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
+  setHeaders: (res, filePath) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'public, max-age=31536000');
+  }
+}));
+
+// ✅ مسار مباشر لخدمة صور البرامج (للتأكد من وجود الملفات)
+app.get('/uploads/programs/:filename', (req, res) => {
+  const filePath = path.join(__dirname, 'uploads', 'programs', req.params.filename);
+  console.log(`📁 Trying to serve: ${filePath}`);
+  if (fs.existsSync(filePath)) {
+    res.sendFile(filePath);
+  } else {
+    console.log(`❌ File not found: ${filePath}`);
+    res.status(404).json({ error: 'File not found', filename: req.params.filename });
+  }
+});
+
+// ✅ مسار مباشر لخدمة الصور الشخصية
+app.get('/uploads/avatars/:filename', (req, res) => {
+  const filePath = path.join(__dirname, 'uploads', 'avatars', req.params.filename);
+  if (fs.existsSync(filePath)) {
+    res.sendFile(filePath);
+  } else {
+    res.status(404).json({ error: 'File not found' });
+  }
+});
+
+// ✅ API للتحقق من وجود الصور (للتشخيص)
+app.get('/api/check-image/:filename', (req, res) => {
+  const filePath = path.join(__dirname, 'uploads', 'programs', req.params.filename);
+  const exists = fs.existsSync(filePath);
+  res.json({ 
+    filename: req.params.filename, 
+    exists, 
+    path: filePath,
+    fullUrl: `${req.protocol}://${req.get('host')}/uploads/programs/${req.params.filename}`
+  });
+});
+
+// ===================== إعداد رفع الصور =====================
 const uploadDir = path.join(__dirname, 'uploads', 'avatars');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
@@ -289,8 +345,6 @@ const upload = multer({
     cb(new Error('نوع الملف غير مدعوم. استخدم JPG, PNG, GIF فقط.'));
   }
 });
-
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // ===================== Routes الرئيسية =====================
 app.get('/', (req, res) => {
