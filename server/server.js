@@ -1,5 +1,4 @@
-// server.js - النسخة النهائية المتوافقة مع Render (ES Modules + IPv4 + SSL تجاوز)
-// ✅ تم إصلاح اتصال قاعدة البيانات لـ Render باستخدام Session Pooler ورفض الشهادة
+// server.js - النسخة النهائية مع إصلاح مشكلة الصور وإضافة images إلى استعلام /api/programs
 
 import express from 'express';
 import cors from 'cors';
@@ -95,7 +94,6 @@ io.on('connection', (socket) => {
     socket.to(`chat:${chatId}`).emit('typing', { userId: socket.userId, isTyping });
   });
 
-  // ✅ مستمع لإشعارات المرشدين
   socket.on('notify_guide', async (data) => {
     const { guideId, userId, userName, message, ticketId, type } = data;
     console.log(`📢 Socket notify_guide received for guide ${guideId}`);
@@ -112,7 +110,6 @@ io.on('connection', (socket) => {
       });
       console.log(`✅ Guide ${guideId} notified via socket (online)`);
     } else {
-      // تخزين الإشعار في قاعدة البيانات للمرشد غير المتصل
       try {
         await pool.query(`
           INSERT INTO app.notifications 
@@ -150,19 +147,15 @@ io.on('connection', (socket) => {
 });
 
 // ===================== إعداد PostgreSQL السحابي (Supabase) =====================
-// ✅ استخدام متغير البيئة DATABASE_URL (رابط Session Pooler بدون ?sslmode=require)
 const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://postgres.sqcdxhmnrbazrzeswxmv:1Z8EorhYqsAClmLn@aws-1-ap-northeast-1.pooler.supabase.com:6543/postgres';
 
-console.log('✅ Connecting to Supabase Cloud via DATABASE_URL (SSL managed by pool)');
+console.log('✅ Connecting to Supabase Cloud via DATABASE_URL');
 console.log(`🔗 Connection string (hidden password): ${DATABASE_URL.replace(/:[^:]*@/, ':****@')}`);
 
-// إعدادات Pool المتوافقة مع Render (فرض IPv4 + تجاوز SSL)
 const pool = new Pool({
   connectionString: DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false,   // ✅ تجاوز شهادة self-signed
-  },
-  family: 4,                     // ✅ فرض IPv4 (حل مشكلة ENETUNREACH)
+  ssl: { rejectUnauthorized: false },
+  family: 4,
   max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 30000,
@@ -186,7 +179,6 @@ async function getUUIDFromNumericId(numericId) {
   return uuid;
 }
 
-// دالة الاتصال بقاعدة البيانات مع إعادة المحاولة ومعالجة أخطاء SSL/IPv6
 const connectDB = async (retries = 5, delay = 5000) => {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -214,12 +206,6 @@ const connectDB = async (retries = 5, delay = 5000) => {
       return true;
     } catch (error) {
       console.error(`❌ Supabase Connection Failed (attempt ${attempt}/${retries}):`, error.message);
-      if (error.message.includes('self-signed certificate')) {
-        console.log('⚠️ SSL certificate issue - ensure rejectUnauthorized: false is set.');
-      }
-      if (error.message.includes('ENETUNREACH') || error.message.includes('IPv6')) {
-        console.log('⚠️ IPv6 connectivity issue detected - family=4 should resolve this.');
-      }
       if (attempt < retries) {
         console.log(`⏳ Retrying in ${delay/1000} seconds...`);
         await new Promise(resolve => setTimeout(resolve, delay));
@@ -236,7 +222,7 @@ const connectDB = async (retries = 5, delay = 5000) => {
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 
 app.use(cors({
-  origin: '*', // ✅ السماح لأي نطاق (حل فوري لمشكلة CORS)
+  origin: '*',
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
@@ -413,7 +399,8 @@ app.put('/api/users/:userId/profile', async (req, res) => {
   }
 });
 
-// ===================== مسارات البرامج (مع safety_guidelines) =====================
+// ===================== 🔥 مسارات البرامج المحسّنة مع الصور =====================
+
 app.get('/api/guides/:guideId/programs', async (req, res) => {
   try {
     let guideId = req.params.guideId;
@@ -436,7 +423,17 @@ app.get('/api/guides/:guideId/programs', async (req, res) => {
     
     console.log(`🔍 Fetching programs for guide UUID: ${guideId}`);
     const result = await pool.query(
-      `SELECT p.*, p.guide_name, p.safety_guidelines
+      `SELECT p.*, p.guide_name, p.safety_guidelines,
+              COALESCE(
+                (SELECT json_agg(
+                  json_build_object(
+                    'id', pi.id,
+                    'image_url', pi.image_url,
+                    'is_primary', pi.is_primary,
+                    'display_order', pi.display_order
+                  ) ORDER BY pi.is_primary DESC, pi.display_order ASC
+                ) FROM program_images pi WHERE pi.program_id = p.id
+              ), '[]'::json) as images
        FROM programs p
        WHERE p.guide_id = $1
        ORDER BY p.created_at DESC`,
@@ -451,16 +448,31 @@ app.get('/api/guides/:guideId/programs', async (req, res) => {
   }
 });
 
+// ✅ المسار الرئيسي لجلب البرامج مع الصور (تم إصلاحه)
 app.get('/api/programs', async (req, res) => {
   try {
     let { guide_id } = req.query;
     let query = `
-      SELECT p.*, p.guide_name, p.safety_guidelines
+      SELECT 
+        p.*, 
+        p.guide_name, 
+        p.safety_guidelines,
+        COALESCE(
+          (SELECT json_agg(
+            json_build_object(
+              'id', pi.id,
+              'image_url', pi.image_url,
+              'is_primary', pi.is_primary,
+              'display_order', pi.display_order
+            ) ORDER BY pi.is_primary DESC, pi.display_order ASC
+          ) FROM program_images pi WHERE pi.program_id = p.id
+        ), '[]'::json) as images
       FROM programs p
-      WHERE 1=1
+      WHERE p.status = 'active'
     `;
     const params = [];
     let paramIndex = 1;
+    
     if (guide_id) {
       let realGuideId = guide_id;
       if (/^\d+$/.test(guide_id)) {
@@ -472,11 +484,50 @@ app.get('/api/programs', async (req, res) => {
       paramIndex++;
     }
     query += ` ORDER BY p.created_at DESC`;
+    
     const result = await pool.query(query, params);
-    res.json({ success: true, programs: result.rows, count: result.rows.length });
+    
+    // تحويل النتيجة لتضمن الصور
+    const programs = result.rows.map(row => ({
+      ...row,
+      images: Array.isArray(row.images) ? row.images : []
+    }));
+    
+    console.log(`✅ Loaded ${programs.length} programs with images`);
+    res.json({ success: true, programs, count: programs.length });
   } catch (error) {
     console.error('❌ Error fetching programs:', error);
     res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ✅ مسار جلب برنامج واحد مع صوره
+app.get('/api/programs/:programId', async (req, res) => {
+  try {
+    const { programId } = req.params;
+    const result = await pool.query(`
+      SELECT p.*, p.guide_name, p.safety_guidelines,
+             COALESCE(
+               (SELECT json_agg(
+                 json_build_object(
+                   'id', pi.id,
+                   'image_url', pi.image_url,
+                   'is_primary', pi.is_primary,
+                   'display_order', pi.display_order
+                 ) ORDER BY pi.is_primary DESC, pi.display_order ASC
+               ) FROM program_images pi WHERE pi.program_id = p.id
+             ), '[]'::json) as images
+      FROM programs p
+      WHERE p.id = $1
+    `, [programId]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Program not found' });
+    }
+    res.json({ success: true, program: result.rows[0] });
+  } catch (error) {
+    console.error('Error fetching program:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
@@ -527,10 +578,7 @@ app.put('/api/programs/:programId', async (req, res) => {
   }
   
   try {
-    const checkOwner = await pool.query(
-      'SELECT guide_id FROM programs WHERE id = $1',
-      [programId]
-    );
+    const checkOwner = await pool.query('SELECT guide_id FROM programs WHERE id = $1', [programId]);
     if (checkOwner.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'البرنامج غير موجود' });
     }
@@ -778,7 +826,6 @@ async function sendNotificationToAllAdmins(type, title, message, relatedId = nul
 
 // ===================== إشعارات المستخدمين والمرشدين =====================
 
-// إرسال إشعار لمستخدم عادي أو مرشد
 async function sendNotification(userId, type, title, message, actionUrl = null, metadata = {}) {
   try {
     const result = await pool.query(
@@ -790,7 +837,6 @@ async function sendNotification(userId, type, title, message, actionUrl = null, 
     );
     console.log(`📨 Notification sent to user ${userId}: ${title}`);
     
-    // إرسال إشعار فوري عبر Socket إذا كان المستخدم متصلاً
     const userSocketId = onlineUsers.get(userId);
     if (userSocketId && io) {
       io.to(userSocketId).emit('new_notification', {
@@ -812,7 +858,6 @@ async function sendNotification(userId, type, title, message, actionUrl = null, 
   }
 }
 
-// إرسال إشعار للمرشد عند إنشاء تذكرة محادثة جديدة
 async function notifyGuideNewTicket(guideId, userName, ticketId, message) {
   return sendNotification(
     guideId,
@@ -824,7 +869,6 @@ async function notifyGuideNewTicket(guideId, userName, ticketId, message) {
   );
 }
 
-// إرسال إشعار للمرشد عند وصول رسالة جديدة
 async function notifyGuideNewMessage(guideId, userName, message, ticketId) {
   return sendNotification(
     guideId,
