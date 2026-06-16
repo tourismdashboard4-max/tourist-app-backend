@@ -1,4 +1,4 @@
-// server.js - النسخة النهائية مع إصلاح مشكلة الصور (لا تحذف القديمة)
+// server.js - النسخة النهائية مع إصلاح مشكلة إضافة صور متعددة
 
 import express from 'express';
 import cors from 'cors';
@@ -300,6 +300,7 @@ app.get('/api/check-image/:filename', (req, res) => {
 const uploadDir = path.join(__dirname, 'uploads', 'avatars');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
+// ✅ تعديل تخزين الصور لاستقبال ملفات متعددة
 const programStorage = multer.diskStorage({
   destination: (req, file, cb) => {
     const dir = path.join(__dirname, 'uploads', 'programs');
@@ -309,7 +310,9 @@ const programStorage = multer.diskStorage({
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     const ext = path.extname(file.originalname);
-    cb(null, `program_${req.params.programId}_${uniqueSuffix}${ext}`);
+    // استخدام programId من params
+    const programId = req.params.programId || Date.now();
+    cb(null, `program_${programId}_${uniqueSuffix}${ext}`);
   }
 });
 
@@ -502,7 +505,7 @@ app.get('/api/guides/:guideId/programs', async (req, res) => {
   }
 });
 
-// ✅ المسار الرئيسي لجلب البرامج مع الصور (تم إصلاحه)
+// ✅ المسار الرئيسي لجلب البرامج مع الصور
 app.get('/api/programs', async (req, res) => {
   try {
     let { guide_id } = req.query;
@@ -541,19 +544,14 @@ app.get('/api/programs', async (req, res) => {
     
     const result = await pool.query(query, params);
     
-    // تحويل النتيجة لتضمن الصور بشكل صحيح
     const programs = result.rows.map(row => {
-      // استخراج روابط الصور من جدول program_images
       let imageUrls = [];
       if (row.images && Array.isArray(row.images)) {
         imageUrls = row.images.map(img => img.image_url).filter(Boolean);
       }
-      
-      // إذا لم تكن هناك صور في جدول program_images، استخدم الصورة الرئيسية
       if (imageUrls.length === 0 && row.image) {
         imageUrls = [row.image];
       }
-      
       return {
         ...row,
         images: imageUrls,
@@ -715,7 +713,7 @@ app.patch('/api/programs/:programId/status', async (req, res) => {
   }
 });
 
-// ===================== مسارات صور البرامج المتعددة (تم إصلاحها - لا تحذف القديمة) =====================
+// ===================== مسارات صور البرامج المتعددة (تم إصلاحها بالكامل) =====================
 app.post('/api/programs/:programId/images', uploadProgramImages.array('images', 10), async (req, res) => {
   const { programId } = req.params;
   const files = req.files;
@@ -723,6 +721,8 @@ app.post('/api/programs/:programId/images', uploadProgramImages.array('images', 
   if (!files || files.length === 0) {
     return res.status(400).json({ success: false, message: 'لم يتم رفع أي صور' });
   }
+  
+  console.log(`📸 Uploading ${files.length} images for program ${programId}`);
   
   try {
     const uploadedImages = [];
@@ -737,21 +737,26 @@ app.post('/api/programs/:programId/images', uploadProgramImages.array('images', 
     );
     const startOrder = parseInt(existingImages.rows[0].count);
     
+    console.log(`📸 Existing images count: ${startOrder}`);
+    
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const timestamp = Date.now();
       const random = Math.round(Math.random() * 1E9);
-      const optimizedFilename = `program_${programId}_${timestamp}_${random}_${i}.jpg`;
+      const ext = path.extname(file.originalname);
+      const optimizedFilename = `program_${programId}_${timestamp}_${random}_${i}${ext}`;
       const optimizedPath = path.join(__dirname, 'uploads', 'programs', optimizedFilename);
-      const programsDir = path.join(__dirname, 'uploads', 'programs');
-      if (!fs.existsSync(programsDir)) fs.mkdirSync(programsDir, { recursive: true });
       
-      await sharp(file.path).resize(800, 600, { fit: 'inside' }).jpeg({ quality: 80 }).toFile(optimizedPath);
+      await sharp(file.path)
+        .resize(800, 600, { fit: 'inside' })
+        .jpeg({ quality: 80 })
+        .toFile(optimizedPath);
+      
       fs.unlinkSync(file.path);
       const imageUrl = `/uploads/programs/${optimizedFilename}`;
       
-      // ✅ التحقق مما إذا كانت الصورة رئيسية من الـ request
-      const isPrimary = req.body.is_primary === 'true' || (i === 0 && startOrder === 0);
+      // ✅ التحقق مما إذا كانت الصورة رئيسية
+      const isPrimary = (i === 0 && startOrder === 0);
       
       if (isPrimary) {
         primaryImageUrl = imageUrl;
@@ -763,11 +768,12 @@ app.post('/api/programs/:programId/images', uploadProgramImages.array('images', 
         [programId, imageUrl, isPrimary, startOrder + i]
       );
       uploadedImages.push(result.rows[0]);
+      console.log(`📸 Uploaded image ${i+1}/${files.length}: ${optimizedFilename}`);
     }
     
     // ✅ إذا تم تعيين صورة رئيسية جديدة
     if (primaryImageUrl) {
-      // إزالة الصورة الرئيسية القديمة (تعيين is_primary = false للجميع)
+      // إزالة الصورة الرئيسية القديمة
       await pool.query(
         'UPDATE program_images SET is_primary = false WHERE program_id = $1',
         [programId]
@@ -775,7 +781,7 @@ app.post('/api/programs/:programId/images', uploadProgramImages.array('images', 
       // تعيين الصورة الجديدة كرئيسية
       await pool.query(
         'UPDATE program_images SET is_primary = true WHERE id = $1',
-        [uploadedImages.find(img => img.image_url === primaryImageUrl)?.id]
+        [uploadedImages[0].id]
       );
       // تحديث حقل image في جدول programs
       await pool.query(
@@ -788,22 +794,15 @@ app.post('/api/programs/:programId/images', uploadProgramImages.array('images', 
         'SELECT id FROM program_images WHERE program_id = $1 AND is_primary = true LIMIT 1',
         [programId]
       );
-      if (primaryCheck.rows.length === 0) {
-        // تعيين أول صورة كرئيسية
-        const firstImage = await pool.query(
-          'SELECT id, image_url FROM program_images WHERE program_id = $1 ORDER BY display_order ASC LIMIT 1',
-          [programId]
+      if (primaryCheck.rows.length === 0 && uploadedImages.length > 0) {
+        await pool.query(
+          'UPDATE program_images SET is_primary = true WHERE id = $1',
+          [uploadedImages[0].id]
         );
-        if (firstImage.rows.length > 0) {
-          await pool.query(
-            'UPDATE program_images SET is_primary = true WHERE id = $1',
-            [firstImage.rows[0].id]
-          );
-          await pool.query(
-            'UPDATE programs SET image = $1, updated_at = NOW() WHERE id = $2',
-            [firstImage.rows[0].image_url, programId]
-          );
-        }
+        await pool.query(
+          'UPDATE programs SET image = $1, updated_at = NOW() WHERE id = $2',
+          [uploadedImages[0].image_url, programId]
+        );
       }
     }
     
@@ -812,6 +811,8 @@ app.post('/api/programs/:programId/images', uploadProgramImages.array('images', 
       'SELECT * FROM program_images WHERE program_id = $1 ORDER BY display_order ASC',
       [programId]
     );
+    
+    console.log(`📸 Successfully uploaded ${uploadedImages.length} images, total now: ${allImages.rows.length}`);
     
     res.json({ success: true, images: allImages.rows });
   } catch (error) {
@@ -851,10 +852,8 @@ app.delete('/api/programs/:programId/images/:imageId', async (req, res) => {
     const imagePath = path.join(__dirname, imageResult.rows[0].image_url);
     if (fs.existsSync(imagePath)) fs.unlinkSync(imagePath);
     
-    // حذف الصورة من قاعدة البيانات
     await pool.query('DELETE FROM program_images WHERE id = $1', [imageId]);
     
-    // ✅ إذا كانت الصورة المحذوفة هي الرئيسية، قم بتعيين صورة جديدة كرئيسية
     if (wasPrimary) {
       const remaining = await pool.query(
         'SELECT id, image_url FROM program_images WHERE program_id = $1 ORDER BY display_order ASC LIMIT 1',
@@ -867,7 +866,6 @@ app.delete('/api/programs/:programId/images/:imageId', async (req, res) => {
           [remaining.rows[0].image_url, programId]
         );
       } else {
-        // ✅ إذا لم تبقى صور، قم بتفريغ حقل image
         await pool.query(
           'UPDATE programs SET image = NULL, updated_at = NOW() WHERE id = $1',
           [programId]
@@ -875,7 +873,6 @@ app.delete('/api/programs/:programId/images/:imageId', async (req, res) => {
       }
     }
     
-    // ✅ إرجاع الصور المتبقية
     const remainingImages = await pool.query(
       'SELECT * FROM program_images WHERE program_id = $1 ORDER BY display_order ASC',
       [programId]
@@ -894,7 +891,6 @@ app.put('/api/programs/:programId/images/:imageId/primary', async (req, res) => 
     await pool.query('UPDATE program_images SET is_primary = false WHERE program_id = $1', [programId]);
     await pool.query('UPDATE program_images SET is_primary = true WHERE id = $1 AND program_id = $2', [imageId, programId]);
     
-    // ✅ تحديث الصورة الرئيسية في جدول programs
     const imageResult = await pool.query(
       'SELECT image_url FROM program_images WHERE id = $1',
       [imageId]
