@@ -487,11 +487,25 @@ app.get('/api/programs', async (req, res) => {
     
     const result = await pool.query(query, params);
     
-    // تحويل النتيجة لتضمن الصور
-    const programs = result.rows.map(row => ({
-      ...row,
-      images: Array.isArray(row.images) ? row.images : []
-    }));
+    // تحويل النتيجة لتضمن الصور بشكل صحيح
+    const programs = result.rows.map(row => {
+      // استخراج روابط الصور من جدول program_images
+      let imageUrls = [];
+      if (row.images && Array.isArray(row.images)) {
+        imageUrls = row.images.map(img => img.image_url).filter(Boolean);
+      }
+      
+      // إذا لم تكن هناك صور في جدول program_images، استخدم الصورة الرئيسية
+      if (imageUrls.length === 0 && row.image) {
+        imageUrls = [row.image];
+      }
+      
+      return {
+        ...row,
+        images: imageUrls,
+        image: imageUrls.length > 0 ? imageUrls[0] : null
+      };
+    });
     
     console.log(`✅ Loaded ${programs.length} programs with images`);
     res.json({ success: true, programs, count: programs.length });
@@ -524,7 +538,24 @@ app.get('/api/programs/:programId', async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Program not found' });
     }
-    res.json({ success: true, program: result.rows[0] });
+    
+    const row = result.rows[0];
+    let imageUrls = [];
+    if (row.images && Array.isArray(row.images)) {
+      imageUrls = row.images.map(img => img.image_url).filter(Boolean);
+    }
+    if (imageUrls.length === 0 && row.image) {
+      imageUrls = [row.image];
+    }
+    
+    res.json({ 
+      success: true, 
+      program: {
+        ...row,
+        images: imageUrls,
+        image: imageUrls.length > 0 ? imageUrls[0] : null
+      } 
+    });
   } catch (error) {
     console.error('Error fetching program:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -673,7 +704,9 @@ app.get('/api/programs/:programId/images', async (req, res) => {
       `SELECT * FROM program_images WHERE program_id = $1 ORDER BY is_primary DESC, display_order ASC`,
       [programId]
     );
-    res.json({ success: true, images: result.rows });
+    // إرجاع روابط الصور فقط
+    const imageUrls = result.rows.map(row => row.image_url).filter(Boolean);
+    res.json({ success: true, images: imageUrls });
   } catch (error) {
     console.error('Error fetching program images:', error);
     res.status(500).json({ success: false, error: error.message });
