@@ -1,4 +1,5 @@
 // client/src/pages/ProfileDataPage.jsx
+// ✅ تحسين كامل: حفظ التعديل وعرض رسالة نجاح فورية
 // ✅ Apple Pay + Samsung Wallet + بطاقة التاجر
 // ✅ إضافة حسابات بنكية لجميع المستخدمين للسحب
 // ✅ دعم كامل للمستخدم العادي والمرشد
@@ -18,7 +19,6 @@ const API_BASE_URL = 'https://tourist-app-api.onrender.com';
 
 const isApplePayAvailable = () => window.ApplePaySession && ApplePaySession.canMakePayments();
 
-// التحقق من توفر Samsung Wallet
 const isSamsungWalletAvailable = () => {
   return typeof window !== 'undefined' && 
     (window.SamsungPay !== undefined || 
@@ -26,7 +26,6 @@ const isSamsungWalletAvailable = () => {
      (window.navigator && window.navigator.samsungWallet));
 };
 
-// حسابات التاجر الثابتة
 const DEPOSIT_CARD = {
   id: 'merchant_visa',
   number: '408859005066386',
@@ -35,6 +34,7 @@ const DEPOSIT_CARD = {
   isMerchant: true,
   label: { ar: 'بطاقة التاجر (فيزا)', en: 'Merchant Visa Card' }
 };
+
 const WITHDRAW_CARD = {
   id: 'merchant_mada',
   number: '9682120052427996',
@@ -71,12 +71,12 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
   const [transactions, setTransactions] = useState([]);
   const [loadingTransactions, setLoadingTransactions] = useState(false);
   
-  // الحسابات البنكية (لجميع المستخدمين)
   const [bankAccounts, setBankAccounts] = useState([]);
   const [showAddBankAccount, setShowAddBankAccount] = useState(false);
   const [newBankAccount, setNewBankAccount] = useState({ accountName: '', accountNumber: '', bankName: '' });
   const [addingBankAccount, setAddingBankAccount] = useState(false);
   const [selectedWithdrawAccount, setSelectedWithdrawAccount] = useState(null);
+  const [updateSuccess, setUpdateSuccess] = useState(false);
 
   const currentLoggedInUser = authUser || (() => {
     const stored = localStorage.getItem('user');
@@ -166,12 +166,13 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
     }
   }, [userData?.avatar_url]);
 
-  // دوال الملف الشخصي (اختصار - كما هي)
+  // دوال الملف الشخصي
   const handleEditToggle = () => { 
     if (!isOwnProfile) return;
     setIsEditing(!isEditing); 
     setShowVerificationInput(false); 
-    setPhoneVerificationStep('idle'); 
+    setPhoneVerificationStep('idle');
+    setUpdateSuccess(false);
   };
   
   useEffect(() => { 
@@ -221,9 +222,11 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
   
   const handleResendCode = () => { if (countdown > 0) return; handleVerifyPhone(); };
   
+  // ✅ دالة حفظ الملف الشخصي المحسنة مع رسالة نجاح فورية
   const handleSaveProfile = async () => {
     if (!isOwnProfile) return;
     setSaveLoading(true);
+    setUpdateSuccess(false);
     try {
       const response = await api.updateUserProfile(userData.id, { 
         fullName: editData.fullName
@@ -250,7 +253,14 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
             }
           }));
         }
-        toast.success(lang === 'ar' ? 'تم تحديث الاسم بنجاح' : 'Name updated successfully');
+        // ✅ إظهار رسالة نجاح فورية مع اسم المستخدم الجديد
+        setUpdateSuccess(true);
+        toast.success(
+          lang === 'ar' 
+            ? `✅ تم تحديث الاسم بنجاح إلى "${editData.fullName}"` 
+            : `✅ Name updated successfully to "${editData.fullName}"`,
+          { duration: 4000 }
+        );
         setIsEditing(false);
       } else {
         toast.error(response.message || (lang === 'ar' ? 'فشل تحديث البيانات' : 'Failed to update data'));
@@ -368,7 +378,7 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
     }
   };
 
-  // ========== دوال الإيداع والسحب ==========
+  // دوال الإيداع والسحب (كما هي)
   const handleMerchantDeposit = async (amount) => {
     if (!isOwnProfile) return;
     setAddBalanceLoading(true);
@@ -474,7 +484,6 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
     }
   };
 
-  // إضافة دالة Samsung Wallet (محاكاة مبدئية)
   const handleSamsungWalletDeposit = async (amount) => {
     if (!isOwnProfile) return;
     if (!isSamsungWalletAvailable()) {
@@ -484,8 +493,6 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
     setAddBalanceLoading(true);
     try {
       const token = localStorage.getItem('token');
-      // هنا يجب استخدام API حقيقي لـ Samsung Wallet
-      // كمثال، سنستخدم نفس endpoint مؤقتاً
       const response = await fetch(`${API_BASE_URL}/api/payments/samsung-pay/deposit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
@@ -569,7 +576,6 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
     }
   };
 
-  // دوال الحسابات البنكية
   const handleAddBankAccount = async () => {
     if (!isOwnProfile) return;
     if (!newBankAccount.accountName.trim() || !newBankAccount.accountNumber.trim() || !newBankAccount.bankName.trim()) {
@@ -709,7 +715,7 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
       </div>
 
       <div className="p-4 space-y-4">
-        {/* Profile Card (مختصر) */}
+        {/* Profile Card */}
         <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg overflow-hidden border border-gray-100 dark:border-gray-700">
           <div className="relative h-24 bg-gradient-to-r from-green-500 to-emerald-600"></div>
           <div className="relative px-4 pb-5">
@@ -754,6 +760,15 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
                 <Shield size={12} className="text-green-600" />
                 {lang === 'ar' ? 'عضو موثق' : 'Verified Member'} • {lang === 'ar' ? 'انضم في ' : 'Joined '}{new Date(userData.createdAt).toLocaleDateString(lang === 'ar' ? 'ar-SA' : 'en-US')}
               </p>
+              {/* ✅ عرض رسالة نجاح التعديل */}
+              {updateSuccess && (
+                <div className="mt-2 p-2 bg-green-100 dark:bg-green-900/30 border border-green-300 dark:border-green-700 rounded-lg flex items-center justify-center gap-2 animate-pulse">
+                  <CheckCircle size={16} className="text-green-600" />
+                  <span className="text-sm font-medium text-green-700 dark:text-green-300">
+                    {lang === 'ar' ? `✅ تم تحديث الاسم إلى "${editData.fullName}"` : `✅ Name updated to "${editData.fullName}"`}
+                  </span>
+                </div>
+              )}
             </div>
             {isOwnProfile && (
               <>
@@ -763,12 +778,29 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
                   </button>
                   {isEditing && (
                     <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-700/50 rounded-xl space-y-3">
-                      <input type="text" name="fullName" value={editData.fullName} onChange={handleInputChange} placeholder={lang === 'ar' ? 'الاسم الكامل' : 'Full Name'} className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-green-500 outline-none dark:bg-gray-800" />
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                          {lang === 'ar' ? 'الاسم الكامل' : 'Full Name'}
+                        </label>
+                        <input 
+                          type="text" 
+                          name="fullName" 
+                          value={editData.fullName} 
+                          onChange={handleInputChange} 
+                          placeholder={lang === 'ar' ? 'الاسم الكامل' : 'Full Name'} 
+                          className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-green-500 outline-none dark:bg-gray-800" 
+                        />
+                      </div>
                       <div className="relative">
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                          {lang === 'ar' ? 'البريد الإلكتروني' : 'Email'}
+                        </label>
                         <input type="email" value={userData.email || ''} disabled className="w-full p-3 border rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed" />
-                        <span className="absolute left-3 top-3 text-gray-400"><Mail size={18} /></span>
                       </div>
                       <div className="space-y-2">
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                          {lang === 'ar' ? 'رقم الجوال' : 'Phone'}
+                        </label>
                         <div className="flex gap-2">
                           <input type="tel" name="phone" value={editData.phone} onChange={handleInputChange} placeholder={lang === 'ar' ? 'رقم الجوال' : 'Phone'} className="flex-1 p-3 border rounded-lg focus:ring-2 focus:ring-green-500 outline-none dark:bg-gray-800" />
                           {editData.phone && editData.phone !== userData.phone && (
@@ -794,8 +826,12 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
                           </div>
                         )}
                       </div>
-                      <button onClick={handleSaveProfile} disabled={saveLoading} className="w-full py-2 bg-green-600 text-white rounded-lg">
-                        {saveLoading ? (lang === 'ar' ? 'جاري الحفظ...' : 'Saving...') : (lang === 'ar' ? 'حفظ التغييرات' : 'Save Changes')}
+                      <button onClick={handleSaveProfile} disabled={saveLoading} className="w-full py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition flex items-center justify-center gap-2">
+                        {saveLoading ? (
+                          <><div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div> {lang === 'ar' ? 'جاري الحفظ...' : 'Saving...'}</>
+                        ) : (
+                          <><Save size={18} /> {lang === 'ar' ? 'حفظ التغييرات' : 'Save Changes'}</>
+                        )}
                       </button>
                     </div>
                   )}
@@ -935,7 +971,7 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
               </div>
             )}
 
-            {/* Deposit Popup - مع Apple Pay و Samsung Wallet */}
+            {/* Deposit Popup */}
             {showAddBalance && (
               <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowAddBalance(false)}>
                 <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-sm w-full p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
@@ -1065,7 +1101,7 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
               </div>
             )}
 
-            {/* Invoices Modal (مختصر) */}
+            {/* Invoices Modal */}
             {showInvoices && (
               <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowInvoices(false)}>
                 <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-lg w-full max-h-[80vh] overflow-hidden shadow-xl" onClick={e => e.stopPropagation()}>
