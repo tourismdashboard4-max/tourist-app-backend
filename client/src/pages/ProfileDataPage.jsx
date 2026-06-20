@@ -29,7 +29,7 @@ const isSamsungWalletAvailable = () => {
 const DEPOSIT_CARD = {
   id: 'merchant_visa',
   number: '408859005066386',
-  holder: 'HALA MERCHANT 7111',
+  holder: 'HALA MERCHANT ',
   type: 'visa',
   isMerchant: true,
   label: { ar: 'بطاقة التاجر (فيزا)', en: 'Merchant Visa Card' }
@@ -38,7 +38,7 @@ const DEPOSIT_CARD = {
 const WITHDRAW_CARD = {
   id: 'merchant_mada',
   number: '9682120052427996',
-  holder: 'HALA MERCHANT 3339',
+  holder: 'HALA MERCHANT ',
   type: 'mada',
   isMerchant: true,
   label: { ar: 'حساب التاجر (مدى)', en: 'Merchant Mada Account' }
