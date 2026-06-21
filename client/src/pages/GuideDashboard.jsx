@@ -1,11 +1,11 @@
 // client/src/pages/GuideDashboard.jsx
-// ✅ النسخة النهائية – ألوان كلاسيكية، عرض البرامج، طلبات الحجز، حذف المحادثات نهائياً
-// ✅ تم إصلاح مشكلة اختفاء الصور وحفظها بشكل دائم مع إعادة التحقق الدوري
-// ✅ إضافة حد أقصى 11 صورة لكل برنامج
-// ✅ إصلاح جلب الصور من API والتعامل مع حقول url المختلفة
-// ✅ توحيد مفتاح حذف المحادثات مع بقية الصفحات (deleted_support_tickets)
-// ✅ تحسين دالة deleteConversation لاستخراج المعرف بشكل صحيح
-// ✅ تحسينات إضافية: تحديث is_primary، استخدام cache بشكل أفضل، تحرير blob URLs، التحقق من الحد الأقصى في التعديل
+// ✅ النسخة النهائية – مع إصلاح حذف الصور بشكل دائم باستخدام getImageId الموحدة
+// ✅ تم إضافة دالة getImageId لاستخراج المعرف من عدة حقول محتملة
+// ✅ تم تعديل formatProgramFromServer و openEditModal و removeImage و handleUpdateProgram لاستخدام getImageId
+// ✅ تم تحديث saveImagesToCache لضمان تخزين المعرفات
+// ✅ تم إصلاح originalImageIdsRef ليحتوي على المعرفات الصحيحة عند فتح التعديل
+// ✅ تم تعديل fetchRealPrograms لجلب الصور بشكل منفصل للحصول على المعرفات
+// ✅ تم إضافة clearImagesCache قبل كل جلب لضمان تحديث البيانات
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
@@ -27,8 +27,6 @@ const API_BASE = 'https://tourist-app-api.onrender.com';
 const SOCKET_URL = 'https://tourist-app-api.onrender.com';
 
 const MAX_PROGRAM_IMAGES = 11;
-
-// ✅ مفتاح موحد لحذف التذاكر (متوافق مع صفحة الإشعارات والدعم)
 const DELETED_TICKETS_KEY = 'deleted_support_tickets';
 
 const buildImageUrl = (url) => {
@@ -46,6 +44,12 @@ const getImageUrl = (img) => {
     return img.url || img.image_url || img.src || null;
   }
   return null;
+};
+
+// ✅ دالة مساعدة لاستخراج معرف الصورة من كائن الصورة بمرونة
+const getImageId = (img) => {
+  if (!img) return null;
+  return img.id || img.image_id || img.program_image_id || null;
 };
 
 // تنظيف التذاكر القديمة (إذا كان هناك تذاكر مخزنة تحت مفتاح قديم)
@@ -67,19 +71,28 @@ const cleanupOldTickets = () => {
 cleanupOldTickets();
 
 // ============================================================
-// ✅ دوال إدارة الصور المؤقتة (cache) لمنع اختفاء الصور
+// ✅ دوال إدارة الصور المؤقتة (cache) في localStorage
 // ============================================================
 const IMAGE_CACHE_KEY = 'guide_programs_images_cache';
 
+// ✅ تحسين saveImagesToCache: حذف المفتاح إذا كانت المصفوفة فارغة، وتخزين المعرفات باستخدام getImageId
 const saveImagesToCache = (programId, images) => {
   try {
     const cache = JSON.parse(localStorage.getItem(IMAGE_CACHE_KEY) || '{}');
-    cache[programId] = {
-      images,
-      timestamp: Date.now()
-    };
+    if (images && images.length > 0) {
+      const imagesWithId = images.map(img => ({
+        ...img,
+        id: getImageId(img) || null
+      }));
+      cache[programId] = {
+        images: imagesWithId,
+        timestamp: Date.now()
+      };
+    } else {
+      delete cache[programId];
+    }
     localStorage.setItem(IMAGE_CACHE_KEY, JSON.stringify(cache));
-    console.log(`💾 Saved ${images.length} images to cache for program ${programId}`);
+    console.log(`💾 Saved ${images?.length || 0} images to cache for program ${programId}`);
   } catch (e) {
     console.warn('Failed to save images to cache:', e);
   }
@@ -103,6 +116,7 @@ const getImagesFromCache = (programId) => {
 
 const clearImagesCache = () => {
   localStorage.removeItem(IMAGE_CACHE_KEY);
+  console.log('🧹 Cleared entire image cache');
 };
 // ============================================================
 
@@ -369,143 +383,135 @@ const GuideDashboard = ({ lang, guide, setPage, user, setUserPrograms, onProgram
   }, [user?.id, getDeletedTickets]);
 
   // بناء المحادثات الموحدة
-const buildUnifiedChats = useCallback(async (tickets, notifs) => {
-  const deletedSet = getDeletedTickets();
-  const CHAT_TYPES = new Set([
-    'new_chat_ticket', 'guide_chat', 'new_chat_message',
-    'GUIDE_CHAT', 'NEW_CHAT_TICKET', 'NEW_CHAT_MESSAGE',
-    'new_message', 'NEW_MESSAGE', 'support_message', 'SUPPORT_MESSAGE'
-  ]);
+  const buildUnifiedChats = useCallback(async (tickets, notifs) => {
+    const deletedSet = getDeletedTickets();
+    const CHAT_TYPES = new Set([
+      'new_chat_ticket', 'guide_chat', 'new_chat_message',
+      'GUIDE_CHAT', 'NEW_CHAT_TICKET', 'NEW_CHAT_MESSAGE',
+      'new_message', 'NEW_MESSAGE', 'support_message', 'SUPPORT_MESSAGE'
+    ]);
 
-  // ✅ تصفية الإشعارات - استبعاد المحذوفة
-  const chatNotifs = notifs
-    .filter(n => CHAT_TYPES.has(n.type))
-    .map(n => {
-      // استخراج ticketId بنفس طريقة deleteConversation
-      let ticketId = null;
-      // 1. من n.data
-      if (n.data) {
-        let parsedData = n.data;
-        if (typeof parsedData === 'string') {
-          try { parsedData = JSON.parse(parsedData); } catch (e) {}
+    const chatNotifs = notifs
+      .filter(n => CHAT_TYPES.has(n.type))
+      .map(n => {
+        let ticketId = null;
+        if (n.data) {
+          let parsedData = n.data;
+          if (typeof parsedData === 'string') {
+            try { parsedData = JSON.parse(parsedData); } catch (e) {}
+          }
+          ticketId = parsedData?.ticketId || parsedData?.ticket_id || null;
         }
-        ticketId = parsedData?.ticketId || parsedData?.ticket_id || null;
-      }
-      // 2. من n مباشرة
-      if (!ticketId) {
-        ticketId = n.ticket_id || n.ticketId || null;
-      }
-      // 3. من action_url
-      if (!ticketId && n.action_url) {
-        const m = String(n.action_url).match(/\d+/);
-        if (m) ticketId = m[0];
-      }
-      if (!ticketId && n.data?.action_url) {
-        const m = String(n.data.action_url).match(/\d+/);
-        if (m) ticketId = m[0];
-      }
-      // إذا كان ticketId محذوفاً، تخطى هذا الإشعار
-      if (ticketId && deletedSet.has(String(ticketId))) return null;
+        if (!ticketId) {
+          ticketId = n.ticket_id || n.ticketId || null;
+        }
+        if (!ticketId && n.action_url) {
+          const m = String(n.action_url).match(/\d+/);
+          if (m) ticketId = m[0];
+        }
+        if (!ticketId && n.data?.action_url) {
+          const m = String(n.data.action_url).match(/\d+/);
+          if (m) ticketId = m[0];
+        }
+        if (ticketId && deletedSet.has(String(ticketId))) return null;
 
-      let touristId = null;
-      let touristName = n.data?.userName || n.data?.fromName || n.data?.created_by_name || n.data?.sender_name || (lang === 'ar' ? 'مسافر' : 'Traveler');
+        let touristId = null;
+        let touristName = n.data?.userName || n.data?.fromName || n.data?.created_by_name || n.data?.sender_name || (lang === 'ar' ? 'مسافر' : 'Traveler');
 
-      if (n.data) {
-        if (typeof n.data === 'string') {
+        if (n.data) {
+          if (typeof n.data === 'string') {
+            try {
+              const parsed = JSON.parse(n.data);
+              touristId = parsed.userId || parsed.senderId || parsed.touristId || parsed.from_user_id;
+              touristName = parsed.userName || parsed.senderName || parsed.touristName || touristName;
+            } catch (e) {}
+          } else {
+            touristId = n.data.userId || n.data.senderId || n.data.touristId || n.data.from_user_id;
+            touristName = n.data.userName || n.data.senderName || n.data.touristName || touristName;
+          }
+        }
+
+        return {
+          _sourceType: 'notification',
+          id: `notif_${n.id}`,
+          ticketId: ticketId ? String(ticketId) : null,
+          touristId: touristId ? String(touristId) : null,
+          touristName: touristName,
+          subject: n.message || n.title || (lang === 'ar' ? 'رسالة جديدة' : 'New message'),
+          created_at: n.created_at,
+          is_read: n.is_read,
+          rawNotif: n,
+        };
+      }).filter(Boolean);
+
+    const chatTicketsPromises = tickets
+      .filter(t => !deletedSet.has(String(t.id)))
+      .map(async (t) => {
+        let touristId = t.user_id || t.metadata?.created_by_id || t.metadata?.userId || t.metadata?.tourist_id;
+        let touristName = t.user_name || t.metadata?.created_by_name || t.metadata?.tourist_name || (lang === 'ar' ? 'مسافر' : 'Traveler');
+
+        if ((!touristName || touristName === (lang === 'ar' ? 'مسافر' : 'Traveler')) && touristId) {
           try {
-            const parsed = JSON.parse(n.data);
-            touristId = parsed.userId || parsed.senderId || parsed.touristId || parsed.from_user_id;
-            touristName = parsed.userName || parsed.senderName || parsed.touristName || touristName;
-          } catch (e) {}
-        } else {
-          touristId = n.data.userId || n.data.senderId || n.data.touristId || n.data.from_user_id;
-          touristName = n.data.userName || n.data.senderName || n.data.touristName || touristName;
-        }
-      }
-
-      return {
-        _sourceType: 'notification',
-        id: `notif_${n.id}`,
-        ticketId: ticketId ? String(ticketId) : null,
-        touristId: touristId ? String(touristId) : null,
-        touristName: touristName,
-        subject: n.message || n.title || (lang === 'ar' ? 'رسالة جديدة' : 'New message'),
-        created_at: n.created_at,
-        is_read: n.is_read,
-        rawNotif: n,
-      };
-    }).filter(Boolean);
-
-  // ✅ تصفية التذاكر - استبعاد المحذوفة
-  const chatTicketsPromises = tickets
-    .filter(t => !deletedSet.has(String(t.id)))
-    .map(async (t) => {
-      let touristId = t.user_id || t.metadata?.created_by_id || t.metadata?.userId || t.metadata?.tourist_id;
-      let touristName = t.user_name || t.metadata?.created_by_name || t.metadata?.tourist_name || (lang === 'ar' ? 'مسافر' : 'Traveler');
-
-      if ((!touristName || touristName === (lang === 'ar' ? 'مسافر' : 'Traveler')) && touristId) {
-        try {
-          const token = localStorage.getItem('token');
-          const numericId = await convertToNumericId(touristId);
-          if (numericId) {
-            const userRes = await fetch(`${API_BASE}/api/users/${numericId}`, {
-              headers: { Authorization: `Bearer ${token}` }
-            });
-            if (userRes.ok) {
-              const userData = await userRes.json();
-              if (userData.success && userData.user) {
-                touristName = userData.user.full_name || userData.user.name || touristName;
+            const token = localStorage.getItem('token');
+            const numericId = await convertToNumericId(touristId);
+            if (numericId) {
+              const userRes = await fetch(`${API_BASE}/api/users/${numericId}`, {
+                headers: { Authorization: `Bearer ${token}` }
+              });
+              if (userRes.ok) {
+                const userData = await userRes.json();
+                if (userData.success && userData.user) {
+                  touristName = userData.user.full_name || userData.user.name || touristName;
+                }
               }
             }
+          } catch (err) {
+            console.warn('Failed to fetch user name:', err);
           }
-        } catch (err) {
-          console.warn('Failed to fetch user name:', err);
+        }
+
+        return {
+          _sourceType: 'ticket',
+          id: `ticket_${t.id}`,
+          ticketId: String(t.id),
+          touristId: touristId ? String(touristId) : null,
+          touristName: touristName,
+          subject: t.subject || (lang === 'ar' ? 'رسالة جديدة' : 'New message'),
+          created_at: t.created_at,
+          is_read: false,
+          rawTicket: t,
+        };
+      });
+
+    const chatTickets = await Promise.all(chatTicketsPromises);
+
+    const chatMap = new Map();
+    [...chatTickets, ...chatNotifs].forEach(item => {
+      if (!item || !item.touristId) return;
+      const key = item.touristId;
+      const existing = chatMap.get(key);
+      if (!existing) {
+        chatMap.set(key, item);
+      } else {
+        if (new Date(item.created_at) > new Date(existing.created_at)) {
+          chatMap.set(key, item);
+        }
+        if (!item.is_read && existing.is_read) {
+          existing.is_read = false;
+          chatMap.set(key, existing);
+        }
+        if (item.ticketId && !existing.ticketId) {
+          chatMap.set(key, item);
         }
       }
-
-      return {
-        _sourceType: 'ticket',
-        id: `ticket_${t.id}`,
-        ticketId: String(t.id),
-        touristId: touristId ? String(touristId) : null,
-        touristName: touristName,
-        subject: t.subject || (lang === 'ar' ? 'رسالة جديدة' : 'New message'),
-        created_at: t.created_at,
-        is_read: false,
-        rawTicket: t,
-      };
     });
 
-  const chatTickets = await Promise.all(chatTicketsPromises);
-
-  // ✅ دمج القائمتين مع تجنب التكرارات
-  const chatMap = new Map();
-  [...chatTickets, ...chatNotifs].forEach(item => {
-    if (!item || !item.touristId) return;
-    const key = item.touristId;
-    const existing = chatMap.get(key);
-    if (!existing) {
-      chatMap.set(key, item);
-    } else {
-      if (new Date(item.created_at) > new Date(existing.created_at)) {
-        chatMap.set(key, item);
-      }
-      if (!item.is_read && existing.is_read) {
-        existing.is_read = false;
-        chatMap.set(key, existing);
-      }
-      if (item.ticketId && !existing.ticketId) {
-        chatMap.set(key, item);
-      }
-    }
-  });
-
-  const merged = Array.from(chatMap.values());
-  merged.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-  console.log('✅ المحادثات المدمجة (محادثة واحدة لكل مستخدم):', merged.length);
-  console.log('🗑️ التذاكر المحذوفة:', [...deletedSet]);
-  return merged;
-}, [lang, getDeletedTickets, convertToNumericId]);
+    const merged = Array.from(chatMap.values());
+    merged.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    console.log('✅ المحادثات المدمجة (محادثة واحدة لكل مستخدم):', merged.length);
+    console.log('🗑️ التذاكر المحذوفة:', [...deletedSet]);
+    return merged;
+  }, [lang, getDeletedTickets, convertToNumericId]);
 
   const [unifiedChats, setUnifiedChats] = useState([]);
   const [totalUnreadChats, setTotalUnreadChats] = useState(0);
@@ -632,7 +638,7 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
     setPage('directChat');
   }, [user?.id, lang, setPage, convertToNumericId]);
 
-  // ✅ دالة محسّنة لحذف المحادثة (تدعم استخراج المعرف بطرق متعددة)
+  // ✅ دالة محسّنة لحذف المحادثة
   const deleteConversation = useCallback(async (chat, event) => {
     if (event) event.stopPropagation();
     if (!window.confirm(lang === 'ar' ? 'هل أنت متأكد من حذف هذه المحادثة نهائياً؟' : 'Are you sure you want to permanently delete this conversation?')) return;
@@ -642,16 +648,11 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
     deletingIdsRef.current.add(uniqueKey);
 
     try {
-      // ✅ محاولة استخراج ticketId بكل الطرق الممكنة
       let ticketId = null;
-
-      // 1. من chat.ticketId
       if (chat.ticketId) ticketId = chat.ticketId;
-      // 2. من chat.id (إذا لم يكن يبدأ بـ notif_ أو ticket_)
       else if (chat.id && !String(chat.id).startsWith('notif_') && !String(chat.id).startsWith('ticket_')) {
         ticketId = chat.id;
       }
-      // 3. من chat.rawNotif
       else if (chat.rawNotif) {
         if (chat.rawNotif.data) {
           let parsedData = chat.rawNotif.data;
@@ -662,12 +663,10 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
         }
         if (!ticketId) ticketId = chat.rawNotif.ticket_id || chat.rawNotif.ticketId || null;
       }
-      // 4. من chat.rawTicket
       else if (chat.rawTicket) {
         ticketId = chat.rawTicket.id || null;
       }
 
-      // ✅ إذا لم نجد ticketId، نستخدم chat.id كمعرف فريد
       if (!ticketId && chat.id) {
         const idStr = String(chat.id);
         const numericMatch = idStr.match(/\d+/);
@@ -678,7 +677,6 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
         }
       }
 
-      // ✅ إذا لم نجد أي معرف، نستخدم معرفاً فريداً مؤقتاً
       if (!ticketId) {
         ticketId = `temp_${Date.now()}`;
       }
@@ -686,10 +684,8 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
       const finalId = String(ticketId);
       console.log('🗑️ حذف المحادثة بـ ID:', finalId, chat);
 
-      // ✅ إضافة إلى localStorage
       addDeletedTicket(finalId);
 
-      // ✅ تحديث القوائم المحلية فوراً
       setGuideTickets(prev => prev.filter(t => String(t.id) !== finalId));
       setUnifiedChats(prev => prev.filter(c => {
         const cId = c.ticketId || c.id || c.uniqueId;
@@ -701,23 +697,19 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
       }));
       setBookingRequests(prev => prev.filter(b => String(b.id) !== finalId));
 
-      // ✅ تقليل عداد الرسائل غير المقروءة
       if (!chat.is_read) {
         setTotalUnreadChats(prev => Math.max(0, prev - 1));
         setUnreadChatCount(prev => Math.max(0, prev - 1));
       }
 
-      // ✅ محاولة حذف من الخادم (في الخلفية)
       const token = localStorage.getItem('token');
       if (token && !String(finalId).startsWith('temp_')) {
         try {
-          // محاولة DELETE
           const delRes = await fetch(`${API_BASE}/api/support/tickets/${finalId}`, {
             method: 'DELETE',
             headers: { Authorization: `Bearer ${token}` }
           });
           if (!delRes.ok) {
-            // إذا فشل DELETE، حاول PATCH لإغلاق التذكرة
             await fetch(`${API_BASE}/api/support/tickets/${finalId}/status`, {
               method: 'PATCH',
               headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -735,7 +727,6 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
       toast.error(lang === 'ar' ? '❌ حدث خطأ، لكن المحادثة ستختفي' : '❌ Error, but conversation will disappear');
     } finally {
       deletingIdsRef.current.delete(uniqueKey);
-      // إعادة تحميل القوائم بعد فترة للتأكد
       setTimeout(() => {
         fetchGuideTickets();
         fetchNotifications();
@@ -901,66 +892,26 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
     }).filter(Boolean);
   }, []);
 
-  // ✅ دالة محسنة للحصول على الصورة الرئيسية مع دعم cache واستخدام الأولى افتراضياً
+  // ✅ دالة محسنة للحصول على الصورة الرئيسية مع دعم cache
   const getPrimaryImage = useCallback((program) => {
     if (!program) return null;
-    
-    console.log(`🔍 Getting primary image for program ${program.id}:`, program.name);
-    
-    // 1. من كائن البرنامج مباشرة
     if (program.images && Array.isArray(program.images) && program.images.length > 0) {
-      console.log(`📸 Program ${program.id} has ${program.images.length} images from program object`);
       const primary = program.images.find(img => img.is_primary === true);
       const imgObj = primary || program.images[0];
       const url = getImageUrl(imgObj);
-      if (url) {
-        const fullUrl = buildImageUrl(url);
-        if (fullUrl) {
-          console.log(`✅ Found primary image: ${fullUrl}`);
-          return fullUrl;
-        }
-      }
+      if (url && !url.startsWith('blob:')) return buildImageUrl(url);
     }
-    
-    // 2. من cache
     const cached = getImagesFromCache(program.id);
     if (cached && cached.length > 0) {
-      console.log(`📸 Program ${program.id} has ${cached.length} images from cache`);
       const primary = cached.find(img => img.is_primary === true);
       const imgObj = primary || cached[0];
       const url = getImageUrl(imgObj);
-      if (url) {
-        const fullUrl = buildImageUrl(url);
-        if (fullUrl) {
-          console.log(`✅ Found cached image: ${fullUrl}`);
-          return fullUrl;
-        }
-      }
+      if (url && !url.startsWith('blob:')) return buildImageUrl(url);
     }
-    
-    // 3. الصورة الأساسية من program.image
     if (program.image) {
       const url = buildImageUrl(program.image);
-      if (url) {
-        console.log(`✅ Using program.image: ${url}`);
-        return url;
-      }
+      if (url && !url.startsWith('blob:')) return url;
     }
-    
-    // 4. من program.images كـ مصفوفة روابط (سلاسل نصية)
-    if (program.images && Array.isArray(program.images) && program.images.length > 0) {
-      const firstImage = program.images[0];
-      const url = getImageUrl(firstImage);
-      if (url) {
-        const fullUrl = buildImageUrl(url);
-        if (fullUrl) {
-          console.log(`✅ Using string image URL: ${fullUrl}`);
-          return fullUrl;
-        }
-      }
-    }
-    
-    console.log(`❌ No image found for program ${program.id}`);
     return null;
   }, []);
 
@@ -1018,69 +969,56 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
     setUserPrograms(mapPrograms);
   }, [setUserPrograms, user?.full_name, getPrimaryImage]);
 
-  // ✅ دالة محسنة لتهيئة الصور من البيانات المسترجعة
+  // ✅ دالة محسنة لتهيئة الصور من البيانات المسترجعة باستخدام getImageId
   const formatProgramFromServer = useCallback((p) => {
     console.log(`📦 Formatting program ${p.id}:`, p.name);
-    
     let images = [];
-    
-    // 1. من البيانات المسترجعة (images كـ json_agg من program_images)
     if (p.images && Array.isArray(p.images) && p.images.length > 0) {
-      console.log(`📸 Program ${p.id} has ${p.images.length} images from server`);
       images = p.images.map(img => {
         const url = getImageUrl(img);
         if (!url) return null;
         const fullUrl = buildImageUrl(url);
         if (!fullUrl) return null;
+        const id = getImageId(img);
+        console.log(`🔍 Extracted image ID: ${id} for URL: ${fullUrl}`);
         return { 
-          id: img.id, 
+          id: id,
           url: fullUrl, 
           image_url: fullUrl,
           is_primary: img.is_primary === true 
         };
       }).filter(Boolean);
-      
-      // تأكد من وجود صورة رئيسية
       if (images.length > 0 && !images.some(img => img.is_primary)) {
         images[0].is_primary = true;
       }
-      
-      // حفظ في cache
-      if (images.length > 0) {
-        saveImagesToCache(p.id, images);
-      }
-    } 
-    // 2. من cache
-    else {
+      saveImagesToCache(p.id, images);
+    } else {
       const cached = getImagesFromCache(p.id);
       if (cached && cached.length > 0) {
-        console.log(`📸 Program ${p.id} has ${cached.length} images from cache`);
         images = cached;
-        // تأكد من وجود صورة رئيسية
         if (!images.some(img => img.is_primary)) {
           images[0].is_primary = true;
         }
+        saveImagesToCache(p.id, images);
+      } else {
+        saveImagesToCache(p.id, []);
       }
     }
-    
-    // 3. الصورة الأساسية من p.image
     if (images.length === 0 && p.image) {
       const url = buildImageUrl(p.image);
-      if (url) {
-        console.log(`📸 Using program.image for ${p.id}: ${url}`);
+      if (url && !url.startsWith('blob:')) {
         images = [{ id: null, url, image_url: url, is_primary: true }];
         saveImagesToCache(p.id, images);
       }
     }
-    
-    // 4. من photos (تنسيق قديم)
     if (images.length === 0 && p.photos && Array.isArray(p.photos)) {
-      console.log(`📸 Using photos for ${p.id}`);
       images = p.photos.map(photo => {
         const url = getImageUrl(photo);
         if (!url) return null;
         const fullUrl = buildImageUrl(url);
-        return fullUrl ? { id: null, url: fullUrl, image_url: fullUrl, is_primary: photo.is_primary || false } : null;
+        if (!fullUrl) return null;
+        const id = getImageId(photo);
+        return { id, url: fullUrl, image_url: fullUrl, is_primary: photo.is_primary || false };
       }).filter(Boolean);
       if (images.length > 0) {
         if (!images.some(img => img.is_primary)) {
@@ -1089,12 +1027,9 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
         saveImagesToCache(p.id, images);
       }
     }
-    
-    // تعيين صورة رئيسية إذا لم توجد (ضمان أمان)
     if (images.length > 0 && !images.some(img => img.is_primary)) {
       images[0].is_primary = true;
     }
-    
     const formatted = {
       id: p.id,
       name: p.name,
@@ -1115,80 +1050,87 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
       image: images.length > 0 ? images[0].url : null,
       safetyGuidelines: p.safetyGuidelines || p.safety_guidelines || ""
     };
-    
     console.log(`✅ Formatted program ${p.id} with ${images.length} images`);
     return formatted;
   }, []);
 
+  // ✅ دالة محسنة لإعادة جلب برنامج واحد مع تحديث الكاش
   const refetchSingleProgram = useCallback(async (programId) => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE}/api/programs/${programId}`, { headers: { 'Authorization': `Bearer ${token}` } });
-      if (response.ok) {
-        const data = await response.json();
-        const programData = data.program || data.data || data;
-        if (programData) {
-          // جلب الصور بشكل منفصل أيضاً
-          let images = [];
-          try {
-            const imgRes = await fetch(`${API_BASE}/api/programs/${programId}/images`, {
-              headers: { 'Authorization': `Bearer ${token}` }
-            });
-            const imgData = await imgRes.json();
-            if (imgData.success && Array.isArray(imgData.images) && imgData.images.length > 0) {
-              images = imgData.images.map(img => {
-                const url = getImageUrl(img);
-                if (!url) return null;
-                const fullUrl = buildImageUrl(url);
-                return fullUrl ? {
-                  id: img.id,
-                  url: fullUrl,
-                  image_url: fullUrl,
-                  is_primary: img.is_primary === true
-                } : null;
-              }).filter(Boolean);
-              // تأكد من وجود صورة رئيسية
-              if (images.length > 0 && !images.some(img => img.is_primary)) {
-                images[0].is_primary = true;
-              }
-              // حفظ في cache
-              if (images.length > 0) {
-                saveImagesToCache(programId, images);
-              }
-            }
-          } catch (e) { console.warn('Could not fetch images:', e); }
-          
-          const formatted = formatProgramFromServer({
-            ...programData,
-            images: images.length > 0 ? images : programData.images
-          });
-          
-          setPrograms(prev => prev.map(p => p.id === programId ? formatted : p));
-          updateMapWithPrograms([formatted, ...programs.filter(p => p.id !== programId)]);
-          return formatted;
-        }
+      const response = await fetch(`${API_BASE}/api/programs/${programId}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!response.ok) {
+        console.warn(`Failed to fetch program ${programId}: ${response.status}`);
+        return null;
       }
-    } catch (err) { console.error(err); }
-    return null;
+      const data = await response.json();
+      const programData = data.program || data.data || data;
+      if (!programData) {
+        console.warn(`No program data for ${programId}`);
+        return null;
+      }
+      let images = [];
+      try {
+        const imgRes = await fetch(`${API_BASE}/api/programs/${programId}/images`, {
+          headers: { 'Authorization': `Bearer ${token}` },
+          cache: 'no-cache'
+        });
+        if (imgRes.ok) {
+          const imgData = await imgRes.json();
+          if (imgData.success && Array.isArray(imgData.images)) {
+            images = imgData.images.map(img => {
+              const url = getImageUrl(img);
+              if (!url) return null;
+              const fullUrl = buildImageUrl(url);
+              if (!fullUrl) return null;
+              const id = getImageId(img);
+              return { id, url: fullUrl, image_url: fullUrl, is_primary: img.is_primary === true };
+            }).filter(Boolean);
+            if (images.length > 0 && !images.some(img => img.is_primary)) {
+              images[0].is_primary = true;
+            }
+            saveImagesToCache(programId, images);
+          } else {
+            saveImagesToCache(programId, []);
+          }
+        } else {
+          console.warn(`Failed to fetch images for program ${programId}: ${imgRes.status}`);
+          saveImagesToCache(programId, []);
+        }
+      } catch (e) {
+        console.warn('Could not fetch images:', e);
+        saveImagesToCache(programId, []);
+      }
+      const formatted = formatProgramFromServer({
+        ...programData,
+        images: images.length > 0 ? images : programData.images
+      });
+      setPrograms(prev => prev.map(p => p.id === programId ? formatted : p));
+      updateMapWithPrograms([formatted, ...programs.filter(p => p.id !== programId)]);
+      return formatted;
+    } catch (err) {
+      console.error('Error refetching program:', err);
+      return null;
+    }
   }, [formatProgramFromServer, updateMapWithPrograms, programs]);
 
-  // ✅ دالة محسنة لجلب البرامج مع الصور باستخدام cache
+  // ✅ دالة محسنة لجلب البرامج مع مسح الكاش أولاً وجلب الصور من المسار المخصص للحصول على المعرفات
   const fetchRealPrograms = useCallback(async () => {
     const guideId = user?.id;
     if (!guideId) { setLoading(false); return; }
     setLoading(true);
     try {
+      // 🔥 مسح الكاش بالكامل قبل الجلب
+      clearImagesCache();
+
       const token = localStorage.getItem('token');
       let programsArray = [];
-      
-      console.log(`📥 Fetching programs for guide: ${guideId}`);
-      
-      // جلب البرامج من المسار الرئيسي
       const response = await fetch(`${API_BASE}/api/guides/${guideId}/programs`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await response.json();
-      
       if (response.ok && data.success && Array.isArray(data.programs)) {
         programsArray = data.programs;
       } else if (Array.isArray(data)) {
@@ -1196,7 +1138,6 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
       } else if (data.data && Array.isArray(data.data)) {
         programsArray = data.data;
       } else {
-        // Fallback
         const fallbackRes = await fetch(`${API_BASE}/api/programs`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
@@ -1205,96 +1146,60 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
           programsArray = fallbackData.programs.filter(p => String(p.guide_id) === String(guideId));
         }
       }
-      
       console.log(`📦 Found ${programsArray.length} programs for guide ${guideId}`);
-      
-      // ✅ جلب الصور لكل برنامج بشكل منفصل
+
+      // ✅ جلب الصور لكل برنامج من المسار المخصص للحصول على المعرفات
       const programsWithImages = await Promise.all(
         programsArray.map(async (program) => {
           let images = [];
-          
-          // ✅ محاولة جلب الصور من API
           try {
-            console.log(`📸 Fetching images for program ${program.id}`);
-            const detailRes = await fetch(`${API_BASE}/api/programs/${program.id}/images`, {
-              headers: { 'Authorization': `Bearer ${token}` }
+            const imgRes = await fetch(`${API_BASE}/api/programs/${program.id}/images`, {
+              headers: { 'Authorization': `Bearer ${token}` },
+              cache: 'no-cache'
             });
-            if (detailRes.ok) {
-              const detailData = await detailRes.json();
-              console.log(`📸 Images response for ${program.id}:`, detailData);
-              
-              if (detailData.success && Array.isArray(detailData.images) && detailData.images.length > 0) {
-                images = detailData.images.map(img => {
+            if (imgRes.ok) {
+              const imgData = await imgRes.json();
+              if (imgData.success && Array.isArray(imgData.images)) {
+                images = imgData.images.map(img => {
                   const url = getImageUrl(img);
                   if (!url) return null;
                   const fullUrl = buildImageUrl(url);
-                  return fullUrl ? {
-                    id: img.id,
-                    url: fullUrl,
-                    image_url: fullUrl,
-                    is_primary: img.is_primary === true
-                  } : null;
+                  if (!fullUrl) return null;
+                  const id = getImageId(img);
+                  return { id, url: fullUrl, image_url: fullUrl, is_primary: img.is_primary === true };
                 }).filter(Boolean);
-                // تأكد من وجود صورة رئيسية
                 if (images.length > 0 && !images.some(img => img.is_primary)) {
                   images[0].is_primary = true;
                 }
-                // حفظ في cache
-                if (images.length > 0) {
-                  saveImagesToCache(program.id, images);
-                  console.log(`💾 Saved ${images.length} images to cache for program ${program.id}`);
-                }
+                saveImagesToCache(program.id, images);
+              } else {
+                saveImagesToCache(program.id, []);
               }
+            } else {
+              console.warn(`Failed to fetch images for program ${program.id}: ${imgRes.status}`);
+              saveImagesToCache(program.id, []);
             }
           } catch (err) {
             console.warn(`Could not fetch images for program ${program.id}:`, err);
+            saveImagesToCache(program.id, []);
           }
-          
-          // ✅ إذا لم توجد صور من API، حاول من cache
-          if (images.length === 0) {
-            const cached = getImagesFromCache(program.id);
-            if (cached && cached.length > 0) {
-              images = cached;
-              console.log(`📸 Using cached images for program ${program.id}: ${images.length}`);
-              if (!images.some(img => img.is_primary)) {
-                images[0].is_primary = true;
-              }
-            }
-          }
-          
-          // ✅ إذا لم توجد صور، استخدم الصورة الأساسية
+          // إذا لم نجد صوراً، استخدم program.image كاحتياط
           if (images.length === 0 && program.image) {
             const url = buildImageUrl(program.image);
-            if (url) {
+            if (url && !url.startsWith('blob:')) {
               images = [{ id: null, url, image_url: url, is_primary: true }];
               saveImagesToCache(program.id, images);
-              console.log(`📸 Using program.image for ${program.id}: ${url}`);
             }
           }
-          
-          console.log(`📸 Program ${program.id} has ${images.length} images total`);
           return { ...program, images };
         })
       );
-      
+
       const formatted = programsWithImages.map(p => formatProgramFromServer(p));
       setPrograms(formatted);
       updateMapWithPrograms(formatted);
       updateStats(formatted);
-      
-      const totalImages = formatted.reduce((acc, p) => acc + (p.images?.length || 0), 0);
-      console.log(`✅ Loaded ${formatted.length} programs with ${totalImages} images`);
-      
-      // ✅ تحديث cache بعد التحميل
-      formatted.forEach(p => {
-        if (p.images && p.images.length > 0) {
-          if (!p.images.some(img => img.is_primary)) {
-            p.images[0].is_primary = true;
-          }
-          saveImagesToCache(p.id, p.images);
-        }
-      });
-      
+      console.log(`✅ Loaded ${formatted.length} programs with fresh data`);
     } catch (error) {
       console.error('Error fetching programs:', error);
       toast.error(lang === 'ar' ? 'فشل الاتصال بالخادم' : 'Connection failed');
@@ -1303,7 +1208,6 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
     }
   }, [user?.id, lang, formatProgramFromServer, updateMapWithPrograms, updateStats]);
 
-  // ✅ تحميل البرامج عند بدء التشغيل وكل 60 ثانية (تحديث دوري)
   useEffect(() => {
     fetchRealPrograms();
     const interval = setInterval(fetchRealPrograms, 60000);
@@ -1318,7 +1222,6 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
     const fileArray = Array.from(files);
     const currentCount = newProgram.images.length;
     const totalAfterAdd = currentCount + fileArray.length;
-    
     if (totalAfterAdd > MAX_PROGRAM_IMAGES) {
       toast.error(
         lang === 'ar'
@@ -1327,7 +1230,6 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
       );
       return;
     }
-
     for (const file of fileArray) {
       if (file.size > 5 * 1024 * 1024) { toast.error(`حجم الصورة ${file.name} أكبر من 5 ميجابايت`); continue; }
       if (!file.type.startsWith('image/')) { toast.error(`الملف ${file.name} ليس صورة`); continue; }
@@ -1348,17 +1250,82 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
     }
   };
 
-  const removeImage = (index) => {
-    setNewProgram(prev => {
-      const img = prev.images[index];
-      if (img.preview && img.preview.startsWith('blob:')) URL.revokeObjectURL(img.preview);
-      const newImages = prev.images.filter((_, i) => i !== index);
-      let newPrimaryIndex = prev.primaryImageIndex;
-      if (index === prev.primaryImageIndex) newPrimaryIndex = 0;
-      else if (index < prev.primaryImageIndex) newPrimaryIndex--;
-      if (newImages.length > 0) newImages.forEach((img, i) => { img.isPrimary = i === newPrimaryIndex; });
-      return { ...prev, images: newImages, primaryImageIndex: newImages.length > 0 ? newPrimaryIndex : 0 };
-    });
+  // ✅ تحسين removeImage: حذف فوري من الخادم في وضع التعديل، وتحديث الكاش و originalImageIdsRef
+  const removeImage = async (index) => {
+    const img = newProgram.images[index];
+    if (!img) return;
+
+    if (img.isExisting && img.id && editingProgram) {
+      if (!window.confirm(lang === 'ar' ? 'هل أنت متأكد من حذف هذه الصورة نهائياً؟' : 'Are you sure you want to delete this image?')) {
+        return;
+      }
+
+      try {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${API_BASE}/api/programs/${editingProgram.id}/images/${img.id}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!res.ok) throw new Error('فشل حذف الصورة من الخادم');
+        toast.success('✅ تم حذف الصورة بنجاح');
+
+        // تحديث originalImageIdsRef
+        originalImageIdsRef.current = originalImageIdsRef.current.filter(id => id !== img.id);
+        console.log(`🗑️ Removed image ID ${img.id} from originalImageIdsRef. Remaining:`, originalImageIdsRef.current);
+
+        // تحديث الكاش
+        const cache = JSON.parse(localStorage.getItem(IMAGE_CACHE_KEY) || '{}');
+        if (cache[editingProgram.id]) {
+          cache[editingProgram.id].images = cache[editingProgram.id].images.filter(cachedImg => getImageId(cachedImg) !== img.id);
+          if (cache[editingProgram.id].images.length === 0) {
+            delete cache[editingProgram.id];
+          } else {
+            if (!cache[editingProgram.id].images.some(i => i.is_primary)) {
+              cache[editingProgram.id].images[0].is_primary = true;
+            }
+          }
+          localStorage.setItem(IMAGE_CACHE_KEY, JSON.stringify(cache));
+        }
+
+        // ✅ إعادة جلب البرنامج لتحديث القائمة الرئيسية
+        await refetchSingleProgram(editingProgram.id);
+
+        // ✅ تحديث newProgram بعد الجلب
+        const updatedProgram = programs.find(p => p.id === editingProgram.id);
+        if (updatedProgram) {
+          const updatedImages = updatedProgram.images.map(img => ({
+            id: img.id,
+            file: null,
+            preview: buildImageUrl(getImageUrl(img)),
+            isPrimary: img.is_primary === true,
+            isExisting: !!img.id,
+            uploading: false,
+            uploadError: false
+          }));
+          const primaryIndex = Math.max(0, updatedImages.findIndex(img => img.isPrimary));
+          setNewProgram(prev => ({
+            ...prev,
+            images: updatedImages,
+            primaryImageIndex: primaryIndex
+          }));
+          originalImageIdsRef.current = updatedProgram.images.filter(img => img.id).map(img => img.id);
+        }
+      } catch (err) {
+        toast.error('❌ فشل حذف الصورة، حاول مرة أخرى');
+        console.error(err);
+        return;
+      }
+    } else {
+      // إذا كانت الصورة جديدة (لا معرف لها)، نزيلها من الحالة المحلية فقط
+      setNewProgram(prev => {
+        const newImages = prev.images.filter((_, i) => i !== index);
+        let newPrimaryIndex = prev.primaryImageIndex;
+        if (index === prev.primaryImageIndex) newPrimaryIndex = 0;
+        else if (index < prev.primaryImageIndex) newPrimaryIndex--;
+        if (newImages.length > 0) newImages.forEach((img, i) => { img.isPrimary = i === newPrimaryIndex; });
+        return { ...prev, images: newImages, primaryImageIndex: newImages.length > 0 ? newPrimaryIndex : 0 };
+      });
+    }
   };
 
   const setPrimaryImage = (index) => {
@@ -1474,7 +1441,6 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
         }
         toast.dismiss('upload-images');
         toast.success('تم رفع الصور بنجاح');
-        // حفظ الصور في cache
         const savedImages = localImages.map((img, idx) => ({
           url: buildImageUrl(`/uploads/programs/program_${programId}_${Date.now()}_${idx}.jpg`),
           is_primary: idx === 0
@@ -1516,30 +1482,44 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
     setLoading(true);
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE}/api/programs/${programId}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } });
+      const response = await fetch(`${API_BASE}/api/programs/${programId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
       if (!response.ok) throw new Error('فشل الحذف');
       toast.success('✅ تم حذف البرنامج بنجاح');
-      // حذف من cache
-      const cache = JSON.parse(localStorage.getItem(IMAGE_CACHE_KEY) || '{}');
-      delete cache[programId];
-      localStorage.setItem(IMAGE_CACHE_KEY, JSON.stringify(cache));
+      saveImagesToCache(programId, []);
       await fetchRealPrograms();
       if (onProgramAdded) onProgramAdded();
-    } catch (error) { toast.error('❌ حدث خطأ أثناء حذف البرنامج'); }
-    finally { setLoading(false); }
+    } catch (error) {
+      console.error(error);
+      toast.error('❌ حدث خطأ أثناء حذف البرنامج');
+    } finally {
+      setLoading(false);
+    }
   };
 
+  // ✅ فتح نافذة التعديل مع استخراج المعرفات باستخدام getImageId
   const openEditModal = (program) => {
     setEditingProgram(program);
-    // استخدام الصور من program أو من cache
     let imagesForEdit = [];
-    if (program.images && program.images.length > 0) {
+    if (program.images && Array.isArray(program.images) && program.images.length > 0) {
       imagesForEdit = program.images.map((img) => {
         const url = getImageUrl(img);
         if (!url) return null;
         const fullUrl = buildImageUrl(url);
-        if (!fullUrl) return null;
-        return { id: img.id, file: null, preview: fullUrl, isPrimary: img.is_primary === true, isExisting: true };
+        if (!fullUrl || fullUrl.startsWith('blob:')) return null;
+        const id = getImageId(img);
+        console.log(`🔍 Edit: Extracted image ID: ${id} for URL: ${fullUrl}`);
+        return { 
+          id: id,
+          file: null, 
+          preview: fullUrl, 
+          isPrimary: img.is_primary === true, 
+          isExisting: !!id,
+          uploading: false,
+          uploadError: false
+        };
       }).filter(Boolean);
     } else {
       const cached = getImagesFromCache(program.id);
@@ -1548,23 +1528,31 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
           const url = getImageUrl(img);
           if (!url) return null;
           const fullUrl = buildImageUrl(url);
-          return fullUrl ? {
-            id: img.id || null,
+          if (!fullUrl || fullUrl.startsWith('blob:')) return null;
+          const id = getImageId(img);
+          console.log(`🔍 Edit (cache): Extracted image ID: ${id} for URL: ${fullUrl}`);
+          return {
+            id: id,
             file: null,
             preview: fullUrl,
             isPrimary: img.is_primary === true,
-            isExisting: !!img.id
-          } : null;
+            isExisting: !!id,
+            uploading: false,
+            uploadError: false
+          };
         }).filter(Boolean);
       }
     }
     if (imagesForEdit.length === 0 && program.image) {
       const url = buildImageUrl(program.image);
-      if (url) imagesForEdit.push({ id: null, file: null, preview: url, isPrimary: true, isExisting: true });
+      if (url && !url.startsWith('blob:')) {
+        imagesForEdit.push({ id: null, file: null, preview: url, isPrimary: true, isExisting: false, uploading: false, uploadError: false });
+      }
     }
     if (imagesForEdit.length > 0 && !imagesForEdit.some(img => img.isPrimary)) imagesForEdit[0].isPrimary = true;
     const primaryIndex = Math.max(0, imagesForEdit.findIndex(img => img.isPrimary));
     originalImageIdsRef.current = imagesForEdit.filter(img => img.id).map(img => img.id);
+    console.log(`🔄 Edit modal opened. Original image IDs:`, originalImageIdsRef.current);
     setNewProgram({
       name: program.name || "",
       description: program.description || "",
@@ -1581,6 +1569,7 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
     setShowEditModal(true);
   };
 
+  // ✅ دالة محدثة لتعديل البرنامج مع حذف الكاش بعد الحذف
   const handleUpdateProgram = async () => {
     if (!editingProgram) return;
     if (!validateProgram()) return;
@@ -1588,6 +1577,7 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
     try {
       const locationName = newProgram.location_name || await reverseGeocode(newProgram.location_lat, newProgram.location_lng);
       const token = localStorage.getItem('token');
+      
       const updateResponse = await fetch(`${API_BASE}/api/programs/${editingProgram.id}`, {
         method: 'PUT',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -1605,11 +1595,38 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
         })
       });
       if (!updateResponse.ok) throw new Error('فشل تحديث البيانات');
+      
       const currentImageIds = newProgram.images.filter(img => img.id && img.isExisting).map(img => img.id);
       const imagesToDelete = originalImageIdsRef.current.filter(id => !currentImageIds.includes(id));
+      
+      console.log('🔍 Original IDs:', originalImageIdsRef.current);
+      console.log('🔍 Current IDs:', currentImageIds);
+      console.log('🔍 Images to delete:', imagesToDelete);
+      
       for (const imageId of imagesToDelete) {
-        await fetch(`${API_BASE}/api/programs/${editingProgram.id}/images/${imageId}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } });
+        try {
+          console.log(`🗑️ Attempting to delete image ${imageId} from program ${editingProgram.id}`);
+          const delRes = await fetch(`${API_BASE}/api/programs/${editingProgram.id}/images/${imageId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          if (delRes.ok) {
+            console.log(`✅ Image ${imageId} deleted successfully`);
+          } else {
+            console.warn(`⚠️ Failed to delete image ${imageId}: ${delRes.status}`);
+          }
+        } catch (err) {
+          console.warn(`⚠️ Error deleting image ${imageId}:`, err);
+        }
       }
+
+      // 🔥 حذف الكاش بالكامل لهذا البرنامج بعد عمليات الحذف
+      const cache = JSON.parse(localStorage.getItem(IMAGE_CACHE_KEY) || '{}');
+      delete cache[editingProgram.id];
+      localStorage.setItem(IMAGE_CACHE_KEY, JSON.stringify(cache));
+      console.log(`🧹 Cleared entire cache for program ${editingProgram.id} after update`);
+
+      // رفع الصور الجديدة
       const newImages = newProgram.images.filter(img => img.file !== null);
       if (newImages.length > 0) {
         toast.loading(`جاري رفع ${newImages.length} صورة جديدة...`, { id: 'upload-edit' });
@@ -1618,31 +1635,69 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
           const formData = new FormData();
           const file = new File([img.file], `image_${Date.now()}_${idx}.jpg`, { type: 'image/jpeg' });
           formData.append('images', file);
-          if (newProgram.primaryImageIndex === newProgram.images.findIndex(i => i === img)) formData.append('is_primary', 'true');
-          await fetch(`${API_BASE}/api/programs/${editingProgram.id}/images`, { method: 'POST', headers: { 'Authorization': `Bearer ${token}` }, body: formData });
+          if (newProgram.primaryImageIndex === newProgram.images.findIndex(i => i === img)) {
+            formData.append('is_primary', 'true');
+          }
+          try {
+            const uploadRes = await fetch(`${API_BASE}/api/programs/${editingProgram.id}/images`, {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${token}` },
+              body: formData
+            });
+            if (!uploadRes.ok) {
+              console.warn(`⚠️ Failed to upload image ${idx}`);
+            }
+          } catch (err) {
+            console.warn(`⚠️ Error uploading image ${idx}:`, err);
+          }
         }
         toast.dismiss('upload-edit');
         toast.success('تم رفع الصور الجديدة');
-        // تحديث cache
-        const updatedImages = newProgram.images.map(img => ({
-          url: buildImageUrl(img.preview),
-          is_primary: img.isPrimary || false
-        }));
-        saveImagesToCache(editingProgram.id, updatedImages);
-      } else if (imagesToDelete.length > 0) {
-        toast.success(`تم حذف ${imagesToDelete.length} صورة بنجاح`);
       }
+
+      // ✅ إعادة جلب البرنامج
       await refetchSingleProgram(editingProgram.id);
+
+      // تحديث newProgram
+      const updatedProgram = programs.find(p => p.id === editingProgram.id);
+      if (updatedProgram) {
+        const updatedImages = updatedProgram.images.map(img => ({
+          id: img.id,
+          file: null,
+          preview: buildImageUrl(getImageUrl(img)),
+          isPrimary: img.is_primary === true,
+          isExisting: !!img.id,
+          uploading: false,
+          uploadError: false
+        }));
+        const primaryIndex = Math.max(0, updatedImages.findIndex(img => img.isPrimary));
+        setNewProgram(prev => ({
+          ...prev,
+          images: updatedImages,
+          primaryImageIndex: primaryIndex
+        }));
+        originalImageIdsRef.current = updatedProgram.images.filter(img => img.id).map(img => img.id);
+      }
+
       toast.success('✅ تم تحديث البرنامج بنجاح');
       if (onProgramAdded) onProgramAdded();
       setShowEditModal(false);
       setEditingProgram(null);
-      newProgram.images.forEach(img => { if (img.preview && img.preview.startsWith('blob:')) URL.revokeObjectURL(img.preview); });
+      newProgram.images.forEach(img => {
+        if (img.preview && img.preview.startsWith('blob:')) URL.revokeObjectURL(img.preview);
+      });
       setNewProgram(defaultProgramState);
       originalImageIdsRef.current = [];
-      if (editMapInstanceRef.current) { try { editMapInstanceRef.current.remove(); } catch(e) {} editMapInstanceRef.current = null; }
-    } catch (error) { toast.error(error.message || '❌ فشل تحديث البرنامج'); }
-    finally { setLoading(false); }
+      if (editMapInstanceRef.current) {
+        try { editMapInstanceRef.current.remove(); } catch(e) {}
+        editMapInstanceRef.current = null;
+      }
+    } catch (error) {
+      console.error('Update error:', error);
+      toast.error(error.message || '❌ فشل تحديث البرنامج');
+    } finally {
+      setLoading(false);
+    }
   };
 
   // مكون عرض الصور مع عرض الحد الأقصى
@@ -1727,7 +1782,7 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
 
   return (
     <div className="h-full overflow-y-auto bg-gray-50 dark:bg-gray-900 p-4 pb-20" dir="rtl">
-      {/* الرأس - نفس الكود السابق */}
+      {/* الرأس */}
       <div className="flex justify-between items-center mb-6">
         <button onClick={() => setPage('home')} className="flex items-center gap-2 text-gray-600 hover:text-green-600 transition"><ArrowLeft size={20} /> العودة</button>
         <div className="flex items-center gap-3">
@@ -1792,7 +1847,7 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
         </div>
       </div>
 
-      {/* الإحصائيات - نفس الكود السابق */}
+      {/* الإحصائيات */}
       <div className="bg-gradient-to-r from-green-500 to-emerald-600 rounded-2xl p-6 text-white mb-8 shadow-lg">
         <div className="flex flex-wrap justify-between items-center gap-4">
           <div>
@@ -1815,7 +1870,7 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
         </div>
       </div>
 
-      {/* علامات التبويب - نفس الكود السابق */}
+      {/* علامات التبويب */}
       <div className="flex border-b border-gray-200 dark:border-gray-700 mb-6">
         <button onClick={() => setActiveTab('programs')} className={`px-4 py-2 font-medium text-sm transition-colors ${activeTab === 'programs' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-500 hover:text-gray-700'}`}><Package className="inline w-4 h-4 ml-1" /> البرامج</button>
         <button onClick={() => setActiveTab('bookings')} className={`px-4 py-2 font-medium text-sm transition-colors relative ${activeTab === 'bookings' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-500 hover:text-gray-700'}`}>
@@ -1851,8 +1906,8 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
               )}
             </div>
           </div>
-          
-          {/* تنبيهات الحد الأقصى - نفس الكود السابق */}
+
+          {/* تنبيهات الحد الأقصى */}
           {programs.length >= 10 && programs.length < 11 && (
             <div className="mb-4 p-3 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-200 rounded-lg text-sm flex items-center gap-2">
               <AlertTriangle size={16} />
@@ -1865,7 +1920,7 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
               {lang === 'ar' ? 'لقد وصلت إلى الحد الأقصى (11 برنامج). احذف بعض البرامج لإضافة جديدة.' : 'You have reached the maximum (11 programs). Delete some programs to add new ones.'}
             </div>
           )}
-          
+
           {filteredPrograms.length === 0 ? (
             <div className="bg-white dark:bg-gray-800 rounded-2xl p-12 text-center border-2 border-dashed"><Package className="w-20 h-20 mx-auto text-gray-400 mb-4" /><p className="text-gray-500 text-lg mb-3">لا توجد برامج</p><button onClick={() => setShowAddProgram(true)} className="px-6 py-2 bg-green-600 text-white rounded-xl">➕ أضف برنامجك الأول</button></div>
           ) : (
@@ -1897,7 +1952,7 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
         </>
       )}
 
-      {/* طلبات الحجز - نفس الكود السابق */}
+      {/* طلبات الحجز */}
       {activeTab === 'bookings' && (
         <div>
           {loadingBookings && bookingRequests.length === 0 ? (
@@ -1956,7 +2011,7 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
         </div>
       )}
 
-      {/* المحادثات الواردة - نفس الكود السابق */}
+      {/* المحادثات الواردة */}
       {activeTab === 'chats' && (
         <div>
           <div className="flex justify-between items-center mb-4">
@@ -2034,7 +2089,7 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
         </div>
       )}
 
-      {/* نافذة إضافة برنامج - نفس الكود السابق مع عرض الحد الأقصى للصور */}
+      {/* نافذة إضافة برنامج */}
       {showAddProgram && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
@@ -2099,7 +2154,7 @@ const buildUnifiedChats = useCallback(async (tickets, notifs) => {
         </div>
       )}
 
-      {/* نافذة تعديل برنامج - نفس الكود السابق مع عرض الحد الأقصى للصور */}
+      {/* نافذة تعديل برنامج */}
       {showEditModal && editingProgram && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
