@@ -1,23 +1,15 @@
 // client/src/pages/ExplorePage.jsx
-// ✅ منع المستخدم من حجز برنامجه الخاص + منع تكرار الحجز لنفس البرنامج
-// ✅ إرسال طلبات الحجز كنوع 'general' مع metadata.is_booking=true لضمان وصولها للمرشد
-// ✅ تحسين عرض الخريطة للأجهزة الصغيرة (الجوال)
-// ✅ إزالة التنبيهات والرسائل المنبثقة من الخريطة
-// ✅ زيادة مسافة عرض البرامج السياحية إلى 245 كم
-// ✅ رفع مستوى عرض البرامج عند الضغط عليها لتظهر البيانات كاملة
-// ✅ تحسين حفظ واسترجاع صور البرامج السياحية
-// ✅ إصلاح أزرار التنقل بين الصور - إضافة key و crossOrigin وإعادة تحميل الصورة
-// ✅ تصفية الصور غير الصالحة (404) وحذفها من cache تلقائياً
-// ✅ توحيد مفتاح cache للصور مع GuideDashboard لضمان ظهور الصور في الخريطة
-// ✅ عرض أزرار التنقل عند وجود أكثر من صورة واحدة
+// ✅ النسخة النهائية – عرض كامل للبيانات والصور للمستخدمين والمرشدين
+// ✅ جلب جميع صور البرنامج من API مباشرة وليس الاعتماد فقط على الكاش المحلي
+// ✅ عرض صور متعددة مع أزرار تنقل
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { MapContainer, TileLayer, Marker, Popup, useMap, Circle } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { 
   Home, Bell, User, MapPin, Search, MessageCircle, 
-  CalendarCheck, AlertTriangle, Heart, X, Star, Image as ImageIcon, Navigation, Crosshair, MousePointer, Map as MapIcon
+  CalendarCheck, Heart, X, Star, Navigation, Crosshair, MousePointer
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { FaBoxOpen, FaSpinner } from 'react-icons/fa';
@@ -67,12 +59,12 @@ const LOCAL_BOOKINGS_KEY = (userId) => `local_bookings_${userId}`;
 const BOOKED_PROGRAMS_KEY = (userId) => `booked_programs_${userId}`;
 
 // ✅ توحيد مفتاح تخزين الصور مع GuideDashboard
-const PROGRAM_IMAGES_KEY = (programId) => `program_images_${programId}`;
-const PROGRAM_IMAGES_CACHE_KEY = 'guide_programs_images_cache'; // نفس المفتاح المستخدم في GuideDashboard
+const IMAGE_CACHE_KEY = 'guide_programs_images_cache';
+const LEGACY_IMAGE_KEY = (programId) => `program_images_${programId}`;
 
 // ⏱️ مهلة تحديد الموقع (بالمللي ثانية)
 const LOCATION_TIMEOUT = 15000;
-// 📍 الحد الأدنى لدقة الموقع المقبولة (بالمتر) - تم رفع الحد للجوال
+// 📍 الحد الأدنى لدقة الموقع المقبولة (بالمتر)
 const MIN_ACCURACY_THRESHOLD = 200;
 // 🔄 عدد مرات إعادة المحاولة
 const MAX_RETRY_ATTEMPTS = 3;
@@ -113,49 +105,108 @@ const filterValidImages = async (images) => {
   return valid;
 };
 
-// ✅ دالة لحفظ صور البرنامج في localStorage (بعد التحقق من الصحة)
+// ✅ دالة موحدة لحفظ صور البرنامج في localStorage (مثل GuideDashboard)
+const saveImagesToCache = (programId, images) => {
+  try {
+    const cache = JSON.parse(localStorage.getItem(IMAGE_CACHE_KEY) || '{}');
+    if (images && images.length > 0) {
+      const imagesWithId = images.map(url => ({
+        url: typeof url === 'string' ? url : (url.url || url.image_url || null),
+        is_primary: url.is_primary !== undefined ? url.is_primary : false,
+        id: url.id || null
+      }));
+      cache[programId] = {
+        images: imagesWithId,
+        timestamp: Date.now()
+      };
+      localStorage.setItem(IMAGE_CACHE_KEY, JSON.stringify(cache));
+      console.log(`💾 Saved ${imagesWithId.length} images to cache for program ${programId}`);
+    } else {
+      delete cache[programId];
+      localStorage.setItem(IMAGE_CACHE_KEY, JSON.stringify(cache));
+      console.log(`🗑️ Cleared cache for program ${programId}`);
+    }
+  } catch (e) {
+    console.warn('Failed to save images to cache:', e);
+  }
+};
+
+// ✅ دالة موحدة لاسترجاع صور البرنامج من localStorage (مثل GuideDashboard)
+const getImagesFromCache = (programId) => {
+  try {
+    const cache = JSON.parse(localStorage.getItem(IMAGE_CACHE_KEY) || '{}');
+    const entry = cache[programId];
+    if (!entry) return null;
+    if (Date.now() - entry.timestamp > 3600000) {
+      delete cache[programId];
+      localStorage.setItem(IMAGE_CACHE_KEY, JSON.stringify(cache));
+      return null;
+    }
+    return entry.images.map(img => img.url).filter(Boolean);
+  } catch (e) {
+    return null;
+  }
+};
+
+// ✅ دالة احتياطية لاسترجاع الصور من المفتاح القديم
+const getLegacyImages = (programId) => {
+  try {
+    const key = LEGACY_IMAGE_KEY(programId);
+    const saved = localStorage.getItem(key);
+    if (saved) {
+      const images = JSON.parse(saved);
+      if (images && images.length > 0) {
+        return images;
+      }
+    }
+    return null;
+  } catch (e) {
+    return null;
+  }
+};
+
+// ✅ دالة موحدة لحفظ صور البرنامج (تحاول حفظ في الكاش العام ثم في المفتاح القديم كاحتياطي)
 const saveProgramImages = async (programId, images) => {
   try {
     if (!programId) return;
-    // تصفية الصور الصالحة
     const validImages = await filterValidImages(images);
     if (validImages.length === 0) {
-      // إذا لم تكن هناك صور صالحة، نمسح المفتاح
-      const key = PROGRAM_IMAGES_KEY(programId);
+      saveImagesToCache(programId, []);
+      const key = LEGACY_IMAGE_KEY(programId);
       localStorage.removeItem(key);
-      const cache = JSON.parse(localStorage.getItem(PROGRAM_IMAGES_CACHE_KEY) || '{}');
-      delete cache[programId];
-      localStorage.setItem(PROGRAM_IMAGES_CACHE_KEY, JSON.stringify(cache));
       console.log(`🗑️ No valid images for program ${programId}, cache cleared`);
       return;
     }
     
-    const key = PROGRAM_IMAGES_KEY(programId);
-    localStorage.setItem(key, JSON.stringify(validImages));
+    // حفظ في الكاش العام
+    saveImagesToCache(programId, validImages);
     
-    // تحديث الكاش
-    const cache = JSON.parse(localStorage.getItem(PROGRAM_IMAGES_CACHE_KEY) || '{}');
-    cache[programId] = {
-      images: validImages,
-      timestamp: Date.now()
-    };
-    localStorage.setItem(PROGRAM_IMAGES_CACHE_KEY, JSON.stringify(cache));
+    // حفظ في المفتاح القديم للتوافق مع الإصدارات السابقة
+    const key = LEGACY_IMAGE_KEY(programId);
+    localStorage.setItem(key, JSON.stringify(validImages));
     console.log(`✅ Saved ${validImages.length} valid images for program ${programId}`);
   } catch (error) {
     console.error('Error saving program images:', error);
   }
 };
 
-// ✅ دالة لاسترجاع صور البرنامج من localStorage
+// ✅ دالة موحدة لاسترجاع صور البرنامج
 const getProgramImages = (programId) => {
   try {
     if (!programId) return null;
-    const key = PROGRAM_IMAGES_KEY(programId);
-    const saved = localStorage.getItem(key);
-    if (saved) {
-      const images = JSON.parse(saved);
-      console.log(`✅ Retrieved ${images.length} images for program ${programId} from cache`);
-      return images;
+    // 1. من الكاش العام أولاً
+    const cached = getImagesFromCache(programId);
+    if (cached && cached.length > 0) {
+      console.log(`✅ Retrieved ${cached.length} images from global cache for program ${programId}`);
+      return cached;
+    }
+    // 2. من المفتاح القديم كاحتياطي
+    const legacy = getLegacyImages(programId);
+    if (legacy && legacy.length > 0) {
+      // نقل الصور إلى الكاش العام
+      saveImagesToCache(programId, legacy);
+      console.log(`✅ Migrated ${legacy.length} images from legacy to global cache for program ${programId}`);
+      return legacy;
     }
     return null;
   } catch (error) {
@@ -164,19 +215,51 @@ const getProgramImages = (programId) => {
   }
 };
 
-// ✅ دالة لمسح صور البرنامج من localStorage
+// ✅ دالة لمسح صور البرنامج
 const clearProgramImages = (programId) => {
   try {
     if (!programId) return;
-    const key = PROGRAM_IMAGES_KEY(programId);
+    saveImagesToCache(programId, []);
+    const key = LEGACY_IMAGE_KEY(programId);
     localStorage.removeItem(key);
-    
-    const cache = JSON.parse(localStorage.getItem(PROGRAM_IMAGES_CACHE_KEY) || '{}');
-    delete cache[programId];
-    localStorage.setItem(PROGRAM_IMAGES_CACHE_KEY, JSON.stringify(cache));
     console.log(`✅ Cleared images for program ${programId}`);
   } catch (error) {
     console.error('Error clearing program images:', error);
+  }
+};
+
+// ✅ دالة جديدة لجلب صور البرنامج من API مباشرة (للمستخدمين العاديين)
+const fetchProgramImagesFromAPI = async (programId) => {
+  try {
+    const response = await fetch(`${API_BASE}/api/programs/${programId}`);
+    if (!response.ok) return null;
+    const data = await response.json();
+    const program = data.program || data.data || data;
+    if (!program) return null;
+    
+    let images = [];
+    // جلب الصور من حقل images (المصفوفة)
+    if (program.images && Array.isArray(program.images) && program.images.length > 0) {
+      images = program.images
+        .map(img => buildImageUrl(img.url || img.image_url || img))
+        .filter(Boolean);
+    } else if (program.image) {
+      // صورة واحدة
+      const url = buildImageUrl(program.image);
+      if (url) images = [url];
+    }
+    
+    // حفظ الصور في الكاش
+    if (images.length > 0) {
+      await saveProgramImages(programId, images);
+    } else {
+      clearProgramImages(programId);
+    }
+    
+    return images;
+  } catch (error) {
+    console.error(`Error fetching images for program ${programId}:`, error);
+    return null;
   }
 };
 
@@ -318,11 +401,6 @@ const MapController = ({ center, zoom }) => {
   return null;
 };
 
-// ✅ إزالة دائرة الدقة من الخريطة - تم إلغاؤها لتقليل الفوضى
-const AccuracyCircle = ({ center, radius }) => {
-  return null;
-};
-
 function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount, dark }) {
   const t = (key) => LOCALES[lang]?.[key] || key;
 
@@ -358,9 +436,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
   const locationTimeoutRef = useRef(null);
   const isMobile = useRef(window.innerWidth < 768);
   
-  // ✅ مرجع لتخزين صور البرامج محلياً
-  const programImagesCache = useRef({});
-
   const [bookedPrograms, setBookedPrograms] = useState(() => {
     if (!user?.id) return new Set();
     const stored = localStorage.getItem(BOOKED_PROGRAMS_KEY(user.id));
@@ -425,20 +500,53 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     toast.success(isFav ? t('removedFromFavorites') : t('addedToFavorites'));
   };
 
-  // جلب البرامج
+  // ✅ جلب البرامج مع الصور من API مباشرة
   const fetchProgramsFromAPI = useCallback(async () => {
     try {
       const response = await fetch(`${API_BASE}/api/programs`);
       const data = await response.json();
       if (response.ok && data.success && Array.isArray(data.programs)) {
         const activePrograms = data.programs.filter(p => (p.status || '').toLowerCase() === 'active');
-        const progs = activePrograms.map(p => {
+        
+        // ✅ جلب الصور لكل برنامج من API مباشرة
+        const progs = await Promise.all(activePrograms.map(async (p) => {
           let guide_avatar = null;
           if (p.guide_id && guidesMap[p.guide_id]) guide_avatar = guidesMap[p.guide_id].avatar;
           else if (p.guide_name && guidesMap[p.guide_name]) guide_avatar = guidesMap[p.guide_name].avatar;
           
-          // ✅ استرجاع الصور المحفوظة من localStorage
-          const savedImages = getProgramImages(p.id);
+          // ✅ محاولة جلب الصور من API مباشرة
+          let images = [];
+          try {
+            const imgRes = await fetch(`${API_BASE}/api/programs/${p.id}`);
+            if (imgRes.ok) {
+              const imgData = await imgRes.json();
+              const prog = imgData.program || imgData.data || imgData;
+              if (prog) {
+                if (prog.images && Array.isArray(prog.images) && prog.images.length > 0) {
+                  images = prog.images
+                    .map(img => buildImageUrl(img.url || img.image_url || img))
+                    .filter(Boolean);
+                } else if (prog.image) {
+                  const url = buildImageUrl(prog.image);
+                  if (url) images = [url];
+                }
+                // حفظ الصور في الكاش
+                if (images.length > 0) {
+                  await saveProgramImages(p.id, images);
+                }
+              }
+            }
+          } catch (err) {
+            console.warn(`Failed to fetch images for program ${p.id}:`, err);
+          }
+          
+          // إذا لم نجد صوراً من API، نحاول من الكاش
+          if (images.length === 0) {
+            const cached = getProgramImages(p.id);
+            if (cached && cached.length > 0) {
+              images = cached;
+            }
+          }
           
           return {
             id: p.id,
@@ -453,15 +561,15 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
             location_name: p.location,
             description: p.description,
             image: buildImageUrl(p.image),
-            images: savedImages || [], // ✅ استخدام الصور المحفوظة
+            images: images || [],
             safetyGuidelines: p.safetyGuidelines || "",
             status: p.status,
             guide_avatar,
-            hasCachedImages: !!savedImages,
+            hasCachedImages: images && images.length > 0,
           };
-        }).filter(p => p.lat && p.lng && !isNaN(p.lat) && !isNaN(p.lng));
-        setPrograms(progs);
-        console.log(`📦 Loaded ${progs.length} active programs with images cache`);
+        }));
+        setPrograms(progs.filter(p => p.lat && p.lng && !isNaN(p.lat) && !isNaN(p.lng)));
+        console.log(`📦 Loaded ${progs.length} active programs with images from API`);
       } else {
         setPrograms([]);
       }
@@ -471,7 +579,7 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     }
   }, [guidesMap]);
 
-  // ✅ دالة محسنة لجلب صور البرنامج مع حفظ الصور الصالحة فقط
+  // ✅ دالة محسنة لجلب صور البرنامج عند النقر على برنامج
   const fetchProgramImages = useCallback(async (program) => {
     if (!program) return;
     
@@ -481,7 +589,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
       console.log(`📸 Using cached images for program ${program.id}`);
       setProgramImages(cachedImages);
       setCurrentImageIndex(0);
-      // تحديث البرنامج في القائمة بالصور
       setPrograms(prev => prev.map(p => 
         p.id === program.id ? { ...p, images: cachedImages, hasCachedImages: true } : p
       ));
@@ -490,47 +597,18 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     
     setLoadingImages(true);
     try {
-      const detailRes = await fetch(`${API_BASE}/api/programs/${program.id}`);
-      if (!detailRes.ok) { 
-        setProgramImages([]); 
-        return; 
-      }
-      const detailData = await detailRes.json();
-      const detailProgram = detailData.program || detailData.data || detailData;
-      let images = [];
-      
-      // جلب الصور من عدة مصادر
-      if (detailProgram?.images?.length) {
-        images = detailProgram.images
-          .map(img => buildImageUrl(img.url || img.image_url))
-          .filter(Boolean);
-      } else if (detailProgram?.image) {
-        const imgUrl = buildImageUrl(detailProgram.image);
-        if (imgUrl) images = [imgUrl];
-      }
-      
-      // ✅ تصفية الصور الصالحة وحفظها
-      if (images.length > 0) {
-        // حفظ الصور بعد التحقق من الصحة (يتم داخل saveProgramImages)
-        await saveProgramImages(program.id, images);
-        // استرجاع الصور الصالحة من cache (تم حفظها بالفعل)
-        const validImages = getProgramImages(program.id);
-        if (validImages && validImages.length > 0) {
-          setProgramImages(validImages);
-          setCurrentImageIndex(0);
-          // تحديث البرنامج في القائمة بالصور
-          setPrograms(prev => prev.map(p => 
-            p.id === program.id ? { ...p, images: validImages, hasCachedImages: true } : p
-          ));
-        } else {
-          setProgramImages([]);
-        }
+      // ✅ جلب الصور من API
+      const images = await fetchProgramImagesFromAPI(program.id);
+      if (images && images.length > 0) {
+        setProgramImages(images);
+        setCurrentImageIndex(0);
+        setPrograms(prev => prev.map(p => 
+          p.id === program.id ? { ...p, images: images, hasCachedImages: true } : p
+        ));
       } else {
         setProgramImages([]);
-        // مسح cache إذا لم توجد صور
         clearProgramImages(program.id);
       }
-      
     } catch (err) {
       console.error('Error fetching program images:', err);
       setProgramImages([]);
@@ -1221,43 +1299,32 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
                     onClick={() => setShowGallery(true)}
                     crossOrigin="anonymous"
                     onError={(e) => {
-                      // ✅ إذا فشل تحميل الصورة، نحذفها من القائمة وننتقل للتالية
                       console.warn(`⚠️ Failed to load image: ${programImages[currentImageIndex]}`);
                       const newImages = programImages.filter((_, i) => i !== currentImageIndex);
                       if (newImages.length === 0) {
-                        // إذا لم تبق صور، نمسح cache
                         clearProgramImages(selectedProgram.id);
                         setProgramImages([]);
-                        // تحديث البرنامج في القائمة
                         setPrograms(prev => prev.map(p => 
                           p.id === selectedProgram.id ? { ...p, images: [], hasCachedImages: false } : p
                         ));
                       } else {
-                        // تحديث قائمة الصور والمؤشر
                         setProgramImages(newImages);
                         const newIndex = currentImageIndex >= newImages.length ? newImages.length - 1 : currentImageIndex;
                         setCurrentImageIndex(newIndex);
-                        // تحديث cache بحذف الصورة الفاشلة
                         saveProgramImages(selectedProgram.id, newImages);
-                        // تحديث البرنامج في القائمة
                         setPrograms(prev => prev.map(p => 
                           p.id === selectedProgram.id ? { ...p, images: newImages, hasCachedImages: true } : p
                         ));
                       }
                     }}
                   />
-                  {/* ✅ عرض أزرار التنقل إذا كان هناك أكثر من صورة واحدة */}
                   {programImages.length > 1 && (
                     <>
                       <button 
                         onClick={(e) => { 
                           e.stopPropagation(); 
                           e.preventDefault();
-                          setCurrentImageIndex((prev) => {
-                            const newIndex = (prev - 1 + programImages.length) % programImages.length;
-                            console.log('⬅️ Previous image:', prev, '->', newIndex);
-                            return newIndex;
-                          }); 
+                          setCurrentImageIndex((prev) => (prev - 1 + programImages.length) % programImages.length); 
                         }} 
                         className="absolute left-1 top-1/2 transform -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white p-1.5 rounded-full transition z-20 text-xs pointer-events-auto"
                         style={{ touchAction: 'manipulation' }}
@@ -1268,11 +1335,7 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
                         onClick={(e) => { 
                           e.stopPropagation(); 
                           e.preventDefault();
-                          setCurrentImageIndex((prev) => {
-                            const newIndex = (prev + 1) % programImages.length;
-                            console.log('➡️ Next image:', prev, '->', newIndex);
-                            return newIndex;
-                          }); 
+                          setCurrentImageIndex((prev) => (prev + 1) % programImages.length); 
                         }} 
                         className="absolute right-1 top-1/2 transform -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white p-1.5 rounded-full transition z-20 text-xs pointer-events-auto"
                         style={{ touchAction: 'manipulation' }}
@@ -1309,8 +1372,8 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
                   )}
                   <span className="bg-black/40 backdrop-blur-sm px-1.5 py-0.5 rounded-full flex items-center gap-1">{selectedProgram.price} {t('price')}</span>
                   <span className="flex items-center gap-1 bg-black/40 backdrop-blur-sm px-1.5 py-0.5 rounded-full"><Star size={8} className="fill-yellow-400 text-yellow-400" /> {selectedProgram.rating || 4.5}</span>
+                  <span className="bg-black/40 backdrop-blur-sm px-1.5 py-0.5 rounded-full text-[9px]">{selectedProgram.duration || 'غير محدد'}</span>
                 </div>
-                {/* عرض اسم الموقع */}
                 <div className="text-xs mt-1 text-white/80 flex items-center gap-1">
                   <MapPin size={10} />
                   <span className="truncate">{selectedProgram.location_name || selectedProgram.location || 'موقع البرنامج'}</span>
@@ -1342,18 +1405,15 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
               alt="Gallery"
               crossOrigin="anonymous"
               onError={(e) => {
-                // ✅ محاولة استخدام الصورة التالية إذا فشل تحميل الصورة الحالية
                 if (programImages.length > 1) {
                   const newImages = programImages.filter((_, i) => i !== currentImageIndex);
                   setProgramImages(newImages);
                   const newIndex = currentImageIndex >= newImages.length ? newImages.length - 1 : currentImageIndex;
                   setCurrentImageIndex(newIndex);
-                  // تحديث cache
                   if (selectedProgram) {
                     saveProgramImages(selectedProgram.id, newImages);
                   }
                 } else {
-                  // لا توجد صور، نغلق المعرض
                   setShowGallery(false);
                   if (selectedProgram) {
                     clearProgramImages(selectedProgram.id);
