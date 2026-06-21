@@ -1,4 +1,4 @@
-// server.js - النسخة النهائية مع إصلاح مشكلة إضافة صور متعددة
+// server.js - النسخة النهائية مع إصلاح مشكلة إضافة صور متعددة وإرجاع معرفات الصور
 
 import express from 'express';
 import cors from 'cors';
@@ -310,7 +310,6 @@ const programStorage = multer.diskStorage({
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     const ext = path.extname(file.originalname);
-    // استخدام programId من params
     const programId = req.params.programId || Date.now();
     cb(null, `program_${programId}_${uniqueSuffix}${ext}`);
   }
@@ -728,8 +727,6 @@ app.post('/api/programs/:programId/images', uploadProgramImages.array('images', 
     const uploadedImages = [];
     let primaryImageUrl = null;
     
-    // ✅ لا نحذف الصور القديمة - نضيف الصور الجديدة فقط
-    
     // الحصول على عدد الصور الحالية لتحديد display_order
     const existingImages = await pool.query(
       'SELECT COUNT(*) as count FROM program_images WHERE program_id = $1',
@@ -755,7 +752,6 @@ app.post('/api/programs/:programId/images', uploadProgramImages.array('images', 
       fs.unlinkSync(file.path);
       const imageUrl = `/uploads/programs/${optimizedFilename}`;
       
-      // ✅ التحقق مما إذا كانت الصورة رئيسية
       const isPrimary = (i === 0 && startOrder === 0);
       
       if (isPrimary) {
@@ -771,25 +767,20 @@ app.post('/api/programs/:programId/images', uploadProgramImages.array('images', 
       console.log(`📸 Uploaded image ${i+1}/${files.length}: ${optimizedFilename}`);
     }
     
-    // ✅ إذا تم تعيين صورة رئيسية جديدة
     if (primaryImageUrl) {
-      // إزالة الصورة الرئيسية القديمة
       await pool.query(
         'UPDATE program_images SET is_primary = false WHERE program_id = $1',
         [programId]
       );
-      // تعيين الصورة الجديدة كرئيسية
       await pool.query(
         'UPDATE program_images SET is_primary = true WHERE id = $1',
         [uploadedImages[0].id]
       );
-      // تحديث حقل image في جدول programs
       await pool.query(
         'UPDATE programs SET image = $1, updated_at = NOW() WHERE id = $2',
         [primaryImageUrl, programId]
       );
     } else {
-      // ✅ إذا لم يتم تعيين صورة رئيسية، تأكد من وجود صورة رئيسية واحدة
       const primaryCheck = await pool.query(
         'SELECT id FROM program_images WHERE program_id = $1 AND is_primary = true LIMIT 1',
         [programId]
@@ -806,7 +797,6 @@ app.post('/api/programs/:programId/images', uploadProgramImages.array('images', 
       }
     }
     
-    // ✅ إرجاع جميع الصور بعد التحديث
     const allImages = await pool.query(
       'SELECT * FROM program_images WHERE program_id = $1 ORDER BY display_order ASC',
       [programId]
@@ -821,16 +811,15 @@ app.post('/api/programs/:programId/images', uploadProgramImages.array('images', 
   }
 });
 
+// ✅ ✅ ✅ تعديل مسار جلب الصور لإرجاع كائنات كاملة تحتوي على id
 app.get('/api/programs/:programId/images', async (req, res) => {
   const { programId } = req.params;
   try {
     const result = await pool.query(
-      `SELECT * FROM program_images WHERE program_id = $1 ORDER BY is_primary DESC, display_order ASC`,
+      `SELECT id, image_url, is_primary, display_order FROM program_images WHERE program_id = $1 ORDER BY is_primary DESC, display_order ASC`,
       [programId]
     );
-    // إرجاع روابط الصور فقط
-    const imageUrls = result.rows.map(row => row.image_url).filter(Boolean);
-    res.json({ success: true, images: imageUrls });
+    res.json({ success: true, images: result.rows });
   } catch (error) {
     console.error('Error fetching program images:', error);
     res.status(500).json({ success: false, error: error.message });
