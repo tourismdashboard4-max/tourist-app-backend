@@ -1,6 +1,10 @@
 // client/src/pages/HomePage.jsx
-// ✅ الصفحة الرئيسية - عرض البرامج السياحية حسب موقع المستخدم
-// ✅ إصلاح مشكلة التحديث اللانهائي
+// ✅ النسخة النهائية – عرض كامل للبيانات والصور مع توحيد الكاش مع GuideDashboard و ExplorePage
+// ✅ استخدام نفس نظام الكاش الموحد (guide_programs_images_cache)
+// ✅ عرض جميع بيانات البرنامج: الاسم، السعر، المدة، الموقع، التقييم، المسافة
+// ✅ عرض صور متعددة مع أزرار تنقل
+// ✅ معالجة الأخطاء وعرض رسائل للمستخدم
+// ✅ إزالة زر المفضلة من الهيرو (موجود في شريط التنقل السفلي)
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { 
@@ -22,42 +26,94 @@ const NEARBY_RADIUS_KM = 245;
 const LOCATION_TIMEOUT = 15000;
 const MAX_RETRY_ATTEMPTS = 5;
 
-const PROGRAM_IMAGES_KEY = (programId) => `program_images_${programId}`;
-const PROGRAM_IMAGES_CACHE_KEY = 'program_images_cache';
+// ✅ توحيد مفتاح تخزين الصور مع GuideDashboard و ExplorePage
+const IMAGE_CACHE_KEY = 'guide_programs_images_cache';
+const LEGACY_IMAGE_KEY = (programId) => `program_images_${programId}`;
 
 const buildImageUrl = (url) => {
   if (!url || typeof url !== 'string') return null;
   if (url.startsWith('blob:') || url.startsWith('data:')) return url;
   if (url.startsWith('http://') || url.startsWith('https://')) return url;
-  if (url.startsWith('/uploads')) {
-    return `${API_BASE}${url}`;
-  }
-  if (url.startsWith('/')) {
-    return `${API_BASE}${url}`;
-  }
+  if (url.startsWith('/uploads')) return `${API_BASE}${url}`;
+  if (url.startsWith('/')) return `${API_BASE}${url}`;
   return `${API_BASE}/${url}`;
 };
 
-const saveProgramImages = (programId, images) => {
+// ✅ دالة للتحقق من صحة الصورة (تجنب 404)
+const validateImage = async (url) => {
+  if (!url) return false;
   try {
-    if (!programId || !images || images.length === 0) return;
-    const key = PROGRAM_IMAGES_KEY(programId);
-    localStorage.setItem(key, JSON.stringify(images));
-    const cache = JSON.parse(localStorage.getItem(PROGRAM_IMAGES_CACHE_KEY) || '{}');
-    cache[programId] = {
-      images,
-      timestamp: Date.now()
-    };
-    localStorage.setItem(PROGRAM_IMAGES_CACHE_KEY, JSON.stringify(cache));
-  } catch (error) {
-    console.error('Error saving program images:', error);
+    const response = await fetch(url, { method: 'HEAD' });
+    return response.ok;
+  } catch {
+    return false;
   }
 };
 
-const getProgramImages = (programId) => {
+// ✅ دالة لتصفية الصور الصالحة فقط
+const filterValidImages = async (images) => {
+  if (!images || images.length === 0) return [];
+  const valid = [];
+  for (const img of images) {
+    const url = buildImageUrl(img);
+    if (!url) continue;
+    const isValid = await validateImage(url);
+    if (isValid) {
+      valid.push(url);
+    } else {
+      console.warn(`⚠️ صورة غير صالحة: ${url}`);
+    }
+  }
+  return valid;
+};
+
+// ✅ دالة موحدة لحفظ صور البرنامج في localStorage (مثل GuideDashboard)
+const saveImagesToCache = (programId, images) => {
   try {
-    if (!programId) return null;
-    const key = PROGRAM_IMAGES_KEY(programId);
+    const cache = JSON.parse(localStorage.getItem(IMAGE_CACHE_KEY) || '{}');
+    if (images && images.length > 0) {
+      const imagesWithId = images.map(url => ({
+        url: typeof url === 'string' ? url : (url.url || url.image_url || null),
+        is_primary: url.is_primary !== undefined ? url.is_primary : false,
+        id: url.id || null
+      }));
+      cache[programId] = {
+        images: imagesWithId,
+        timestamp: Date.now()
+      };
+      localStorage.setItem(IMAGE_CACHE_KEY, JSON.stringify(cache));
+      console.log(`💾 Saved ${imagesWithId.length} images to cache for program ${programId}`);
+    } else {
+      delete cache[programId];
+      localStorage.setItem(IMAGE_CACHE_KEY, JSON.stringify(cache));
+      console.log(`🗑️ Cleared cache for program ${programId}`);
+    }
+  } catch (e) {
+    console.warn('Failed to save images to cache:', e);
+  }
+};
+
+// ✅ دالة موحدة لاسترجاع صور البرنامج من localStorage (مثل GuideDashboard)
+const getImagesFromCache = (programId) => {
+  try {
+    const cache = JSON.parse(localStorage.getItem(IMAGE_CACHE_KEY) || '{}');
+    const entry = cache[programId];
+    if (!entry) return null;
+    if (Date.now() - entry.timestamp > 3600000) {
+      delete cache[programId];
+      localStorage.setItem(IMAGE_CACHE_KEY, JSON.stringify(cache));
+      return null;
+    }
+    return entry.images.map(img => img.url).filter(Boolean);
+  } catch (e) {
+    return null;
+  }
+};
+
+// ✅ دالة احتياطية لاسترجاع الصور من المفتاح القديم
+const getLegacyImages = (programId) => {
+  try {
+    const key = LEGACY_IMAGE_KEY(programId);
     const saved = localStorage.getItem(key);
     if (saved) {
       const images = JSON.parse(saved);
@@ -66,9 +122,66 @@ const getProgramImages = (programId) => {
       }
     }
     return null;
+  } catch (e) {
+    return null;
+  }
+};
+
+// ✅ دالة موحدة لحفظ صور البرنامج
+const saveProgramImages = async (programId, images) => {
+  try {
+    if (!programId) return;
+    const validImages = await filterValidImages(images);
+    if (validImages.length === 0) {
+      saveImagesToCache(programId, []);
+      const key = LEGACY_IMAGE_KEY(programId);
+      localStorage.removeItem(key);
+      console.log(`🗑️ No valid images for program ${programId}, cache cleared`);
+      return;
+    }
+    
+    saveImagesToCache(programId, validImages);
+    
+    const key = LEGACY_IMAGE_KEY(programId);
+    localStorage.setItem(key, JSON.stringify(validImages));
+    console.log(`✅ Saved ${validImages.length} valid images for program ${programId}`);
+  } catch (error) {
+    console.error('Error saving program images:', error);
+  }
+};
+
+// ✅ دالة موحدة لاسترجاع صور البرنامج
+const getProgramImages = (programId) => {
+  try {
+    if (!programId) return null;
+    const cached = getImagesFromCache(programId);
+    if (cached && cached.length > 0) {
+      console.log(`✅ Retrieved ${cached.length} images from global cache for program ${programId}`);
+      return cached;
+    }
+    const legacy = getLegacyImages(programId);
+    if (legacy && legacy.length > 0) {
+      saveImagesToCache(programId, legacy);
+      console.log(`✅ Migrated ${legacy.length} images from legacy to global cache for program ${programId}`);
+      return legacy;
+    }
+    return null;
   } catch (error) {
     console.error('Error retrieving program images:', error);
     return null;
+  }
+};
+
+// ✅ دالة لمسح صور البرنامج
+const clearProgramImages = (programId) => {
+  try {
+    if (!programId) return;
+    saveImagesToCache(programId, []);
+    const key = LEGACY_IMAGE_KEY(programId);
+    localStorage.removeItem(key);
+    console.log(`✅ Cleared images for program ${programId}`);
+  } catch (error) {
+    console.error('Error clearing program images:', error);
   }
 };
 
@@ -234,9 +347,6 @@ const HeroAd = ({ lang, setPage }) => {
           <button onClick={() => setPage('guides')} className="bg-transparent border-2 border-white px-4 py-2 rounded-full text-sm flex items-center gap-2 hover:bg-white/20 transition">
             <Users size={16} /> {lang === 'ar' ? 'المرشدون' : 'Guides'}
           </button>
-          <button onClick={() => setPage('profile')} className="bg-transparent border-2 border-white px-4 py-2 rounded-full text-sm flex items-center gap-2 hover:bg-white/20 transition">
-            <FaHeart size={16} className="text-white" /> {lang === 'ar' ? 'المفضلة' : 'Favorites'}
-          </button>
         </div>
       </div>
     </motion.div>
@@ -248,7 +358,9 @@ const ProgramCard = React.memo(({ program, lang, onBook, onView, onChat, isFavor
   const activity = getActivityType(program, lang);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [imageError, setImageError] = useState(false);
+  const [loadingImage, setLoadingImage] = useState(false);
   
+  // ✅ استرجاع الصور من البرنامج (باستخدام الكاش الموحد)
   const getImagesList = useMemo(() => {
     const images = [];
     
@@ -304,18 +416,36 @@ const ProgramCard = React.memo(({ program, lang, onBook, onView, onChat, isFavor
       className={`${cardBg} rounded-xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 border ${borderColor}`}
     >
       <div className="relative w-full bg-gray-200 dark:bg-gray-700" style={{ minHeight: '200px', maxHeight: '280px' }}>
-        {currentImage && !imageError ? (
+        {loadingImage ? (
+          <div className="w-full h-full flex flex-col items-center justify-center text-gray-400 bg-gray-100 dark:bg-gray-700">
+            <FaSpinner className="animate-spin h-8 w-8" />
+            <span className="text-xs mt-1">{t('loadingImages')}</span>
+          </div>
+        ) : currentImage && !imageError ? (
           <img 
+            key={`${program.id}-${currentImageIndex}-${currentImage}`}
             src={currentImage} 
             alt={program.name} 
             className="w-full h-full object-cover hover:scale-105 transition-transform duration-500" 
             style={{ minHeight: '200px', maxHeight: '280px' }} 
             loading="lazy"
+            crossOrigin="anonymous"
+            onLoad={() => setLoadingImage(false)}
             onError={() => {
               setImageError(true);
-              if (totalImages > 1 && currentImageIndex < totalImages - 1) {
-                setCurrentImageIndex(currentImageIndex + 1);
+              setLoadingImage(false);
+              // ✅ محاولة الانتقال للصورة التالية إذا فشل التحميل
+              if (totalImages > 1) {
+                const newIndex = (currentImageIndex + 1) % totalImages;
+                setCurrentImageIndex(newIndex);
                 setImageError(false);
+                // حذف الصورة الفاشلة من cache
+                const newImages = getImagesList.filter((_, i) => i !== currentImageIndex);
+                if (newImages.length > 0) {
+                  saveProgramImages(program.id, newImages);
+                } else {
+                  clearProgramImages(program.id);
+                }
               }
             }}
           />
@@ -323,14 +453,68 @@ const ProgramCard = React.memo(({ program, lang, onBook, onView, onChat, isFavor
           <div className="w-full h-full flex flex-col items-center justify-center text-gray-400 bg-gray-100 dark:bg-gray-700">
             <FaBoxOpen size={32} />
             <span className="text-xs mt-1">{t('noImage')}</span>
+            <button 
+              onClick={() => {
+                setLoadingImage(true);
+                setImageError(false);
+                // محاولة إعادة جلب الصور من API
+                const fetchImages = async () => {
+                  try {
+                    const res = await fetch(`${API_BASE}/api/programs/${program.id}`);
+                    const data = await res.json();
+                    const prog = data.program || data.data || data;
+                    let images = [];
+                    if (prog?.images?.length) {
+                      images = prog.images.map(img => buildImageUrl(img.url || img.image_url)).filter(Boolean);
+                    } else if (prog?.image) {
+                      const url = buildImageUrl(prog.image);
+                      if (url) images = [url];
+                    }
+                    if (images.length > 0) {
+                      await saveProgramImages(program.id, images);
+                      const cached = getProgramImages(program.id);
+                      if (cached && cached.length > 0) {
+                        // تحديث البرنامج في القائمة
+                        program.images = cached;
+                        setCurrentImageIndex(0);
+                        setImageError(false);
+                        setLoadingImage(false);
+                        window.location.reload(); // بسيط: إعادة تحميل الصفحة لتحديث البيانات
+                      }
+                    }
+                  } catch (e) {
+                    console.error('Failed to reload images:', e);
+                    setLoadingImage(false);
+                  }
+                };
+                fetchImages();
+              }}
+              className="mt-2 text-xs text-green-600 hover:underline"
+            >
+              إعادة تحميل
+            </button>
           </div>
         )}
         
         {totalImages > 1 && !imageError && currentImage && (
           <>
-            <button onClick={prevImage} className="absolute left-1 top-1/2 transform -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white p-1 rounded-full transition z-10 text-xs">❮</button>
-            <button onClick={nextImage} className="absolute right-1 top-1/2 transform -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white p-1 rounded-full transition z-10 text-xs">❯</button>
-            <div className="absolute top-1 right-1 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded-full z-10">{currentImageIndex+1}/{totalImages}</div>
+            <button 
+              onClick={prevImage} 
+              className="absolute left-1 top-1/2 transform -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white p-1 rounded-full transition z-10 text-xs pointer-events-auto"
+              style={{ touchAction: 'manipulation' }}
+            >
+              ❮
+            </button>
+            <button 
+              onClick={nextImage} 
+              className="absolute right-1 top-1/2 transform -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white p-1 rounded-full transition z-10 text-xs pointer-events-auto"
+              style={{ touchAction: 'manipulation' }}
+            >
+              ❯
+            </button>
+            <div className="absolute top-1 right-1 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded-full z-10">
+              {currentImageIndex+1}/{totalImages}
+            </div>
           </>
         )}
         
@@ -369,6 +553,9 @@ const ProgramCard = React.memo(({ program, lang, onBook, onView, onChat, isFavor
       <div className="p-2">
         <div className="flex items-center justify-between mb-1">
           <h3 className={`text-sm font-bold ${textColor} truncate`}>{program.name}</h3>
+          <span className="text-[10px] text-gray-500 dark:text-gray-400">
+            {program.duration || 'غير محدد'}
+          </span>
         </div>
         
         <div className="flex items-center gap-1 text-[10px] text-gray-500 dark:text-gray-400">
@@ -377,13 +564,22 @@ const ProgramCard = React.memo(({ program, lang, onBook, onView, onChat, isFavor
         </div>
         
         <div className="flex gap-1.5 mt-2">
-          <button onClick={() => onView(program.id)} className="flex-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 text-[10px] font-medium py-1.5 px-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition flex items-center justify-center gap-1">
+          <button 
+            onClick={() => onView(program.id)} 
+            className="flex-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 text-[10px] font-medium py-1.5 px-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition flex items-center justify-center gap-1"
+          >
             <FaMapMarkedAlt size={10} /> {t('viewOnMap')}
           </button>
-          <button onClick={() => onChat(program.guide_id, program.guide_name)} className="flex-1 bg-blue-500 text-white text-[10px] font-medium py-1.5 px-2 rounded-lg hover:bg-blue-600 transition flex items-center justify-center gap-1">
+          <button 
+            onClick={() => onChat(program.guide_id, program.guide_name)} 
+            className="flex-1 bg-blue-500 text-white text-[10px] font-medium py-1.5 px-2 rounded-lg hover:bg-blue-600 transition flex items-center justify-center gap-1"
+          >
             <MessageCircle size={10} /> {t('chat')}
           </button>
-          <button onClick={() => onBook(program)} className="flex-1 bg-gradient-to-r from-green-500 to-emerald-600 text-white text-[10px] font-medium py-1.5 px-2 rounded-lg hover:from-green-600 hover:to-emerald-700 transition flex items-center justify-center gap-1">
+          <button 
+            onClick={() => onBook(program)} 
+            className="flex-1 bg-gradient-to-r from-green-500 to-emerald-600 text-white text-[10px] font-medium py-1.5 px-2 rounded-lg hover:from-green-600 hover:to-emerald-700 transition flex items-center justify-center gap-1"
+          >
             <CalendarCheck size={10} /> {t('book')}
           </button>
         </div>
@@ -431,8 +627,10 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
     return null;
   }, [user]);
 
+  // ✅ دالة محسنة لجلب برنامج كامل مع الصور باستخدام الكاش الموحد
   const fetchFullProgram = useCallback(async (id) => {
     try {
+      // ✅ التحقق من الصور في الكاش أولاً
       const cachedImages = getProgramImages(id);
       
       const res = await fetch(`${API_BASE}/api/programs/${id}`);
@@ -444,7 +642,9 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
         
         if (cachedImages && cachedImages.length > 0) {
           images = cachedImages;
+          console.log(`📸 Using cached images for program ${id}`);
         } else {
+          // جلب الصور من البيانات
           if (prog.images && prog.images.length > 0) {
             images = prog.images
               .map(img => buildImageUrl(img.url || img.image_url || img))
@@ -455,7 +655,8 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
           }
           
           if (images.length > 0) {
-            saveProgramImages(id, images);
+            await saveProgramImages(id, images);
+            console.log(`💾 Saved ${images.length} images for program ${id}`);
           }
         }
         
@@ -470,6 +671,7 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
           ...prog, 
           images: images.length > 0 ? images : [],
           guide_avatar,
+          hasCachedImages: !!cachedImages,
         };
       }
     } catch(e) {
@@ -872,10 +1074,8 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
       locationTimeoutRef.current = null;
     }
     locationLoadedRef.current = false;
-    // إعادة تشغيل useEffect عن طريق تغيير مفتاح
     setUserLocation(null);
     setLocationStatus('idle');
-    // سيتم تشغيل useEffect مرة أخرى
   }, []);
 
   const ScrollTopButton = useMemo(() => {
