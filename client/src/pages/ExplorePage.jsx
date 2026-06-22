@@ -1,7 +1,7 @@
 // client/src/pages/ExplorePage.jsx
 // ✅ النسخة النهائية – عرض كامل للبيانات والصور للمستخدمين والمرشدين
-// ✅ جلب جميع صور البرنامج من API مباشرة وليس الاعتماد فقط على الكاش المحلي
-// ✅ عرض صور متعددة مع أزرار تنقل
+// ✅ دعم إلغاء الحجز (عند إلغاء الحجز، يمكن إعادة الحجز مرة أخرى)
+// ✅ تحديث فوري للحجوزات عبر focus و visibilitychange
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
@@ -22,7 +22,7 @@ L.Icon.Default.mergeOptions({
   shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png",
 });
 
-// ✅ إخفاء جميع عناصر التحكم والتنبيهات في الخريطة
+// إخفاء عناصر التحكم في الخريطة
 const style = document.createElement('style');
 style.textContent = `
   .leaflet-control-attribution { display: none !important; }
@@ -30,43 +30,25 @@ style.textContent = `
   .leaflet-popup-tip-container { display: none !important; }
   .leaflet-popup-close-button { display: none !important; }
   .leaflet-tile-pane { filter: none !important; }
-  .leaflet-container { 
-    background: #f0f0f0 !important;
-    touch-action: pan-x pan-y !important;
-  }
+  .leaflet-container { background: #f0f0f0 !important; touch-action: pan-x pan-y !important; }
   .leaflet-container:focus { outline: none !important; }
-  
-  /* ✅ تحسين عرض الخريطة للجوال */
   @media (max-width: 768px) {
-    .leaflet-container {
-      touch-action: auto !important;
-    }
-    .leaflet-marker-icon {
-      transition: transform 0.2s ease !important;
-    }
-    .leaflet-marker-icon:active {
-      transform: scale(1.1) !important;
-    }
+    .leaflet-container { touch-action: auto !important; }
+    .leaflet-marker-icon { transition: transform 0.2s ease !important; }
+    .leaflet-marker-icon:active { transform: scale(1.1) !important; }
   }
 `;
 document.head.appendChild(style);
 
 const API_BASE = "https://tourist-app-api.onrender.com";
-
-// ✅ زيادة المسافة لعرض البرامج السياحية إلى 245 كيلومتر
 const NEARBY_RADIUS = 245;
 const LOCAL_BOOKINGS_KEY = (userId) => `local_bookings_${userId}`;
-const BOOKED_PROGRAMS_KEY = (userId) => `booked_programs_${userId}`;
 
-// ✅ توحيد مفتاح تخزين الصور مع GuideDashboard
+// دوال الصور والكاش (نفس ما في HomePage)
 const IMAGE_CACHE_KEY = 'guide_programs_images_cache';
 const LEGACY_IMAGE_KEY = (programId) => `program_images_${programId}`;
-
-// ⏱️ مهلة تحديد الموقع (بالمللي ثانية)
 const LOCATION_TIMEOUT = 15000;
-// 📍 الحد الأدنى لدقة الموقع المقبولة (بالمتر)
 const MIN_ACCURACY_THRESHOLD = 200;
-// 🔄 عدد مرات إعادة المحاولة
 const MAX_RETRY_ATTEMPTS = 3;
 
 const buildImageUrl = (url) => {
@@ -76,19 +58,13 @@ const buildImageUrl = (url) => {
   if (url.startsWith('/')) return `${API_BASE}${url}`;
   return `${API_BASE}/${url}`;
 };
-
-// ✅ دالة للتحقق من صحة الصورة (تجنب 404)
 const validateImage = async (url) => {
   if (!url) return false;
   try {
     const response = await fetch(url, { method: 'HEAD' });
     return response.ok;
-  } catch {
-    return false;
-  }
+  } catch { return false; }
 };
-
-// ✅ دالة لتصفية الصور الصالحة فقط
 const filterValidImages = async (images) => {
   if (!images || images.length === 0) return [];
   const valid = [];
@@ -96,16 +72,11 @@ const filterValidImages = async (images) => {
     const url = buildImageUrl(img);
     if (!url) continue;
     const isValid = await validateImage(url);
-    if (isValid) {
-      valid.push(url);
-    } else {
-      console.warn(`⚠️ صورة غير صالحة: ${url}`);
-    }
+    if (isValid) valid.push(url);
+    else console.warn(`⚠️ صورة غير صالحة: ${url}`);
   }
   return valid;
 };
-
-// ✅ دالة موحدة لحفظ صور البرنامج في localStorage (مثل GuideDashboard)
 const saveImagesToCache = (programId, images) => {
   try {
     const cache = JSON.parse(localStorage.getItem(IMAGE_CACHE_KEY) || '{}');
@@ -115,23 +86,14 @@ const saveImagesToCache = (programId, images) => {
         is_primary: url.is_primary !== undefined ? url.is_primary : false,
         id: url.id || null
       }));
-      cache[programId] = {
-        images: imagesWithId,
-        timestamp: Date.now()
-      };
+      cache[programId] = { images: imagesWithId, timestamp: Date.now() };
       localStorage.setItem(IMAGE_CACHE_KEY, JSON.stringify(cache));
-      console.log(`💾 Saved ${imagesWithId.length} images to cache for program ${programId}`);
     } else {
       delete cache[programId];
       localStorage.setItem(IMAGE_CACHE_KEY, JSON.stringify(cache));
-      console.log(`🗑️ Cleared cache for program ${programId}`);
     }
-  } catch (e) {
-    console.warn('Failed to save images to cache:', e);
-  }
+  } catch (e) { console.warn('Failed to save images to cache:', e); }
 };
-
-// ✅ دالة موحدة لاسترجاع صور البرنامج من localStorage (مثل GuideDashboard)
 const getImagesFromCache = (programId) => {
   try {
     const cache = JSON.parse(localStorage.getItem(IMAGE_CACHE_KEY) || '{}');
@@ -143,29 +105,19 @@ const getImagesFromCache = (programId) => {
       return null;
     }
     return entry.images.map(img => img.url).filter(Boolean);
-  } catch (e) {
-    return null;
-  }
+  } catch (e) { return null; }
 };
-
-// ✅ دالة احتياطية لاسترجاع الصور من المفتاح القديم
 const getLegacyImages = (programId) => {
   try {
     const key = LEGACY_IMAGE_KEY(programId);
     const saved = localStorage.getItem(key);
     if (saved) {
       const images = JSON.parse(saved);
-      if (images && images.length > 0) {
-        return images;
-      }
+      if (images && images.length > 0) return images;
     }
     return null;
-  } catch (e) {
-    return null;
-  }
+  } catch (e) { return null; }
 };
-
-// ✅ دالة موحدة لحفظ صور البرنامج (تحاول حفظ في الكاش العام ثم في المفتاح القديم كاحتياطي)
 const saveProgramImages = async (programId, images) => {
   try {
     if (!programId) return;
@@ -174,61 +126,34 @@ const saveProgramImages = async (programId, images) => {
       saveImagesToCache(programId, []);
       const key = LEGACY_IMAGE_KEY(programId);
       localStorage.removeItem(key);
-      console.log(`🗑️ No valid images for program ${programId}, cache cleared`);
       return;
     }
-    
-    // حفظ في الكاش العام
     saveImagesToCache(programId, validImages);
-    
-    // حفظ في المفتاح القديم للتوافق مع الإصدارات السابقة
     const key = LEGACY_IMAGE_KEY(programId);
     localStorage.setItem(key, JSON.stringify(validImages));
-    console.log(`✅ Saved ${validImages.length} valid images for program ${programId}`);
-  } catch (error) {
-    console.error('Error saving program images:', error);
-  }
+  } catch (error) { console.error('Error saving program images:', error); }
 };
-
-// ✅ دالة موحدة لاسترجاع صور البرنامج
 const getProgramImages = (programId) => {
   try {
     if (!programId) return null;
-    // 1. من الكاش العام أولاً
     const cached = getImagesFromCache(programId);
-    if (cached && cached.length > 0) {
-      console.log(`✅ Retrieved ${cached.length} images from global cache for program ${programId}`);
-      return cached;
-    }
-    // 2. من المفتاح القديم كاحتياطي
+    if (cached && cached.length > 0) return cached;
     const legacy = getLegacyImages(programId);
     if (legacy && legacy.length > 0) {
-      // نقل الصور إلى الكاش العام
       saveImagesToCache(programId, legacy);
-      console.log(`✅ Migrated ${legacy.length} images from legacy to global cache for program ${programId}`);
       return legacy;
     }
     return null;
-  } catch (error) {
-    console.error('Error retrieving program images:', error);
-    return null;
-  }
+  } catch (error) { return null; }
 };
-
-// ✅ دالة لمسح صور البرنامج
 const clearProgramImages = (programId) => {
   try {
     if (!programId) return;
     saveImagesToCache(programId, []);
     const key = LEGACY_IMAGE_KEY(programId);
     localStorage.removeItem(key);
-    console.log(`✅ Cleared images for program ${programId}`);
-  } catch (error) {
-    console.error('Error clearing program images:', error);
-  }
+  } catch (error) { console.error('Error clearing program images:', error); }
 };
-
-// ✅ دالة جديدة لجلب صور البرنامج من API مباشرة (للمستخدمين العاديين)
 const fetchProgramImagesFromAPI = async (programId) => {
   try {
     const response = await fetch(`${API_BASE}/api/programs/${programId}`);
@@ -236,49 +161,30 @@ const fetchProgramImagesFromAPI = async (programId) => {
     const data = await response.json();
     const program = data.program || data.data || data;
     if (!program) return null;
-    
     let images = [];
-    // جلب الصور من حقل images (المصفوفة)
     if (program.images && Array.isArray(program.images) && program.images.length > 0) {
-      images = program.images
-        .map(img => buildImageUrl(img.url || img.image_url || img))
-        .filter(Boolean);
+      images = program.images.map(img => buildImageUrl(img.url || img.image_url || img)).filter(Boolean);
     } else if (program.image) {
-      // صورة واحدة
       const url = buildImageUrl(program.image);
       if (url) images = [url];
     }
-    
-    // حفظ الصور في الكاش
-    if (images.length > 0) {
-      await saveProgramImages(programId, images);
-    } else {
-      clearProgramImages(programId);
-    }
-    
+    if (images.length > 0) await saveProgramImages(programId, images);
+    else clearProgramImages(programId);
     return images;
-  } catch (error) {
-    console.error(`Error fetching images for program ${programId}:`, error);
-    return null;
-  }
+  } catch (error) { console.error(`Error fetching images for program ${programId}:`, error); return null; }
 };
 
+// دوال المسافات والأنشطة والترجمة (نفس السابق)
 const getDistance = (lat1, lon1, lat2, lon2) => {
   if (!lat1 || !lon1 || !lat2 || !lon2) return Infinity;
   const R = 6371;
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = Math.sin(dLat/2) ** 2 +
-            Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) *
-            Math.sin(dLon/2) ** 2;
+  const a = Math.sin(dLat/2) ** 2 + Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) * Math.sin(dLon/2) ** 2;
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
   return R * c;
 };
-
-const isValidLocation = (lat, lng) => {
-  return lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
-};
-
+const isValidLocation = (lat, lng) => lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
 const getActivityType = (program, lang) => {
   const text = ((program.name || '') + ' ' + (program.description || '')).toLowerCase();
   if (text.includes('بحر') || text.includes('بحري')) return { ar: 'رحلات بحرية', en: 'Marine trips', icon: '🌊' };
@@ -338,6 +244,7 @@ const LOCALES = {
     zoomIn: "تكبير",
     zoomOut: "تصغير",
     loadingImages: "جاري تحميل الصور...",
+    bookingExists: "لديك طلب حجز معلق لهذا البرنامج",
   },
   en: {
     search: "Search...",
@@ -388,6 +295,7 @@ const LOCALES = {
     zoomIn: "Zoom in",
     zoomOut: "Zoom out",
     loadingImages: "Loading images...",
+    bookingExists: "You have a pending booking for this program",
   },
 };
 
@@ -403,9 +311,9 @@ const MapController = ({ center, zoom }) => {
 
 function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount, dark }) {
   const t = (key) => LOCALES[lang]?.[key] || key;
-
   const isGuide = user?.role === 'guide' || user?.type === 'guide' || user?.isGuide === true;
 
+  // حالات الصفحة
   const [selectedProgram, setSelectedProgram] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
   const [userAccuracy, setUserAccuracy] = useState(null);
@@ -418,16 +326,14 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
   const [loadingImages, setLoadingImages] = useState(false);
   const [bookingLoading, setBookingLoading] = useState(false);
   const [favoriteIds, setFavoriteIds] = useState([]);
-  
   const [showOnlyNearby, setShowOnlyNearby] = useState(true);
   const [nearbyRadius] = useState(NEARBY_RADIUS);
-  
   const [isLocating, setIsLocating] = useState(false);
   const [manualMode, setManualMode] = useState(false);
   const [mapCenter, setMapCenter] = useState([0, 0]);
   const [mapZoom, setMapZoom] = useState(5);
   const [locationStatus, setLocationStatus] = useState('idle');
-  
+
   const watchIdRef = useRef(null);
   const retryCountRef = useRef(0);
   const leafletMapRef = useRef(null);
@@ -435,14 +341,42 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
   const [guidesMap, setGuidesMap] = useState({});
   const locationTimeoutRef = useRef(null);
   const isMobile = useRef(window.innerWidth < 768);
-  
-  const [bookedPrograms, setBookedPrograms] = useState(() => {
-    if (!user?.id) return new Set();
-    const stored = localStorage.getItem(BOOKED_PROGRAMS_KEY(user.id));
-    return stored ? new Set(JSON.parse(stored)) : new Set();
-  });
 
-  // جلب خريطة المرشدين
+  // ✅ دوال الحجوزات
+  const getBookedProgramIds = useCallback(() => {
+    if (!user?.id) return [];
+    const key = LOCAL_BOOKINGS_KEY(user.id);
+    const stored = localStorage.getItem(key);
+    if (!stored) return [];
+    try {
+      const bookings = JSON.parse(stored);
+      return bookings.filter(b => b.status !== 'cancelled').map(b => b.program_id).filter(Boolean);
+    } catch { return []; }
+  }, [user?.id]);
+
+  const [bookedProgramIds, setBookedProgramIds] = useState(() => getBookedProgramIds());
+
+  const refreshBookedPrograms = useCallback(() => {
+    const ids = getBookedProgramIds();
+    setBookedProgramIds(ids);
+    console.log('🔄 تحديث الحجوزات (ExplorePage):', ids);
+  }, [getBookedProgramIds]);
+
+  useEffect(() => {
+    refreshBookedPrograms();
+    const handleFocus = () => refreshBookedPrograms();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refreshBookedPrograms();
+    };
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [refreshBookedPrograms]);
+
+  // باقي الدوال (جلب البرامج، الصور، المرشدين، المفضلة، الموقع، إلخ)
   useEffect(() => {
     const fetchGuidesMap = async () => {
       try {
@@ -453,19 +387,14 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
         else if (data && Array.isArray(data)) guidesList = data;
         else if (data && data.guides && Array.isArray(data.guides)) guidesList = data.guides;
         else if (data && data.data && data.data.guides && Array.isArray(data.data.guides)) guidesList = data.data.guides;
-        
         const map = {};
         guidesList.forEach(guide => {
           const uuid = guide.id || guide.uuid;
           const numericId = guide.old_id || guide.oldId;
           const avatar = buildImageUrl(guide.avatar_url || guide.avatar);
           const fullName = guide.full_name || guide.name;
-          if (uuid) {
-            map[uuid] = { id: numericId ? Number(numericId) : uuid, name: fullName, avatar };
-          }
-          if (fullName) {
-            map[fullName] = { id: numericId ? Number(numericId) : uuid, name: fullName, avatar };
-          }
+          if (uuid) map[uuid] = { id: numericId ? Number(numericId) : uuid, name: fullName, avatar };
+          if (fullName) map[fullName] = { id: numericId ? Number(numericId) : uuid, name: fullName, avatar };
         });
         setGuidesMap(map);
       } catch (err) { console.error('Failed to fetch guides map:', err); }
@@ -473,7 +402,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     fetchGuidesMap();
   }, []);
 
-  // المفضلة
   useEffect(() => {
     if (user?.id) {
       const saved = localStorage.getItem(`favorites_${user.id}`);
@@ -483,38 +411,27 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
   }, [user]);
 
   useEffect(() => {
-    if (user?.id) {
-      localStorage.setItem(`favorites_${user.id}`, JSON.stringify(favoriteIds));
-    }
+    if (user?.id) localStorage.setItem(`favorites_${user.id}`, JSON.stringify(favoriteIds));
   }, [favoriteIds, user]);
 
   const toggleFavorite = (id) => {
-    if (!user) {
-      toast.error(t('loginRequired'));
-      setPage('profile');
-      return;
-    }
+    if (!user) { toast.error(t('loginRequired')); setPage('profile'); return; }
     const isFav = favoriteIds.includes(id);
     const newFavs = isFav ? favoriteIds.filter(i => i !== id) : [...favoriteIds, id];
     setFavoriteIds(newFavs);
     toast.success(isFav ? t('removedFromFavorites') : t('addedToFavorites'));
   };
 
-  // ✅ جلب البرامج مع الصور من API مباشرة
   const fetchProgramsFromAPI = useCallback(async () => {
     try {
       const response = await fetch(`${API_BASE}/api/programs`);
       const data = await response.json();
       if (response.ok && data.success && Array.isArray(data.programs)) {
         const activePrograms = data.programs.filter(p => (p.status || '').toLowerCase() === 'active');
-        
-        // ✅ جلب الصور لكل برنامج من API مباشرة
         const progs = await Promise.all(activePrograms.map(async (p) => {
           let guide_avatar = null;
           if (p.guide_id && guidesMap[p.guide_id]) guide_avatar = guidesMap[p.guide_id].avatar;
           else if (p.guide_name && guidesMap[p.guide_name]) guide_avatar = guidesMap[p.guide_name].avatar;
-          
-          // ✅ محاولة جلب الصور من API مباشرة
           let images = [];
           try {
             const imgRes = await fetch(`${API_BASE}/api/programs/${p.id}`);
@@ -523,101 +440,56 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
               const prog = imgData.program || imgData.data || imgData;
               if (prog) {
                 if (prog.images && Array.isArray(prog.images) && prog.images.length > 0) {
-                  images = prog.images
-                    .map(img => buildImageUrl(img.url || img.image_url || img))
-                    .filter(Boolean);
+                  images = prog.images.map(img => buildImageUrl(img.url || img.image_url || img)).filter(Boolean);
                 } else if (prog.image) {
                   const url = buildImageUrl(prog.image);
                   if (url) images = [url];
                 }
-                // حفظ الصور في الكاش
-                if (images.length > 0) {
-                  await saveProgramImages(p.id, images);
-                }
+                if (images.length > 0) await saveProgramImages(p.id, images);
               }
             }
-          } catch (err) {
-            console.warn(`Failed to fetch images for program ${p.id}:`, err);
-          }
-          
-          // إذا لم نجد صوراً من API، نحاول من الكاش
+          } catch (err) { console.warn(`Failed to fetch images for program ${p.id}:`, err); }
           if (images.length === 0) {
             const cached = getProgramImages(p.id);
-            if (cached && cached.length > 0) {
-              images = cached;
-            }
+            if (cached && cached.length > 0) images = cached;
           }
-          
           return {
-            id: p.id,
-            name: p.name,
-            guide_name: p.guide_name,
-            guide_id: p.guide_id,
-            lat: p.location_lat,
-            lng: p.location_lng,
-            price: p.price,
-            duration: p.duration,
-            rating: p.rating || 4.5,
-            location_name: p.location,
-            description: p.description,
-            image: buildImageUrl(p.image),
-            images: images || [],
-            safetyGuidelines: p.safetyGuidelines || "",
-            status: p.status,
-            guide_avatar,
-            hasCachedImages: images && images.length > 0,
+            id: p.id, name: p.name, guide_name: p.guide_name, guide_id: p.guide_id,
+            lat: p.location_lat, lng: p.location_lng, price: p.price, duration: p.duration,
+            rating: p.rating || 4.5, location_name: p.location, description: p.description,
+            image: buildImageUrl(p.image), images: images || [], safetyGuidelines: p.safetyGuidelines || "",
+            status: p.status, guide_avatar, hasCachedImages: images && images.length > 0,
           };
         }));
         setPrograms(progs.filter(p => p.lat && p.lng && !isNaN(p.lat) && !isNaN(p.lng)));
-        console.log(`📦 Loaded ${progs.length} active programs with images from API`);
-      } else {
-        setPrograms([]);
-      }
-    } catch (err) {
-      console.error('Failed to fetch programs', err);
-      setPrograms([]);
-    }
+      } else setPrograms([]);
+    } catch (err) { console.error('Failed to fetch programs', err); setPrograms([]); }
   }, [guidesMap]);
 
-  // ✅ دالة محسنة لجلب صور البرنامج عند النقر على برنامج
   const fetchProgramImages = useCallback(async (program) => {
     if (!program) return;
-    
-    // ✅ التحقق من وجود الصور في الكاش أولاً
     const cachedImages = getProgramImages(program.id);
     if (cachedImages && cachedImages.length > 0) {
-      console.log(`📸 Using cached images for program ${program.id}`);
       setProgramImages(cachedImages);
       setCurrentImageIndex(0);
-      setPrograms(prev => prev.map(p => 
-        p.id === program.id ? { ...p, images: cachedImages, hasCachedImages: true } : p
-      ));
+      setPrograms(prev => prev.map(p => p.id === program.id ? { ...p, images: cachedImages, hasCachedImages: true } : p));
       return;
     }
-    
     setLoadingImages(true);
     try {
-      // ✅ جلب الصور من API
       const images = await fetchProgramImagesFromAPI(program.id);
       if (images && images.length > 0) {
         setProgramImages(images);
         setCurrentImageIndex(0);
-        setPrograms(prev => prev.map(p => 
-          p.id === program.id ? { ...p, images: images, hasCachedImages: true } : p
-        ));
+        setPrograms(prev => prev.map(p => p.id === program.id ? { ...p, images: images, hasCachedImages: true } : p));
       } else {
         setProgramImages([]);
         clearProgramImages(program.id);
       }
-    } catch (err) {
-      console.error('Error fetching program images:', err);
-      setProgramImages([]);
-    } finally {
-      setLoadingImages(false);
-    }
+    } catch (err) { console.error('Error fetching program images:', err); setProgramImages([]); }
+    finally { setLoadingImages(false); }
   }, []);
 
-  // معرف المرشد (UUID)
   const getUserGuideUuid = useCallback(async () => {
     if (!user?.id) return null;
     const userIdStr = String(user.id);
@@ -636,9 +508,7 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
   }, [user?.id]);
 
   const [userUuid, setUserUuid] = useState(null);
-  useEffect(() => {
-    getUserGuideUuid().then(uuid => setUserUuid(uuid));
-  }, [getUserGuideUuid]);
+  useEffect(() => { getUserGuideUuid().then(uuid => setUserUuid(uuid)); }, [getUserGuideUuid]);
 
   const isOwnProgram = useCallback((program) => {
     if (!user || !program) return false;
@@ -647,13 +517,10 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     return guideIdStr === currentGuideId;
   }, [user, userUuid]);
 
-  // حساب المسافات
   const programsWithDistance = useMemo(() => {
     if (!userLocation) return programs.map(p => ({ ...p, distance: Infinity }));
-    return programs.map(p => ({
-      ...p,
-      distance: getDistance(userLocation[0], userLocation[1], p.lat, p.lng)
-    })).sort((a, b) => a.distance - b.distance);
+    return programs.map(p => ({ ...p, distance: getDistance(userLocation[0], userLocation[1], p.lat, p.lng) }))
+      .sort((a, b) => a.distance - b.distance);
   }, [programs, userLocation]);
 
   const displayedPrograms = useMemo(() => {
@@ -667,119 +534,70 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     return filtered;
   }, [programsWithDistance, showMyProgramsOnly, user, userUuid, showOnlyNearby, nearbyRadius, userLocation]);
 
-  // دالة تحديث حالة الموقع
+  // دوال الموقع (نفس السابق)
   const updateUserLocationState = (lat, lng, accuracy, isManual = false) => {
-    if (!isValidLocation(lat, lng)) {
-      console.warn('Invalid location coordinates:', lat, lng);
-      return false;
-    }
-    
+    if (!isValidLocation(lat, lng)) return false;
     setUserLocation([lat, lng]);
     setUserAccuracy(accuracy);
     setLocationActive(true);
     setLocationStatus('acquired');
-    
     if (!initialZoomDone.current || isManual) {
       const zoomLevel = isMobile.current ? 9 : 11;
       setMapCenter([lat, lng]);
       setMapZoom(isManual ? 10 : zoomLevel);
       initialZoomDone.current = true;
     }
-    
     if (isManual) {
-      localStorage.setItem('manual_user_location', JSON.stringify({ 
-        coords: [lng, lat], 
-        accuracy, 
-        timestamp: Date.now() 
-      }));
+      localStorage.setItem('manual_user_location', JSON.stringify({ coords: [lng, lat], accuracy, timestamp: Date.now() }));
     }
-    
     return true;
   };
 
-  // دالة تحديد الموقع المحسنة للجوال
   const startAutoTracking = useCallback(() => {
     if (manualMode) return;
-    
     if (!navigator.geolocation) {
       setLocationStatus('error');
       toast.error(t('locationError'), { duration: 4000 });
       return;
     }
-
-    if (watchIdRef.current) {
-      navigator.geolocation.clearWatch(watchIdRef.current);
-      watchIdRef.current = null;
-    }
-
-    if (locationTimeoutRef.current) {
-      clearTimeout(locationTimeoutRef.current);
-      locationTimeoutRef.current = null;
-    }
-
+    if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
+    if (locationTimeoutRef.current) clearTimeout(locationTimeoutRef.current);
     setIsLocating(true);
     setLocationStatus('locating');
-    
     const loadingToast = toast.loading(t('locating'));
-
     locationTimeoutRef.current = setTimeout(() => {
-      if (watchIdRef.current) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
-        watchIdRef.current = null;
-      }
+      if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
       setIsLocating(false);
       setLocationStatus('error');
       toast.dismiss(loadingToast);
       toast.error(t('locationTimeout'), { duration: 4000 });
     }, LOCATION_TIMEOUT);
-
     watchIdRef.current = navigator.geolocation.watchPosition(
       (position) => {
         const { latitude, longitude, accuracy } = position.coords;
-        
         if (!isValidLocation(latitude, longitude)) {
           retryCountRef.current += 1;
-          if (retryCountRef.current <= MAX_RETRY_ATTEMPTS) {
-            return;
-          } else {
+          if (retryCountRef.current <= MAX_RETRY_ATTEMPTS) return;
+          else {
             setIsLocating(false);
             setLocationStatus('error');
             toast.dismiss(loadingToast);
             toast.error(t('locationError'), { duration: 4000 });
-            if (watchIdRef.current) {
-              navigator.geolocation.clearWatch(watchIdRef.current);
-              watchIdRef.current = null;
-            }
-            if (locationTimeoutRef.current) {
-              clearTimeout(locationTimeoutRef.current);
-              locationTimeoutRef.current = null;
-            }
+            if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
+            if (locationTimeoutRef.current) clearTimeout(locationTimeoutRef.current);
             retryCountRef.current = 0;
           }
           return;
         }
-
         retryCountRef.current = 0;
-        
-        if (locationTimeoutRef.current) {
-          clearTimeout(locationTimeoutRef.current);
-          locationTimeoutRef.current = null;
-        }
-
+        if (locationTimeoutRef.current) clearTimeout(locationTimeoutRef.current);
         const success = updateUserLocationState(latitude, longitude, accuracy, false);
-        
         if (success) {
           setIsLocating(false);
           setLocationStatus('acquired');
           toast.dismiss(loadingToast);
-          
           if (accuracy <= MIN_ACCURACY_THRESHOLD) {
-            toast.success(
-              lang === 'ar' 
-                ? `📍 دقة ${Math.round(accuracy)}م` 
-                : `📍 ${Math.round(accuracy)}m accuracy`,
-              { duration: 2000 }
-            );
+            toast.success(lang === 'ar' ? `📍 دقة ${Math.round(accuracy)}م` : `📍 ${Math.round(accuracy)}m accuracy`, { duration: 2000 });
           }
         }
       },
@@ -787,75 +605,39 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
         console.error('Geolocation error:', error);
         toast.dismiss(loadingToast);
         setIsLocating(false);
-        
         let errorMsg = t('locationError');
-        if (error.code === error.PERMISSION_DENIED) {
-          errorMsg = t('locationPermissionDenied');
-        } else if (error.code === error.TIMEOUT) {
-          errorMsg = t('locationTimeout');
-        }
-        
+        if (error.code === error.PERMISSION_DENIED) errorMsg = t('locationPermissionDenied');
+        else if (error.code === error.TIMEOUT) errorMsg = t('locationTimeout');
         setLocationStatus('error');
         toast.error(errorMsg, { duration: 4000 });
-        
-        if (watchIdRef.current) {
-          navigator.geolocation.clearWatch(watchIdRef.current);
-          watchIdRef.current = null;
-        }
-        if (locationTimeoutRef.current) {
-          clearTimeout(locationTimeoutRef.current);
-          locationTimeoutRef.current = null;
-        }
+        if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
+        if (locationTimeoutRef.current) clearTimeout(locationTimeoutRef.current);
       },
-      { 
-        enableHighAccuracy: true, 
-        maximumAge: 30000,
-        timeout: 10000,
-      }
+      { enableHighAccuracy: true, maximumAge: 30000, timeout: 10000 }
     );
   }, [lang, t, manualMode]);
 
-  // إلغاء تتبع الموقع عند إلغاء تحميل المكون
   useEffect(() => {
     return () => {
-      if (watchIdRef.current) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
-        watchIdRef.current = null;
-      }
-      if (locationTimeoutRef.current) {
-        clearTimeout(locationTimeoutRef.current);
-        locationTimeoutRef.current = null;
-      }
+      if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
+      if (locationTimeoutRef.current) clearTimeout(locationTimeoutRef.current);
     };
   }, []);
 
-  // تبديل الوضع اليدوي
   const enableManualMode = () => {
-    if (watchIdRef.current) {
-      navigator.geolocation.clearWatch(watchIdRef.current);
-      watchIdRef.current = null;
-    }
-    if (locationTimeoutRef.current) {
-      clearTimeout(locationTimeoutRef.current);
-      locationTimeoutRef.current = null;
-    }
+    if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
+    if (locationTimeoutRef.current) clearTimeout(locationTimeoutRef.current);
     setManualMode(true);
     setLocationStatus('idle');
     toast(t('manualModeActive'), { duration: 2000 });
   };
-
   const disableManualMode = () => {
     setManualMode(false);
     setLocationStatus('idle');
     startAutoTracking();
     toast(t('manualModeOff'), { duration: 1500 });
   };
-
-  const handleManualLocationToggle = () => {
-    if (manualMode) disableManualMode();
-    else enableManualMode();
-  };
-
+  const handleManualLocationToggle = () => { if (manualMode) disableManualMode(); else enableManualMode(); };
   const handleMapClick = (e) => {
     if (!manualMode) return;
     const { lat, lng } = e.latlng;
@@ -868,55 +650,30 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
       toast.error(lang === 'ar' ? 'الموقع غير صالح' : 'Invalid location');
     }
   };
-
   const handleRetryAutoLocation = () => {
-    if (manualMode) {
-      disableManualMode();
-    } else {
+    if (manualMode) disableManualMode();
+    else {
       retryCountRef.current = 0;
-      if (watchIdRef.current) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
-        watchIdRef.current = null;
-      }
-      if (locationTimeoutRef.current) {
-        clearTimeout(locationTimeoutRef.current);
-        locationTimeoutRef.current = null;
-      }
+      if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
+      if (locationTimeoutRef.current) clearTimeout(locationTimeoutRef.current);
       startAutoTracking();
     }
   };
 
+  // دوال التفاعل (دردشة، حجز، عرض على الخريطة)
   const handleChatWithGuide = (guideId, guideName) => {
-    if (!user) {
-      toast.error(t('loginRequired'));
-      setPage('profile');
-      return;
-    }
-    if (String(guideId) === String(user.id)) {
-      toast.error(t('cannotChatOwn'));
-      return;
-    }
+    if (!user) { toast.error(t('loginRequired')); setPage('profile'); return; }
+    if (String(guideId) === String(user.id)) { toast.error(t('cannotChatOwn')); return; }
     const chatParams = { recipientId: guideId, recipientName: guideName || 'المرشد', timestamp: Date.now() };
     localStorage.setItem('directChatParams', JSON.stringify(chatParams));
     toast.success(lang === 'ar' ? `تم فتح المحادثة مع ${guideName}` : `Chat opened with ${guideName}`);
     setPage('directChat');
   };
 
-  // دالة الحجز المعدلة
   const handleBooking = async (program) => {
-    if (!user) {
-      toast.error(t('loginRequired'));
-      setPage('profile');
-      return;
-    }
-    if (isOwnProgram(program)) {
-      toast.error(t('cannotBookOwn'));
-      return;
-    }
-    if (bookedPrograms.has(program.id)) {
-      toast.info(lang === 'ar' ? 'لقد قمت بحجز هذا البرنامج مسبقاً' : 'You have already booked this program');
-      return;
-    }
+    if (!user) { toast.error(t('loginRequired')); setPage('profile'); return; }
+    if (isOwnProgram(program)) { toast.error(t('cannotBookOwn')); return; }
+    if (bookedProgramIds.includes(program.id)) { toast.info(t('bookingExists')); return; }
     setBookingLoading(true);
     try {
       const token = localStorage.getItem('token');
@@ -927,62 +684,40 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
         priority: 'normal',
         message: `أود حجز البرنامج "${program.name}" الذي يقدمه المرشد ${program.guide_name}. السعر: ${program.price} ريال`,
         metadata: {
-          program_id: program.id,
-          program_name: program.name,
-          program_price: program.price,
-          guide_id: program.guide_id,
-          guide_name: program.guide_name,
-          tourist_id: user.id,
-          tourist_name: user.name || user.fullName,
-          tourist_balance: user.balance || 0,
-          user_balance: user.balance || 0,
-          is_booking: true,
-          created_from: 'explore_page'
+          program_id: program.id, program_name: program.name, program_price: program.price,
+          guide_id: program.guide_id, guide_name: program.guide_name,
+          tourist_id: user.id, tourist_name: user.name || user.fullName,
+          tourist_balance: user.balance || 0, user_balance: user.balance || 0,
+          is_booking: true, created_from: 'explore_page'
         }
       };
-      console.log('📤 Sending booking request:', ticketData);
       const response = await fetch(`${API_BASE}/api/support/tickets`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(token && { Authorization: `Bearer ${token}` }) },
         body: JSON.stringify(ticketData)
       });
       const result = await response.json();
-      console.log('📥 Booking response:', result);
       if (result.success) {
         toast.success(t('requestSent'));
-        
         const localBooking = {
-          id: Date.now(),
-          user_id: user.id,
-          user_name: user.name || user.fullName,
-          program_id: program.id,
-          program_name: program.name,
-          program_price: program.price,
-          user_balance: user.balance || 0,
-          created_at: new Date().toISOString(),
-          status: 'pending',
-          guide_id: program.guide_id
+          id: Date.now(), user_id: user.id, user_name: user.name || user.fullName,
+          program_id: program.id, program_name: program.name, program_price: program.price,
+          user_balance: user.balance || 0, created_at: new Date().toISOString(),
+          status: 'pending', guide_id: program.guide_id
         };
         const key = LOCAL_BOOKINGS_KEY(user.id);
         const existing = localStorage.getItem(key);
         let bookings = existing ? JSON.parse(existing) : [];
         bookings.push(localBooking);
         localStorage.setItem(key, JSON.stringify(bookings));
-        
-        const newBookedSet = new Set(bookedPrograms);
-        newBookedSet.add(program.id);
-        setBookedPrograms(newBookedSet);
-        localStorage.setItem(BOOKED_PROGRAMS_KEY(user.id), JSON.stringify([...newBookedSet]));
-        
+        refreshBookedPrograms();
       } else {
         toast.error(result.message || t('bookingFailed'));
       }
     } catch (err) {
       console.error('Booking error:', err);
       toast.error(lang === 'ar' ? 'حدث خطأ أثناء إرسال الطلب' : 'Error sending request');
-    } finally {
-      setBookingLoading(false);
-    }
+    } finally { setBookingLoading(false); }
   };
 
   const handleViewOnMap = (programId) => {
@@ -990,14 +725,13 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     setPage('explore');
   };
 
-  // تحميل البيانات الأولية
+  // تأثيرات التحميل
   useEffect(() => {
     fetchProgramsFromAPI();
     const interval = setInterval(fetchProgramsFromAPI, 60000);
     return () => clearInterval(interval);
   }, [fetchProgramsFromAPI]);
 
-  // بدء تتبع الموقع عند تحميل المكون
   useEffect(() => {
     const savedLocation = localStorage.getItem('manual_user_location');
     if (savedLocation) {
@@ -1011,21 +745,13 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
             setManualMode(true);
             setLocationStatus('acquired');
             return;
-          } else {
-            localStorage.removeItem('manual_user_location');
-          }
-        } else {
-          localStorage.removeItem('manual_user_location');
-        }
-      } catch(e) { 
-        localStorage.removeItem('manual_user_location');
-      }
+          } else localStorage.removeItem('manual_user_location');
+        } else localStorage.removeItem('manual_user_location');
+      } catch(e) { localStorage.removeItem('manual_user_location'); }
     }
-    
     startAutoTracking();
   }, []);
 
-  // اختيار برنامج من المعرف المحفوظ
   useEffect(() => {
     if (programs.length === 0) return;
     const selectedId = localStorage.getItem('selectedProgramId');
@@ -1043,11 +769,8 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     }
   }, [programs, fetchProgramImages]);
 
-  // التحقق من حجم الشاشة
   useEffect(() => {
-    const handleResize = () => {
-      isMobile.current = window.innerWidth < 768;
-    };
+    const handleResize = () => { isMobile.current = window.innerWidth < 768; };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
@@ -1064,9 +787,12 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     );
   }
 
+  const isBooked = (programId) => bookedProgramIds.includes(programId);
+
+  // JSX للصفحة (نفس السابق)
   return (
     <div className="h-full flex flex-col pb-16">
-      {/* هيدر مدمج ومناسب للجوال */}
+      {/* الهيدر */}
       <div className="bg-gradient-to-r from-green-500 to-emerald-600 p-3 text-white flex-shrink-0 z-10 shadow-md">
         <div className="flex justify-between items-center mb-2">
           <div className="flex items-center gap-2">
@@ -1101,20 +827,13 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
             <button onClick={handleManualLocationToggle} className="p-1.5 bg-white/20 rounded-full hover:bg-white/30 transition" title={manualMode ? t('useAutoLocation') : t('setManualLocation')}>
               <MousePointer size={16} />
             </button>
-            <button 
-              onClick={handleRetryAutoLocation} 
-              className="p-1.5 bg-white/20 rounded-full hover:bg-white/30 transition disabled:opacity-50" 
-              disabled={isLocating}
-              title={t('retryLocation')}
-            >
+            <button onClick={handleRetryAutoLocation} className="p-1.5 bg-white/20 rounded-full hover:bg-white/30 transition disabled:opacity-50" disabled={isLocating} title={t('retryLocation')}>
               <Crosshair size={16} className={isLocating ? "animate-pulse" : ""} />
             </button>
             <button onClick={() => setPage('home')} className="p-1.5 bg-white/20 rounded-full"><Home size={16} /></button>
             <button onClick={() => setPage('notifications')} className="relative p-1.5 bg-white/20 rounded-full"><Bell size={16} />{unreadCount > 0 && <span className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-[8px] rounded-full w-4 h-4 flex items-center justify-center">{unreadCount}</span>}</button>
           </div>
         </div>
-        
-        {/* شريط البحث والفلترة المدمج */}
         <div className="flex gap-2">
           <div className="relative flex-1">
             <Search className="absolute right-2 top-1.5 text-white/70" size={12} />
@@ -1131,14 +850,12 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
             </button>
           </div>
         </div>
-        
-        {/* عداد البرامج */}
         <div className="text-[10px] text-white/80 mt-1 text-center">
           {displayedPrograms.length} {t('programsNearby')}
         </div>
       </div>
 
-      {/* الخريطة - مساحة مخصصة للجوال */}
+      {/* الخريطة */}
       <div ref={mapContainerRef} className="flex-1 w-full relative z-0" style={{ height: 'calc(100vh - 180px)' }}>
         <MapContainer 
           key={mapCenter ? `map-${mapCenter[0]}-${mapCenter[1]}` : 'map-default'} 
@@ -1159,45 +876,27 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
             if (map.zoomControl) map.zoomControl.remove();
             map.setMinZoom(3);
             map.setMaxZoom(18);
-            
             if (userLocation && map) {
-              setTimeout(() => {
-                map.flyTo(userLocation, isMobile.current ? 9 : 11, { duration: 1 });
-              }, 500);
+              setTimeout(() => map.flyTo(userLocation, isMobile.current ? 9 : 11, { duration: 1 }), 500);
             }
           }}
         >
           {dark ? (
-            <TileLayer 
-              attribution="" 
-              url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" 
-              subdomains="abcd" 
-              maxZoom={19}
-            />
+            <TileLayer attribution="" url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" subdomains="abcd" maxZoom={19} />
           ) : (
-            <TileLayer 
-              attribution="" 
-              url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png" 
-              subdomains="abcd"
-              maxZoom={19}
-            />
+            <TileLayer attribution="" url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png" subdomains="abcd" maxZoom={19} />
           )}
-          
           {mapCenter && <MapController center={mapCenter} zoom={mapZoom} />}
-          
-          {/* عرض البرامج على الخريطة */}
           {displayedPrograms.map(program => {
             const color = isOwnProgram(program) ? "#9b59b6" : "#10b981";
             const isNearby = userLocation && program.distance <= nearbyRadius;
             const size = isNearby ? 28 : 22;
-            
             const markerIcon = L.divIcon({ 
               className: "custom-marker", 
-              html: `<div style="background-color: ${color}; width: ${size}px; height: ${size}px; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 8px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; font-size: ${isNearby ? '14' : '10'}px; transition: all 0.2s;">🏞️</div>`, 
+              html: `<div style="background-color: ${color}; width: ${size}px; height: ${size}px; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 8px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; font-size: ${isNearby ? '14' : '10'}px;">🏞️</div>`, 
               iconSize: [size, size], 
               popupAnchor: [0, -size/2] 
             });
-            
             return (
               <Marker 
                 key={program.id} 
@@ -1221,13 +920,14 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
                     {program.distance && program.distance !== Infinity && (
                       <div className="text-[10px] text-gray-500">{program.distance.toFixed(1)} {t('kmAway')}</div>
                     )}
+                    {isBooked(program.id) && (
+                      <div className="text-xs text-blue-600 font-bold mt-1">✅ {t('bookingExists')}</div>
+                    )}
                   </div>
                 </Popup>
               </Marker>
             );
           })}
-          
-          {/* علامة موقع المستخدم */}
           {userLocation && (
             <Marker 
               position={userLocation} 
@@ -1238,45 +938,14 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
               })}
             >
               <Popup closeButton={false}>
-                <div className="text-xs text-center">
-                  {manualMode ? "📍 يدوي" : `📍 ${Math.round(userAccuracy)}م`}
-                </div>
+                <div className="text-xs text-center">{manualMode ? "📍 يدوي" : `📍 ${Math.round(userAccuracy)}م`}</div>
               </Popup>
             </Marker>
           )}
         </MapContainer>
-        
-        <style>{`
-          .custom-popup .leaflet-popup-content-wrapper {
-            border-radius: 12px !important;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.15) !important;
-            padding: 0 !important;
-            background: rgba(255,255,255,0.95) !important;
-            backdrop-filter: blur(10px) !important;
-          }
-          .custom-popup .leaflet-popup-content {
-            margin: 8px !important;
-            line-height: 1.4 !important;
-          }
-          .custom-popup .leaflet-popup-tip {
-            display: none !important;
-          }
-          @keyframes pulse-dot {
-            0%, 100% { transform: scale(1); opacity: 1; }
-            50% { transform: scale(1.3); opacity: 0.8; }
-          }
-          @media (max-width: 768px) {
-            .leaflet-popup {
-              transform: scale(0.85) !important;
-            }
-            .leaflet-popup-content-wrapper {
-              border-radius: 10px !important;
-            }
-          }
-        `}</style>
       </div>
 
-      {/* بطاقة البرنامج المحدد - مرفوعة للأعلى لتظهر البيانات كاملة */}
+      {/* بطاقة البرنامج المحدد */}
       {selectedProgram && (
         <div className="absolute bottom-24 left-0 right-0 z-30 px-1 transition-all duration-300">
           <div className={`${dark ? 'bg-gray-800' : 'bg-white'} rounded-xl shadow-2xl overflow-hidden border ${dark ? 'border-gray-700' : 'border-gray-200'}`}>
@@ -1304,44 +973,20 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
                       if (newImages.length === 0) {
                         clearProgramImages(selectedProgram.id);
                         setProgramImages([]);
-                        setPrograms(prev => prev.map(p => 
-                          p.id === selectedProgram.id ? { ...p, images: [], hasCachedImages: false } : p
-                        ));
+                        setPrograms(prev => prev.map(p => p.id === selectedProgram.id ? { ...p, images: [], hasCachedImages: false } : p));
                       } else {
                         setProgramImages(newImages);
                         const newIndex = currentImageIndex >= newImages.length ? newImages.length - 1 : currentImageIndex;
                         setCurrentImageIndex(newIndex);
                         saveProgramImages(selectedProgram.id, newImages);
-                        setPrograms(prev => prev.map(p => 
-                          p.id === selectedProgram.id ? { ...p, images: newImages, hasCachedImages: true } : p
-                        ));
+                        setPrograms(prev => prev.map(p => p.id === selectedProgram.id ? { ...p, images: newImages, hasCachedImages: true } : p));
                       }
                     }}
                   />
                   {programImages.length > 1 && (
                     <>
-                      <button 
-                        onClick={(e) => { 
-                          e.stopPropagation(); 
-                          e.preventDefault();
-                          setCurrentImageIndex((prev) => (prev - 1 + programImages.length) % programImages.length); 
-                        }} 
-                        className="absolute left-1 top-1/2 transform -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white p-1.5 rounded-full transition z-20 text-xs pointer-events-auto"
-                        style={{ touchAction: 'manipulation' }}
-                      >
-                        ❮
-                      </button>
-                      <button 
-                        onClick={(e) => { 
-                          e.stopPropagation(); 
-                          e.preventDefault();
-                          setCurrentImageIndex((prev) => (prev + 1) % programImages.length); 
-                        }} 
-                        className="absolute right-1 top-1/2 transform -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white p-1.5 rounded-full transition z-20 text-xs pointer-events-auto"
-                        style={{ touchAction: 'manipulation' }}
-                      >
-                        ❯
-                      </button>
+                      <button onClick={(e) => { e.stopPropagation(); e.preventDefault(); setCurrentImageIndex((prev) => (prev - 1 + programImages.length) % programImages.length); }} className="absolute left-1 top-1/2 transform -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white p-1.5 rounded-full transition z-20 text-xs">❮</button>
+                      <button onClick={(e) => { e.stopPropagation(); e.preventDefault(); setCurrentImageIndex((prev) => (prev + 1) % programImages.length); }} className="absolute right-1 top-1/2 transform -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white p-1.5 rounded-full transition z-20 text-xs">❯</button>
                       <div className="absolute top-1 left-1 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded-full z-20">
                         {currentImageIndex+1}/{programImages.length}
                       </div>
@@ -1352,17 +997,10 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
                 <div className="flex flex-col items-center justify-center h-48 text-gray-400">
                   <FaBoxOpen size={32} />
                   <span className="text-xs mt-1">لا توجد صورة</span>
-                  <button 
-                    onClick={() => fetchProgramImages(selectedProgram)}
-                    className="mt-2 text-xs text-green-600 hover:underline"
-                  >
-                    إعادة تحميل
-                  </button>
+                  <button onClick={() => fetchProgramImages(selectedProgram)} className="mt-2 text-xs text-green-600 hover:underline">إعادة تحميل</button>
                 </div>
               )}
-              
               <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent pointer-events-none" />
-              
               <div className="absolute bottom-14 left-2 right-2 text-white pointer-events-none z-10">
                 <h3 className="font-bold text-base leading-tight drop-shadow-md truncate">{selectedProgram.name}</h3>
                 <div className="flex flex-wrap items-center gap-1 text-[10px] mt-0.5">
@@ -1379,14 +1017,14 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
                   <span className="truncate">{selectedProgram.location_name || selectedProgram.location || 'موقع البرنامج'}</span>
                 </div>
               </div>
-              
               <button onClick={() => { setSelectedProgram(null); setProgramImages([]); }} className="absolute top-1 right-1 z-20 bg-black/50 backdrop-blur-sm p-1 rounded-full text-white hover:bg-black/70 transition"><X size={14} /></button>
-              
               <div className="absolute bottom-1 left-1 right-1 z-20 flex justify-between items-center pointer-events-auto gap-1">
                 <button onClick={() => toggleFavorite(selectedProgram.id)} className="p-1.5 rounded-full transition hover:scale-105"><Heart size={16} className={favoriteIds.includes(selectedProgram.id) ? 'fill-red-500 text-red-500' : 'text-white'} /></button>
                 <div className="flex gap-1">
                   <button onClick={() => handleChatWithGuide(selectedProgram.guide_id, selectedProgram.guide_name)} disabled={isOwnProgram(selectedProgram)} className={`${isOwnProgram(selectedProgram) ? 'bg-gray-500 cursor-not-allowed' : 'bg-blue-600/90 hover:bg-blue-700'} backdrop-blur-sm text-white px-2 py-1 rounded-lg text-[10px] font-medium flex items-center gap-1 transition`}><MessageCircle size={10} /> {t('chatWithGuide')}</button>
-                  <button onClick={() => handleBooking(selectedProgram)} disabled={bookingLoading || isOwnProgram(selectedProgram) || bookedPrograms.has(selectedProgram.id)} className={`${(bookingLoading || isOwnProgram(selectedProgram) || bookedPrograms.has(selectedProgram.id)) ? 'bg-gray-500 cursor-not-allowed' : 'bg-purple-600/90 hover:bg-purple-700'} backdrop-blur-sm text-white px-2 py-1 rounded-lg text-[10px] font-medium flex items-center gap-1 transition`}><CalendarCheck size={10} /> {t('bookNow')}</button>
+                  <button onClick={() => handleBooking(selectedProgram)} disabled={bookingLoading || isOwnProgram(selectedProgram) || isBooked(selectedProgram.id)} className={`${(bookingLoading || isOwnProgram(selectedProgram) || isBooked(selectedProgram.id)) ? 'bg-gray-500 cursor-not-allowed' : 'bg-purple-600/90 hover:bg-purple-700'} backdrop-blur-sm text-white px-2 py-1 rounded-lg text-[10px] font-medium flex items-center gap-1 transition`}>
+                    <CalendarCheck size={10} /> {isBooked(selectedProgram.id) ? t('bookingExists') : t('bookNow')}
+                  </button>
                 </div>
               </div>
             </div>
@@ -1398,56 +1036,26 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
       {showGallery && programImages.length > 0 && (
         <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center" onClick={() => setShowGallery(false)}>
           <div className="relative max-w-4xl max-h-screen p-2">
-            <img 
-              key={`gallery-${currentImageIndex}-${programImages[currentImageIndex]}`}
-              src={programImages[currentImageIndex]} 
-              className="max-w-full max-h-screen object-contain" 
-              alt="Gallery"
-              crossOrigin="anonymous"
-              onError={(e) => {
-                if (programImages.length > 1) {
-                  const newImages = programImages.filter((_, i) => i !== currentImageIndex);
-                  setProgramImages(newImages);
-                  const newIndex = currentImageIndex >= newImages.length ? newImages.length - 1 : currentImageIndex;
-                  setCurrentImageIndex(newIndex);
-                  if (selectedProgram) {
-                    saveProgramImages(selectedProgram.id, newImages);
-                  }
-                } else {
-                  setShowGallery(false);
-                  if (selectedProgram) {
-                    clearProgramImages(selectedProgram.id);
-                    setProgramImages([]);
-                  }
-                }
-              }}
-            />
+            <img key={`gallery-${currentImageIndex}-${programImages[currentImageIndex]}`} src={programImages[currentImageIndex]} className="max-w-full max-h-screen object-contain" alt="Gallery" crossOrigin="anonymous" onError={(e) => {
+              if (programImages.length > 1) {
+                const newImages = programImages.filter((_, i) => i !== currentImageIndex);
+                setProgramImages(newImages);
+                const newIndex = currentImageIndex >= newImages.length ? newImages.length - 1 : currentImageIndex;
+                setCurrentImageIndex(newIndex);
+                if (selectedProgram) saveProgramImages(selectedProgram.id, newImages);
+              } else {
+                setShowGallery(false);
+                if (selectedProgram) { clearProgramImages(selectedProgram.id); setProgramImages([]); }
+              }
+            }} />
             {programImages.length > 1 && (
               <>
-                <button 
-                  onClick={(e) => { 
-                    e.stopPropagation(); 
-                    setCurrentImageIndex((prev) => (prev - 1 + programImages.length) % programImages.length); 
-                  }} 
-                  className="absolute left-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full z-50 pointer-events-auto"
-                >
-                  ❮
-                </button>
-                <button 
-                  onClick={(e) => { 
-                    e.stopPropagation(); 
-                    setCurrentImageIndex((prev) => (prev + 1) % programImages.length); 
-                  }} 
-                  className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full z-50 pointer-events-auto"
-                >
-                  ❯
-                </button>
-                <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-black/60 text-white text-xs px-3 py-1 rounded-full z-50">
-                  {currentImageIndex+1} / {programImages.length}
-                </div>
+                <button onClick={(e) => { e.stopPropagation(); setCurrentImageIndex((prev) => (prev - 1 + programImages.length) % programImages.length); }} className="absolute left-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full z-50">❮</button>
+                <button onClick={(e) => { e.stopPropagation(); setCurrentImageIndex((prev) => (prev + 1) % programImages.length); }} className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full z-50">❯</button>
+                <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-black/60 text-white text-xs px-3 py-1 rounded-full z-50">{currentImageIndex+1} / {programImages.length}</div>
               </>
             )}
-            <button onClick={() => setShowGallery(false)} className="absolute top-2 right-2 bg-black/50 text-white p-1.5 rounded-full z-50 pointer-events-auto">✕</button>
+            <button onClick={() => setShowGallery(false)} className="absolute top-2 right-2 bg-black/50 text-white p-1.5 rounded-full z-50">✕</button>
           </div>
         </div>
       )}
