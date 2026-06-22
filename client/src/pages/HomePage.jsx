@@ -1,16 +1,14 @@
 // client/src/pages/HomePage.jsx
 // ✅ النسخة النهائية – عرض كامل للبيانات والصور مع توحيد الكاش مع GuideDashboard و ExplorePage
-// ✅ استخدام نفس نظام الكاش الموحد (guide_programs_images_cache)
-// ✅ عرض جميع بيانات البرنامج: الاسم، السعر، المدة، الموقع، التقييم، المسافة
-// ✅ عرض صور متعددة مع أزرار تنقل
-// ✅ معالجة الأخطاء وعرض رسائل للمستخدم
-// ✅ إزالة زر المفضلة من الهيرو (موجود في شريط التنقل السفلي)
+// ✅ عرض طلبات الحجز مع إظهار "تم طلب حجز" للمستخدم
+// ✅ دعم إلغاء الحجز (عند إلغاء الحجز، يمكن إعادة الحجز مرة أخرى)
+// ✅ تحديث فوري للحجوزات عبر focus و visibilitychange
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { 
   FaStar, FaSun, FaMoon, FaMapMarkerAlt, 
   FaBoxOpen, FaSpinner, FaLocationArrow, FaRedoAlt, FaArrowUp,
-  FaHeart, FaCalendarCheck, FaMapMarkedAlt
+  FaHeart, FaCalendarCheck, FaMapMarkedAlt, FaCheckCircle
 } from 'react-icons/fa';
 import { 
   MapPin, Bell, Search, Users, 
@@ -30,6 +28,10 @@ const MAX_RETRY_ATTEMPTS = 5;
 const IMAGE_CACHE_KEY = 'guide_programs_images_cache';
 const LEGACY_IMAGE_KEY = (programId) => `program_images_${programId}`;
 
+// ✅ مفتاح الحجوزات المحلية
+const LOCAL_BOOKINGS_KEY = (userId) => `local_bookings_${userId}`;
+
+// ===== دوال الصور (نفس الكود السابق) =====
 const buildImageUrl = (url) => {
   if (!url || typeof url !== 'string') return null;
   if (url.startsWith('blob:') || url.startsWith('data:')) return url;
@@ -39,7 +41,6 @@ const buildImageUrl = (url) => {
   return `${API_BASE}/${url}`;
 };
 
-// ✅ دالة للتحقق من صحة الصورة (تجنب 404)
 const validateImage = async (url) => {
   if (!url) return false;
   try {
@@ -50,7 +51,6 @@ const validateImage = async (url) => {
   }
 };
 
-// ✅ دالة لتصفية الصور الصالحة فقط
 const filterValidImages = async (images) => {
   if (!images || images.length === 0) return [];
   const valid = [];
@@ -67,7 +67,6 @@ const filterValidImages = async (images) => {
   return valid;
 };
 
-// ✅ دالة موحدة لحفظ صور البرنامج في localStorage (مثل GuideDashboard)
 const saveImagesToCache = (programId, images) => {
   try {
     const cache = JSON.parse(localStorage.getItem(IMAGE_CACHE_KEY) || '{}');
@@ -93,7 +92,6 @@ const saveImagesToCache = (programId, images) => {
   }
 };
 
-// ✅ دالة موحدة لاسترجاع صور البرنامج من localStorage (مثل GuideDashboard)
 const getImagesFromCache = (programId) => {
   try {
     const cache = JSON.parse(localStorage.getItem(IMAGE_CACHE_KEY) || '{}');
@@ -110,7 +108,6 @@ const getImagesFromCache = (programId) => {
   }
 };
 
-// ✅ دالة احتياطية لاسترجاع الصور من المفتاح القديم
 const getLegacyImages = (programId) => {
   try {
     const key = LEGACY_IMAGE_KEY(programId);
@@ -127,7 +124,6 @@ const getLegacyImages = (programId) => {
   }
 };
 
-// ✅ دالة موحدة لحفظ صور البرنامج
 const saveProgramImages = async (programId, images) => {
   try {
     if (!programId) return;
@@ -150,7 +146,6 @@ const saveProgramImages = async (programId, images) => {
   }
 };
 
-// ✅ دالة موحدة لاسترجاع صور البرنامج
 const getProgramImages = (programId) => {
   try {
     if (!programId) return null;
@@ -172,7 +167,6 @@ const getProgramImages = (programId) => {
   }
 };
 
-// ✅ دالة لمسح صور البرنامج
 const clearProgramImages = (programId) => {
   try {
     if (!programId) return;
@@ -185,6 +179,7 @@ const clearProgramImages = (programId) => {
   }
 };
 
+// ===== دوال المسافات والأنشطة =====
 const getDistance = (lat1, lon1, lat2, lon2) => {
   if (!lat1 || !lon1 || !lat2 || !lon2) return Infinity;
   const R = 6371;
@@ -214,6 +209,7 @@ const getActivityType = (program, lang) => {
   return { ar: 'برنامج سياحي', en: 'Tour program', icon: '🏞️', color: 'teal' };
 };
 
+// ===== الترجمات =====
 const LOCALES = {
   ar: {
     appName: 'تطبيق السائح',
@@ -267,6 +263,8 @@ const LOCALES = {
     programsNearby: 'برامج سياحية ضمن 245 كم',
     loadingImages: 'جاري تحميل الصور...',
     noImage: 'لا توجد صورة',
+    alreadyBooked: 'تم طلب حجز',
+    bookingExists: 'لديك طلب حجز معلق لهذا البرنامج',
   },
   en: {
     appName: 'Tourist App',
@@ -320,9 +318,12 @@ const LOCALES = {
     programsNearby: 'Tour programs within 245 km',
     loadingImages: 'Loading images...',
     noImage: 'No image',
+    alreadyBooked: 'Booking Requested',
+    bookingExists: 'You have a pending booking for this program',
   }
 };
 
+// ===== مكون HeroAd =====
 const HeroAd = ({ lang, setPage }) => {
   const t = (key) => LOCALES[lang]?.[key] || key;
   return (
@@ -353,17 +354,16 @@ const HeroAd = ({ lang, setPage }) => {
   );
 };
 
-const ProgramCard = React.memo(({ program, lang, onBook, onView, onChat, isFavorite, onToggleFavorite, dark }) => {
+// ===== مكون ProgramCard =====
+const ProgramCard = React.memo(({ program, lang, onBook, onView, onChat, isFavorite, onToggleFavorite, dark, isBooked }) => {
   const t = (key) => LOCALES[lang]?.[key] || key;
   const activity = getActivityType(program, lang);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [imageError, setImageError] = useState(false);
   const [loadingImage, setLoadingImage] = useState(false);
   
-  // ✅ استرجاع الصور من البرنامج (باستخدام الكاش الموحد)
   const getImagesList = useMemo(() => {
     const images = [];
-    
     if (program.images && Array.isArray(program.images) && program.images.length > 0) {
       program.images.forEach(img => {
         if (typeof img === 'string') {
@@ -375,12 +375,10 @@ const ProgramCard = React.memo(({ program, lang, onBook, onView, onChat, isFavor
         }
       });
     }
-    
     if (program.image && images.length === 0) {
       const url = buildImageUrl(program.image);
       if (url) images.push(url);
     }
-    
     return images;
   }, [program.images, program.image]);
   
@@ -394,7 +392,6 @@ const ProgramCard = React.memo(({ program, lang, onBook, onView, onChat, isFavor
       setImageError(false);
     }
   };
-  
   const prevImage = (e) => {
     e.stopPropagation();
     if (totalImages > 1) {
@@ -434,12 +431,10 @@ const ProgramCard = React.memo(({ program, lang, onBook, onView, onChat, isFavor
             onError={() => {
               setImageError(true);
               setLoadingImage(false);
-              // ✅ محاولة الانتقال للصورة التالية إذا فشل التحميل
               if (totalImages > 1) {
                 const newIndex = (currentImageIndex + 1) % totalImages;
                 setCurrentImageIndex(newIndex);
                 setImageError(false);
-                // حذف الصورة الفاشلة من cache
                 const newImages = getImagesList.filter((_, i) => i !== currentImageIndex);
                 if (newImages.length > 0) {
                   saveProgramImages(program.id, newImages);
@@ -457,7 +452,6 @@ const ProgramCard = React.memo(({ program, lang, onBook, onView, onChat, isFavor
               onClick={() => {
                 setLoadingImage(true);
                 setImageError(false);
-                // محاولة إعادة جلب الصور من API
                 const fetchImages = async () => {
                   try {
                     const res = await fetch(`${API_BASE}/api/programs/${program.id}`);
@@ -474,12 +468,11 @@ const ProgramCard = React.memo(({ program, lang, onBook, onView, onChat, isFavor
                       await saveProgramImages(program.id, images);
                       const cached = getProgramImages(program.id);
                       if (cached && cached.length > 0) {
-                        // تحديث البرنامج في القائمة
                         program.images = cached;
                         setCurrentImageIndex(0);
                         setImageError(false);
                         setLoadingImage(false);
-                        window.location.reload(); // بسيط: إعادة تحميل الصفحة لتحديث البيانات
+                        window.location.reload();
                       }
                     }
                   } catch (e) {
@@ -498,20 +491,8 @@ const ProgramCard = React.memo(({ program, lang, onBook, onView, onChat, isFavor
         
         {totalImages > 1 && !imageError && currentImage && (
           <>
-            <button 
-              onClick={prevImage} 
-              className="absolute left-1 top-1/2 transform -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white p-1 rounded-full transition z-10 text-xs pointer-events-auto"
-              style={{ touchAction: 'manipulation' }}
-            >
-              ❮
-            </button>
-            <button 
-              onClick={nextImage} 
-              className="absolute right-1 top-1/2 transform -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white p-1 rounded-full transition z-10 text-xs pointer-events-auto"
-              style={{ touchAction: 'manipulation' }}
-            >
-              ❯
-            </button>
+            <button onClick={prevImage} className="absolute left-1 top-1/2 transform -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white p-1 rounded-full transition z-10 text-xs">❮</button>
+            <button onClick={nextImage} className="absolute right-1 top-1/2 transform -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white p-1 rounded-full transition z-10 text-xs">❯</button>
             <div className="absolute top-1 right-1 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded-full z-10">
               {currentImageIndex+1}/{totalImages}
             </div>
@@ -564,23 +545,30 @@ const ProgramCard = React.memo(({ program, lang, onBook, onView, onChat, isFavor
         </div>
         
         <div className="flex gap-1.5 mt-2">
-          <button 
-            onClick={() => onView(program.id)} 
-            className="flex-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 text-[10px] font-medium py-1.5 px-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition flex items-center justify-center gap-1"
-          >
+          <button onClick={() => onView(program.id)} className="flex-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 text-[10px] font-medium py-1.5 px-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition flex items-center justify-center gap-1">
             <FaMapMarkedAlt size={10} /> {t('viewOnMap')}
           </button>
-          <button 
-            onClick={() => onChat(program.guide_id, program.guide_name)} 
-            className="flex-1 bg-blue-500 text-white text-[10px] font-medium py-1.5 px-2 rounded-lg hover:bg-blue-600 transition flex items-center justify-center gap-1"
-          >
+          <button onClick={() => onChat(program.guide_id, program.guide_name)} className="flex-1 bg-blue-500 text-white text-[10px] font-medium py-1.5 px-2 rounded-lg hover:bg-blue-600 transition flex items-center justify-center gap-1">
             <MessageCircle size={10} /> {t('chat')}
           </button>
           <button 
             onClick={() => onBook(program)} 
-            className="flex-1 bg-gradient-to-r from-green-500 to-emerald-600 text-white text-[10px] font-medium py-1.5 px-2 rounded-lg hover:from-green-600 hover:to-emerald-700 transition flex items-center justify-center gap-1"
+            disabled={isBooked}
+            className={`flex-1 text-[10px] font-medium py-1.5 px-2 rounded-lg transition flex items-center justify-center gap-1 ${
+              isBooked 
+                ? 'bg-gray-400 dark:bg-gray-600 text-white cursor-not-allowed' 
+                : 'bg-gradient-to-r from-green-500 to-emerald-600 text-white hover:from-green-600 hover:to-emerald-700'
+            }`}
           >
-            <CalendarCheck size={10} /> {t('book')}
+            {isBooked ? (
+              <>
+                <FaCheckCircle size={10} /> {t('alreadyBooked')}
+              </>
+            ) : (
+              <>
+                <CalendarCheck size={10} /> {t('book')}
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -588,6 +576,7 @@ const ProgramCard = React.memo(({ program, lang, onBook, onView, onChat, isFavor
   );
 });
 
+// ===== الصفحة الرئيسية =====
 function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
   const t = (key) => LOCALES[lang]?.[key] || key;
 
@@ -602,6 +591,49 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
     }
     return [];
   });
+
+  // ✅ دالة جلب معرفات البرامج المحجوزة (غير الملغاة)
+  const getBookedProgramIds = useCallback(() => {
+    if (!user?.id) return [];
+    const key = LOCAL_BOOKINGS_KEY(user.id);
+    const stored = localStorage.getItem(key);
+    if (!stored) return [];
+    try {
+      const bookings = JSON.parse(stored);
+      return bookings
+        .filter(b => b.status !== 'cancelled')
+        .map(b => b.program_id)
+        .filter(Boolean);
+    } catch {
+      return [];
+    }
+  }, [user?.id]);
+
+  const [bookedProgramIds, setBookedProgramIds] = useState(() => getBookedProgramIds());
+
+  // ✅ دالة تحديث الحجوزات
+  const refreshBookedPrograms = useCallback(() => {
+    const ids = getBookedProgramIds();
+    setBookedProgramIds(ids);
+    console.log('🔄 تحديث الحجوزات (HomePage):', ids);
+  }, [getBookedProgramIds]);
+
+  // ✅ تحديث عند التركيز أو العودة للصفحة
+  useEffect(() => {
+    refreshBookedPrograms();
+    const handleFocus = () => refreshBookedPrograms();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refreshBookedPrograms();
+    };
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [refreshBookedPrograms]);
+
+  // باقي الحالات والمتغيرات ...
   const [showAllMode, setShowAllMode] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -611,7 +643,6 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
   const [initialLoadDone, setInitialLoadDone] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
   const [locationStatus, setLocationStatus] = useState('idle');
-  
   const [guidesMap, setGuidesMap] = useState({});
   const isFetchingRef = useRef(false);
   const contentRef = useRef(null);
@@ -627,56 +658,32 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
     return null;
   }, [user]);
 
-  // ✅ دالة محسنة لجلب برنامج كامل مع الصور باستخدام الكاش الموحد
+  // دوال جلب البرامج والصور (نفس الكود السابق)
   const fetchFullProgram = useCallback(async (id) => {
     try {
-      // ✅ التحقق من الصور في الكاش أولاً
       const cachedImages = getProgramImages(id);
-      
       const res = await fetch(`${API_BASE}/api/programs/${id}`);
       const data = await res.json();
       const prog = data.program || data.data || data;
-      
       if (prog) {
         let images = [];
-        
         if (cachedImages && cachedImages.length > 0) {
           images = cachedImages;
-          console.log(`📸 Using cached images for program ${id}`);
         } else {
-          // جلب الصور من البيانات
           if (prog.images && prog.images.length > 0) {
-            images = prog.images
-              .map(img => buildImageUrl(img.url || img.image_url || img))
-              .filter(Boolean);
+            images = prog.images.map(img => buildImageUrl(img.url || img.image_url || img)).filter(Boolean);
           } else if (prog.image) {
             const imgUrl = buildImageUrl(prog.image);
             if (imgUrl) images = [imgUrl];
           }
-          
-          if (images.length > 0) {
-            await saveProgramImages(id, images);
-            console.log(`💾 Saved ${images.length} images for program ${id}`);
-          }
+          if (images.length > 0) await saveProgramImages(id, images);
         }
-        
         let guide_avatar = null;
-        if (prog.guide_id && guidesMap[prog.guide_id]) {
-          guide_avatar = guidesMap[prog.guide_id].avatar;
-        } else if (prog.guide_name && guidesMap[prog.guide_name]) {
-          guide_avatar = guidesMap[prog.guide_name].avatar;
-        }
-        
-        return { 
-          ...prog, 
-          images: images.length > 0 ? images : [],
-          guide_avatar,
-          hasCachedImages: !!cachedImages,
-        };
+        if (prog.guide_id && guidesMap[prog.guide_id]) guide_avatar = guidesMap[prog.guide_id].avatar;
+        else if (prog.guide_name && guidesMap[prog.guide_name]) guide_avatar = guidesMap[prog.guide_name].avatar;
+        return { ...prog, images: images.length > 0 ? images : [], guide_avatar, hasCachedImages: !!cachedImages };
       }
-    } catch(e) {
-      console.error('Error fetching program:', e);
-    }
+    } catch(e) { console.error('Error fetching program:', e); }
     return null;
   }, [guidesMap]);
 
@@ -706,6 +713,7 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
     }
   }, [fetchFullProgram, t]);
 
+  // دوال التفاعل (المفضلة، الدردشة، الحجز، العرض على الخريطة)
   const toggleFavorite = useCallback((id) => {
     if (!user) {
       toast.error(t('loginRequired'));
@@ -728,11 +736,7 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
       toast.error(t('cannotChatOwn'));
       return;
     }
-    const chatParams = { 
-      recipientId: guideId, 
-      recipientName: guideName || 'المرشد', 
-      timestamp: Date.now() 
-    };
+    const chatParams = { recipientId: guideId, recipientName: guideName || 'المرشد', timestamp: Date.now() };
     localStorage.setItem('directChatParams', JSON.stringify(chatParams));
     toast.success(lang === 'ar' ? `تم فتح المحادثة مع ${guideName}` : `Chat opened with ${guideName}`);
     setPage('directChat');
@@ -744,15 +748,16 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
       setPage('profile');
       return;
     }
+    if (bookedProgramIds.includes(program.id)) {
+      toast.info(t('bookingExists'));
+      return;
+    }
     setBookingLoading(true);
     try {
       const token = localStorage.getItem('token');
       const res = await fetch(`${API_BASE}/api/support/tickets`, {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json', 
-          ...(token && { Authorization: `Bearer ${token}` }) 
-        },
+        headers: { 'Content-Type': 'application/json', ...(token && { Authorization: `Bearer ${token}` }) },
         body: JSON.stringify({
           user_id: user.id,
           subject: `طلب حجز: ${program.name}`,
@@ -784,11 +789,12 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
           status: 'pending',
           guide_id: program.guide_id
         };
-        const key = `local_bookings_${user.id}`;
+        const key = LOCAL_BOOKINGS_KEY(user.id);
         const existing = localStorage.getItem(key);
         let bookings = existing ? JSON.parse(existing) : [];
         bookings.push(localBooking);
         localStorage.setItem(key, JSON.stringify(bookings));
+        refreshBookedPrograms();
       } else {
         toast.error(result.message || t('bookingFailed'));
       }
@@ -797,7 +803,7 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
     } finally {
       setBookingLoading(false);
     }
-  }, [user, t, setPage, lang]);
+  }, [user, t, setPage, lang, bookedProgramIds, refreshBookedPrograms]);
 
   const handleViewOnMap = useCallback((id) => {
     localStorage.setItem('selectedProgramId', String(id));
@@ -808,12 +814,11 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
     setInitialLoadDone(false);
     fetchAllPrograms();
   }, [fetchAllPrograms]);
-  
+
   const toggleDisplayMode = useCallback(() => setShowAllMode(prev => !prev), []);
 
   const displayedPrograms = useMemo(() => {
     if (!userLocation || allPrograms.length === 0) return [];
-    
     const withDist = allPrograms.map(p => {
       let dist = Infinity;
       if (p.location_lat && p.location_lng) {
@@ -821,19 +826,14 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
       }
       return { ...p, distance: dist };
     });
-    
     withDist.sort((a, b) => a.distance - b.distance);
-    
     const nearby = withDist.filter(p => p.distance <= NEARBY_RADIUS_KM);
-    
-    if (showAllMode) return withDist;
-    return nearby;
+    return showAllMode ? withDist : nearby;
   }, [allPrograms, userLocation, showAllMode]);
 
-  // ✅ فقط useEffect واحد للتحكم في الموقع
+  // تأثيرات الموقع وجلب البرامج والمفضلة والمرشدين والإشعارات (نفس الكود السابق)
   useEffect(() => {
     if (!user?.id || locationLoadedRef.current) return;
-    
     const saved = localStorage.getItem(`manual_loc_${user.id}`);
     if (saved) {
       try {
@@ -847,30 +847,17 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
         }
       } catch(e) {}
     }
-    
-    // بدء تتبع الموقع
     if (!navigator.geolocation) {
       setLocationStatus('error');
       setLocationError(t('locationError'));
       toast.error(t('locationError'), { duration: 4000 });
       return;
     }
-
-    if (watchIdRef.current) {
-      navigator.geolocation.clearWatch(watchIdRef.current);
-      watchIdRef.current = null;
-    }
-
-    if (locationTimeoutRef.current) {
-      clearTimeout(locationTimeoutRef.current);
-      locationTimeoutRef.current = null;
-    }
-
+    if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
+    if (locationTimeoutRef.current) clearTimeout(locationTimeoutRef.current);
     setIsLocating(true);
     setLocationStatus('locating');
-    
     const loadingToast = toast.loading(t('locating'));
-
     locationTimeoutRef.current = setTimeout(() => {
       if (watchIdRef.current) {
         navigator.geolocation.clearWatch(watchIdRef.current);
@@ -878,125 +865,70 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
       }
       setIsLocating(false);
       setLocationStatus('error');
-      setLocationError(t('locationTimeout'));
       toast.dismiss(loadingToast);
       toast.error(t('locationTimeout'), { duration: 4000 });
     }, LOCATION_TIMEOUT);
-
     watchIdRef.current = navigator.geolocation.watchPosition(
       (position) => {
         const { latitude, longitude, accuracy } = position.coords;
-        
         if (!isValidLocation(latitude, longitude)) {
           retryCountRef.current += 1;
-          if (retryCountRef.current <= MAX_RETRY_ATTEMPTS) {
-            return;
-          } else {
+          if (retryCountRef.current <= MAX_RETRY_ATTEMPTS) return;
+          else {
             setIsLocating(false);
             setLocationStatus('error');
             setLocationError(t('locationError'));
             toast.dismiss(loadingToast);
             toast.error(t('locationError'), { duration: 4000 });
-            if (watchIdRef.current) {
-              navigator.geolocation.clearWatch(watchIdRef.current);
-              watchIdRef.current = null;
-            }
-            if (locationTimeoutRef.current) {
-              clearTimeout(locationTimeoutRef.current);
-              locationTimeoutRef.current = null;
-            }
+            if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
+            if (locationTimeoutRef.current) clearTimeout(locationTimeoutRef.current);
             retryCountRef.current = 0;
             locationLoadedRef.current = true;
           }
           return;
         }
-
         retryCountRef.current = 0;
-        
-        if (locationTimeoutRef.current) {
-          clearTimeout(locationTimeoutRef.current);
-          locationTimeoutRef.current = null;
-        }
-
+        if (locationTimeoutRef.current) clearTimeout(locationTimeoutRef.current);
         setUserLocation({ lat: latitude, lng: longitude });
         setLocationSource('gps');
         setLocationError(null);
         setLocationStatus('acquired');
         locationLoadedRef.current = true;
-        
-        if (user?.id) {
-          localStorage.setItem(`manual_loc_${user.id}`, JSON.stringify({ lat: latitude, lng: longitude }));
-        }
-        
+        if (user?.id) localStorage.setItem(`manual_loc_${user.id}`, JSON.stringify({ lat: latitude, lng: longitude }));
         setIsLocating(false);
         toast.dismiss(loadingToast);
-        toast.success(
-          lang === 'ar' 
-            ? `📍 دقة ${Math.round(accuracy)}م` 
-            : `📍 ${Math.round(accuracy)}m accuracy`,
-          { duration: 2000 }
-        );
+        toast.success(lang === 'ar' ? `📍 دقة ${Math.round(accuracy)}م` : `📍 ${Math.round(accuracy)}m accuracy`, { duration: 2000 });
       },
       (error) => {
         console.error('Geolocation error:', error);
         toast.dismiss(loadingToast);
         setIsLocating(false);
-        
         let errorMsg = t('locationError');
-        if (error.code === error.PERMISSION_DENIED) {
-          errorMsg = t('locationPermissionDenied');
-        } else if (error.code === error.TIMEOUT) {
-          errorMsg = t('locationTimeout');
-        }
-        
+        if (error.code === error.PERMISSION_DENIED) errorMsg = t('locationPermissionDenied');
+        else if (error.code === error.TIMEOUT) errorMsg = t('locationTimeout');
         setLocationStatus('error');
         setLocationError(errorMsg);
         toast.error(errorMsg, { duration: 4000 });
         locationLoadedRef.current = true;
-        
-        if (watchIdRef.current) {
-          navigator.geolocation.clearWatch(watchIdRef.current);
-          watchIdRef.current = null;
-        }
-        if (locationTimeoutRef.current) {
-          clearTimeout(locationTimeoutRef.current);
-          locationTimeoutRef.current = null;
-        }
+        if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
+        if (locationTimeoutRef.current) clearTimeout(locationTimeoutRef.current);
       },
-      { 
-        enableHighAccuracy: true, 
-        maximumAge: 30000,
-        timeout: 10000,
-      }
+      { enableHighAccuracy: true, maximumAge: 30000, timeout: 10000 }
     );
-    
     return () => {
-      if (watchIdRef.current) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
-        watchIdRef.current = null;
-      }
-      if (locationTimeoutRef.current) {
-        clearTimeout(locationTimeoutRef.current);
-        locationTimeoutRef.current = null;
-      }
+      if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
+      if (locationTimeoutRef.current) clearTimeout(locationTimeoutRef.current);
     };
   }, [user?.id, t, lang]);
 
-  // ✅ useEffect واحد لجلب البرامج
   useEffect(() => {
-    if (userLocation && !initialLoadDone && !isFetchingRef.current) {
-      fetchAllPrograms();
-    }
+    if (userLocation && !initialLoadDone && !isFetchingRef.current) fetchAllPrograms();
   }, [userLocation, initialLoadDone, fetchAllPrograms]);
 
-  // ✅ useEffect للمفضلة
   useEffect(() => {
-    if (user?.id) {
-      localStorage.setItem(`favorites_${user.id}`, JSON.stringify(favoriteIds));
-    }
+    if (user?.id) localStorage.setItem(`favorites_${user.id}`, JSON.stringify(favoriteIds));
   }, [favoriteIds, user]);
 
-  // ✅ useEffect لخريطة المرشدين
   useEffect(() => {
     const fetchGuidesMap = async () => {
       try {
@@ -1007,19 +939,14 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
         else if (data && Array.isArray(data)) guidesList = data;
         else if (data && data.guides && Array.isArray(data.guides)) guidesList = data.guides;
         else if (data && data.data && data.data.guides && Array.isArray(data.data.guides)) guidesList = data.data.guides;
-        
         const map = {};
         guidesList.forEach(guide => {
           const uuid = guide.id || guide.uuid;
           const numericId = guide.old_id || guide.oldId;
           const avatar = buildImageUrl(guide.avatar_url || guide.avatar);
           const fullName = guide.full_name || guide.name;
-          if (uuid) {
-            map[uuid] = { id: numericId ? Number(numericId) : uuid, name: fullName, avatar };
-          }
-          if (fullName) {
-            map[fullName] = { id: numericId ? Number(numericId) : uuid, name: fullName, avatar };
-          }
+          if (uuid) map[uuid] = { id: numericId ? Number(numericId) : uuid, name: fullName, avatar };
+          if (fullName) map[fullName] = { id: numericId ? Number(numericId) : uuid, name: fullName, avatar };
         });
         setGuidesMap(map);
       } catch (err) { console.error('Failed to fetch guides map:', err); }
@@ -1027,7 +954,6 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
     fetchGuidesMap();
   }, []);
 
-  // ✅ useEffect للإشعارات
   useEffect(() => {
     if (!user?.id) { setUnreadCount(0); return; }
     const fetchUnreadCount = async () => {
@@ -1050,12 +976,9 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
     return () => clearInterval(interval);
   }, [user]);
 
-  // ✅ useEffect للتمرير
   useEffect(() => {
     const handleScroll = () => {
-      if (contentRef.current) {
-        setShowScrollTop(contentRef.current.scrollTop > 300);
-      }
+      if (contentRef.current) setShowScrollTop(contentRef.current.scrollTop > 300);
     };
     const container = contentRef.current;
     if (container) {
@@ -1065,14 +988,8 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
   }, []);
 
   const handleUpdateLocation = useCallback(() => {
-    if (watchIdRef.current) {
-      navigator.geolocation.clearWatch(watchIdRef.current);
-      watchIdRef.current = null;
-    }
-    if (locationTimeoutRef.current) {
-      clearTimeout(locationTimeoutRef.current);
-      locationTimeoutRef.current = null;
-    }
+    if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
+    if (locationTimeoutRef.current) clearTimeout(locationTimeoutRef.current);
     locationLoadedRef.current = false;
     setUserLocation(null);
     setLocationStatus('idle');
@@ -1081,10 +998,8 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
   const ScrollTopButton = useMemo(() => {
     if (!showScrollTop) return null;
     return (
-      <button 
-        onClick={() => contentRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}
-        className="fixed bottom-20 left-4 bg-green-600 text-white p-3 rounded-full shadow-lg hover:bg-green-700 transition z-50"
-      >
+      <button onClick={() => contentRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}
+        className="fixed bottom-20 left-4 bg-green-600 text-white p-3 rounded-full shadow-lg hover:bg-green-700 transition z-50">
         <FaArrowUp size={18} />
       </button>
     );
@@ -1109,6 +1024,7 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
 
   return (
     <div ref={contentRef} className={`${bgColor} ${textColor} h-full overflow-y-auto pb-20`} dir="rtl">
+      {/* الهيدر ونفس المحتوى السابق */}
       <div className="sticky top-0 z-20 bg-gradient-to-r from-green-500 to-emerald-600 text-white shadow-lg">
         <div className="px-4 pt-4 pb-3">
           <div className="flex items-center justify-between mb-3">
@@ -1154,14 +1070,9 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
               </button>
             </div>
           </div>
-          
           <div className="relative">
             <Search className="absolute right-2.5 top-2 text-white/70" size={14} />
-            <input 
-              type="text" 
-              placeholder={t('search')} 
-              className="w-full p-2 pr-8 rounded-lg bg-white/20 backdrop-blur-sm text-white placeholder-white/70 border border-white/30 focus:outline-none focus:border-white focus:bg-white/30 transition text-sm" 
-            />
+            <input type="text" placeholder={t('search')} className="w-full p-2 pr-8 rounded-lg bg-white/20 backdrop-blur-sm text-white placeholder-white/70 border border-white/30 focus:outline-none focus:border-white focus:bg-white/30 transition text-sm" />
           </div>
         </div>
       </div>
@@ -1171,83 +1082,49 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
 
         <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
           <div className="flex items-center gap-2">
-            <h2 className="text-sm font-bold text-gray-800 dark:text-white">
-              {t('nearbyPrograms')}
-            </h2>
-            <span className="text-[10px] text-gray-500 dark:text-gray-400">
-              ({displayedPrograms.length})
-            </span>
+            <h2 className="text-sm font-bold text-gray-800 dark:text-white">{t('nearbyPrograms')}</h2>
+            <span className="text-[10px] text-gray-500 dark:text-gray-400">({displayedPrograms.length})</span>
           </div>
           <div className="flex gap-1.5 flex-wrap">
-            <button 
-              onClick={toggleDisplayMode}
-              className={`px-2.5 py-1 rounded-lg text-[10px] font-medium transition ${
-                showAllMode 
-                  ? 'bg-cyan-600 text-white' 
-                  : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
-              }`}
-            >
+            <button onClick={toggleDisplayMode} className={`px-2.5 py-1 rounded-lg text-[10px] font-medium transition ${showAllMode ? 'bg-cyan-600 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}>
               {showAllMode ? t('showNearby') : t('showAll')}
             </button>
-            <button 
-              onClick={handleUpdateLocation}
-              className="px-2.5 py-1 rounded-lg text-[10px] font-medium bg-blue-600 text-white hover:bg-blue-700 transition flex items-center gap-1"
-              disabled={isLocating}
-            >
+            <button onClick={handleUpdateLocation} className="px-2.5 py-1 rounded-lg text-[10px] font-medium bg-blue-600 text-white hover:bg-blue-700 transition flex items-center gap-1" disabled={isLocating}>
               <FaLocationArrow size={10} /> {t('updateLocation')}
             </button>
-            <button 
-              onClick={handleRefresh}
-              className="px-2.5 py-1 rounded-lg text-[10px] font-medium bg-gray-600 text-white hover:bg-gray-700 transition flex items-center gap-1"
-              disabled={loading}
-            >
+            <button onClick={handleRefresh} className="px-2.5 py-1 rounded-lg text-[10px] font-medium bg-gray-600 text-white hover:bg-gray-700 transition flex items-center gap-1" disabled={loading}>
               <FaRedoAlt size={10} className={loading ? 'animate-spin' : ''} /> {t('refresh')}
             </button>
           </div>
         </div>
 
         {loading && !initialLoadDone && (
-          <div className="text-center py-10">
-            <FaSpinner className="animate-spin h-8 w-8 text-green-600 mx-auto" />
-            <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">{t('loading')}</p>
-          </div>
+          <div className="text-center py-10"><FaSpinner className="animate-spin h-8 w-8 text-green-600 mx-auto" /><p className="mt-2 text-sm text-gray-500 dark:text-gray-400">{t('loading')}</p></div>
         )}
-
         {error && (
           <div className="text-center py-8 bg-red-50 dark:bg-red-900/20 rounded-xl">
             <p className="text-red-600 dark:text-red-400 text-sm mb-2">{error}</p>
-            <button onClick={handleRefresh} className="text-green-600 dark:text-green-400 underline text-sm">
-              {t('retry')}
-            </button>
+            <button onClick={handleRefresh} className="text-green-600 dark:text-green-400 underline text-sm">{t('retry')}</button>
           </div>
         )}
-
         {!loading && !error && !userLocation && locationStatus !== 'locating' && (
           <div className="text-center py-10 bg-yellow-50 dark:bg-yellow-900/20 rounded-xl">
             <FaMapMarkerAlt size={36} className="mx-auto text-yellow-500 mb-3" />
             <p className="mb-3 text-sm text-gray-700 dark:text-gray-300">{t('noLocation')}</p>
-            <button onClick={handleUpdateLocation} className="bg-green-600 text-white px-4 py-1.5 rounded-lg text-sm">
-              {t('getLocation')}
-            </button>
+            <button onClick={handleUpdateLocation} className="bg-green-600 text-white px-4 py-1.5 rounded-lg text-sm">{t('getLocation')}</button>
           </div>
         )}
-
         {locationStatus === 'locating' && (
           <div className="text-center py-10 bg-blue-50 dark:bg-blue-900/20 rounded-xl">
             <FaSpinner className="animate-spin h-8 w-8 text-blue-500 mx-auto" />
             <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">{t('locating')}</p>
           </div>
         )}
-
         {!loading && !error && userLocation && displayedPrograms.length === 0 && locationStatus === 'acquired' && (
           <div className="text-center py-10 bg-gray-50 dark:bg-gray-800 rounded-xl">
             <FaBoxOpen size={36} className="mx-auto text-gray-400" />
             <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">{t('noPrograms')}</p>
-            {!showAllMode && (
-              <button onClick={toggleDisplayMode} className="mt-2 text-green-600 dark:text-green-400 underline text-sm">
-                {t('viewAll')}
-              </button>
-            )}
+            {!showAllMode && <button onClick={toggleDisplayMode} className="mt-2 text-green-600 dark:text-green-400 underline text-sm">{t('viewAll')}</button>}
           </div>
         )}
 
@@ -1265,6 +1142,7 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
                   isFavorite={favoriteIds.includes(program.id)}
                   onToggleFavorite={toggleFavorite}
                   dark={dark}
+                  isBooked={bookedProgramIds.includes(program.id)}
                 />
               ))}
             </div>
@@ -1272,32 +1150,25 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
         </AnimatePresence>
       </div>
 
+      {/* شريط التنقل السفلي */}
       <div className="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 px-2 py-1.5 z-50">
         <div className="flex justify-around items-center max-w-md mx-auto">
           <button onClick={() => setPage('home')} className="flex flex-col items-center gap-0.5 text-green-600 dark:text-green-400">
-            <Home size={20} />
-            <span className="text-[8px]">{t('home')}</span>
+            <Home size={20} /><span className="text-[8px]">{t('home')}</span>
           </button>
           <button onClick={() => setPage('explore')} className="flex flex-col items-center gap-0.5 text-gray-500 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 transition">
-            <Compass size={20} />
-            <span className="text-[8px]">{t('explore')}</span>
+            <Compass size={20} /><span className="text-[8px]">{t('explore')}</span>
           </button>
           <button onClick={() => setPage('notifications')} className="relative flex flex-col items-center gap-0.5 text-gray-500 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 transition">
             <Bell size={20} />
-            {unreadCount > 0 && (
-              <span className="absolute -top-1 -right-2 bg-red-500 text-white text-[8px] rounded-full w-4 h-4 flex items-center justify-center">
-                {unreadCount > 99 ? '99+' : unreadCount}
-              </span>
-            )}
+            {unreadCount > 0 && <span className="absolute -top-1 -right-2 bg-red-500 text-white text-[8px] rounded-full w-4 h-4 flex items-center justify-center">{unreadCount > 99 ? '99+' : unreadCount}</span>}
             <span className="text-[8px]">{t('notifications')}</span>
           </button>
           <button onClick={() => setPage('profile')} className="flex flex-col items-center gap-0.5 text-gray-500 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 transition">
-            <User size={20} />
-            <span className="text-[8px]">{t('profile')}</span>
+            <User size={20} /><span className="text-[8px]">{t('profile')}</span>
           </button>
         </div>
       </div>
-
       {ScrollTopButton}
     </div>
   );
