@@ -1,8 +1,6 @@
 // client/src/pages/HomePage.jsx
-// ✅ النسخة النهائية – عرض كامل للبيانات والصور مع توحيد الكاش مع GuideDashboard و ExplorePage
-// ✅ عرض طلبات الحجز مع إظهار "تم طلب حجز" للمستخدم
-// ✅ دعم إلغاء الحجز (عند إلغاء الحجز، يمكن إعادة الحجز مرة أخرى)
-// ✅ تحديث فوري للحجوزات عبر focus و visibilitychange
+// ✅ النسخة النهائية – مع إصلاح تحديد الموقع الحقيقي (مثل ExplorePage)
+// ✅ عرض البرامج القريبة بناءً على الموقع الفعلي للمستخدم
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { 
@@ -13,25 +11,22 @@ import {
 import { 
   MapPin, Bell, Search, Users, 
   Navigation, MessageCircle, CalendarCheck, Shield, Sun, Moon, Compass,
-  Home, User, Map as MapIcon, Star
+  Home, User, Map as MapIcon, Star, Crosshair, MousePointer
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
 
 const API_BASE = 'https://tourist-app-api.onrender.com';
-
 const NEARBY_RADIUS_KM = 245;
 const LOCATION_TIMEOUT = 15000;
 const MAX_RETRY_ATTEMPTS = 5;
+const MIN_ACCURACY_THRESHOLD = 200;
 
-// ✅ توحيد مفتاح تخزين الصور مع GuideDashboard و ExplorePage
 const IMAGE_CACHE_KEY = 'guide_programs_images_cache';
 const LEGACY_IMAGE_KEY = (programId) => `program_images_${programId}`;
-
-// ✅ مفتاح الحجوزات المحلية
 const LOCAL_BOOKINGS_KEY = (userId) => `local_bookings_${userId}`;
 
-// ===== دوال الصور (نفس الكود السابق) =====
+// ===== دوال الصور (بدون تغيير) =====
 const buildImageUrl = (url) => {
   if (!url || typeof url !== 'string') return null;
   if (url.startsWith('blob:') || url.startsWith('data:')) return url;
@@ -58,11 +53,8 @@ const filterValidImages = async (images) => {
     const url = buildImageUrl(img);
     if (!url) continue;
     const isValid = await validateImage(url);
-    if (isValid) {
-      valid.push(url);
-    } else {
-      console.warn(`⚠️ صورة غير صالحة: ${url}`);
-    }
+    if (isValid) valid.push(url);
+    else console.warn(`⚠️ صورة غير صالحة: ${url}`);
   }
   return valid;
 };
@@ -135,9 +127,7 @@ const saveProgramImages = async (programId, images) => {
       console.log(`🗑️ No valid images for program ${programId}, cache cleared`);
       return;
     }
-    
     saveImagesToCache(programId, validImages);
-    
     const key = LEGACY_IMAGE_KEY(programId);
     localStorage.setItem(key, JSON.stringify(validImages));
     console.log(`✅ Saved ${validImages.length} valid images for program ${programId}`);
@@ -265,6 +255,25 @@ const LOCALES = {
     noImage: 'لا توجد صورة',
     alreadyBooked: 'تم طلب حجز',
     bookingExists: 'لديك طلب حجز معلق لهذا البرنامج',
+    // إضافات للتوافق مع ExplorePage
+    chatWithGuide: '💬 دردشة مع المرشد',
+    bookNow: 'احجز الآن',
+    cannotBookOwn: 'لا يمكنك حجز برنامجك الخاص',
+    addedToFavorites: '✅ تمت الإضافة إلى المفضلة',
+    removedFromFavorites: '🗑️ تمت الإزالة من المفضلة',
+    duration: 'المدة',
+    myLocation: 'موقعي',
+    enableLocation: 'تفعيل الموقع',
+    retryLocation: 'إعادة المحاولة',
+    kmAway: 'كم',
+    accuracyMeters: 'م',
+    locationAcquired: '✅ تم تحديد موقعك',
+    invalidLocation: 'الموقع المستلم غير صحيح',
+    manualModeActive: '🖱️ تم تفعيل الوضع اليدوي (اختر موقعك على الخريطة)',
+    manualModeOff: '🔄 العودة إلى التحديد التلقائي',
+    setManualLocation: 'اختر موقعي يدوياً',
+    useAutoLocation: 'استخدم GPS',
+    manualSuccess: '✅ تم تحديد موقعك يدوياً',
   },
   en: {
     appName: 'Tourist App',
@@ -320,10 +329,28 @@ const LOCALES = {
     noImage: 'No image',
     alreadyBooked: 'Booking Requested',
     bookingExists: 'You have a pending booking for this program',
+    chatWithGuide: '💬 Chat With Guide',
+    bookNow: 'Book Now',
+    cannotBookOwn: 'You cannot book your own program',
+    addedToFavorites: '✅ Added to favorites',
+    removedFromFavorites: '🗑️ Removed from favorites',
+    duration: 'Duration',
+    myLocation: 'My Location',
+    enableLocation: 'Enable location',
+    retryLocation: 'Retry',
+    kmAway: 'km',
+    accuracyMeters: 'm',
+    locationAcquired: '✅ Location acquired',
+    invalidLocation: 'Invalid location received',
+    manualModeActive: '🖱️ Manual mode activated (click map to set location)',
+    manualModeOff: '🔄 Back to auto location',
+    setManualLocation: 'Set manual location',
+    useAutoLocation: 'Use GPS',
+    manualSuccess: '✅ Manual location set',
   }
 };
 
-// ===== مكون HeroAd =====
+// ===== مكون HeroAd (بدون تغيير) =====
 const HeroAd = ({ lang, setPage }) => {
   const t = (key) => LOCALES[lang]?.[key] || key;
   return (
@@ -354,7 +381,7 @@ const HeroAd = ({ lang, setPage }) => {
   );
 };
 
-// ===== مكون ProgramCard =====
+// ===== مكون ProgramCard (بدون تغيير) =====
 const ProgramCard = React.memo(({ program, lang, onBook, onView, onChat, isFavorite, onToggleFavorite, dark, isBooked }) => {
   const t = (key) => LOCALES[lang]?.[key] || key;
   const activity = getActivityType(program, lang);
@@ -576,12 +603,17 @@ const ProgramCard = React.memo(({ program, lang, onBook, onView, onChat, isFavor
   );
 });
 
-// ===== الصفحة الرئيسية =====
+// ===== الصفحة الرئيسية (مع إصلاح الموقع) =====
 function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
   const t = (key) => LOCALES[lang]?.[key] || key;
 
+  // ===== حالات مشابهة لـ ExplorePage (باستخدام مصفوفة للموقع) =====
   const [allPrograms, setAllPrograms] = useState([]);
-  const [userLocation, setUserLocation] = useState(null);
+  const [userLocation, setUserLocation] = useState(null); // مصفوفة [lat, lng]
+  const [userAccuracy, setUserAccuracy] = useState(null);
+  const [locationActive, setLocationActive] = useState(false);
+  const [manualMode, setManualMode] = useState(false);
+  const [locationStatus, setLocationStatus] = useState('idle');
   const [locationSource, setLocationSource] = useState(null);
   const [locationError, setLocationError] = useState(null);
   const [favoriteIds, setFavoriteIds] = useState(() => {
@@ -592,7 +624,6 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
     return [];
   });
 
-  // ✅ دالة جلب معرفات البرامج المحجوزة (غير الملغاة)
   const getBookedProgramIds = useCallback(() => {
     if (!user?.id) return [];
     const key = LOCAL_BOOKINGS_KEY(user.id);
@@ -611,14 +642,12 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
 
   const [bookedProgramIds, setBookedProgramIds] = useState(() => getBookedProgramIds());
 
-  // ✅ دالة تحديث الحجوزات
   const refreshBookedPrograms = useCallback(() => {
     const ids = getBookedProgramIds();
     setBookedProgramIds(ids);
     console.log('🔄 تحديث الحجوزات (HomePage):', ids);
   }, [getBookedProgramIds]);
 
-  // ✅ تحديث عند التركيز أو العودة للصفحة
   useEffect(() => {
     refreshBookedPrograms();
     const handleFocus = () => refreshBookedPrograms();
@@ -633,7 +662,6 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
     };
   }, [refreshBookedPrograms]);
 
-  // باقي الحالات والمتغيرات ...
   const [showAllMode, setShowAllMode] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -642,14 +670,12 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [initialLoadDone, setInitialLoadDone] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
-  const [locationStatus, setLocationStatus] = useState('idle');
   const [guidesMap, setGuidesMap] = useState({});
   const isFetchingRef = useRef(false);
   const contentRef = useRef(null);
   const watchIdRef = useRef(null);
   const locationTimeoutRef = useRef(null);
   const retryCountRef = useRef(0);
-  const locationLoadedRef = useRef(false);
 
   const getUserAvatarUrl = useCallback(() => {
     if (!user) return null;
@@ -658,7 +684,7 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
     return null;
   }, [user]);
 
-  // دوال جلب البرامج والصور (نفس الكود السابق)
+  // ===== دوال جلب البرامج والصور (نفس السابق مع تعديلات بسيطة) =====
   const fetchFullProgram = useCallback(async (id) => {
     try {
       const cachedImages = getProgramImages(id);
@@ -713,7 +739,7 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
     }
   }, [fetchFullProgram, t]);
 
-  // دوال التفاعل (المفضلة، الدردشة، الحجز، العرض على الخريطة)
+  // ===== دوال التفاعل (دردشة، حجز، مفضلة) =====
   const toggleFavorite = useCallback((id) => {
     if (!user) {
       toast.error(t('loginRequired'));
@@ -736,7 +762,11 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
       toast.error(t('cannotChatOwn'));
       return;
     }
-    const chatParams = { recipientId: guideId, recipientName: guideName || 'المرشد', timestamp: Date.now() };
+    const chatParams = {
+      recipientId: guideId,
+      recipientName: guideName || 'المرشد',
+      timestamp: Date.now()
+    };
     localStorage.setItem('directChatParams', JSON.stringify(chatParams));
     toast.success(lang === 'ar' ? `تم فتح المحادثة مع ${guideName}` : `Chat opened with ${guideName}`);
     setPage('directChat');
@@ -748,6 +778,10 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
       setPage('profile');
       return;
     }
+    if (String(user.id) === String(program.guide_id)) {
+      toast.error(lang === 'ar' ? 'لا يمكنك حجز برنامجك الخاص' : 'You cannot book your own program');
+      return;
+    }
     if (bookedProgramIds.includes(program.id)) {
       toast.info(t('bookingExists'));
       return;
@@ -755,26 +789,30 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
     setBookingLoading(true);
     try {
       const token = localStorage.getItem('token');
+      const payload = {
+        user_id: user.id,
+        subject: `طلب حجز: ${program.name}`,
+        type: 'booking',
+        priority: 'normal',
+        message: `أود حجز البرنامج "${program.name}" للمرشد ${program.guide_name}`,
+        metadata: {
+          program_id: program.id,
+          program_name: program.name,
+          guide_id: program.guide_id,
+          guide_name: program.guide_name,
+          tourist_id: user.id,
+          tourist_name: user.name || user.fullName,
+          is_booking: true,
+          created_from: 'home_page'
+        }
+      };
       const res = await fetch(`${API_BASE}/api/support/tickets`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(token && { Authorization: `Bearer ${token}` }) },
-        body: JSON.stringify({
-          user_id: user.id,
-          subject: `طلب حجز: ${program.name}`,
-          type: 'general',
-          priority: 'normal',
-          message: `أود حجز البرنامج "${program.name}" للمرشد ${program.guide_name}`,
-          metadata: {
-            program_id: program.id,
-            program_name: program.name,
-            guide_id: program.guide_id,
-            guide_name: program.guide_name,
-            tourist_id: user.id,
-            tourist_name: user.name || user.fullName,
-            is_booking: true,
-            created_from: 'home_page'
-          }
-        })
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token && { Authorization: `Bearer ${token}` })
+        },
+        body: JSON.stringify(payload)
       });
       const result = await res.json();
       if (result.success) {
@@ -799,6 +837,7 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
         toast.error(result.message || t('bookingFailed'));
       }
     } catch(e) {
+      console.error('Booking error:', e);
       toast.error(lang === 'ar' ? 'حدث خطأ' : 'Error');
     } finally {
       setBookingLoading(false);
@@ -817,12 +856,13 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
 
   const toggleDisplayMode = useCallback(() => setShowAllMode(prev => !prev), []);
 
+  // ===== حساب البرامج المعروضة (باستخدام المصفوفة) =====
   const displayedPrograms = useMemo(() => {
     if (!userLocation || allPrograms.length === 0) return [];
     const withDist = allPrograms.map(p => {
       let dist = Infinity;
       if (p.location_lat && p.location_lng) {
-        dist = getDistance(userLocation.lat, userLocation.lng, p.location_lat, p.location_lng);
+        dist = getDistance(userLocation[0], userLocation[1], p.location_lat, p.location_lng);
       }
       return { ...p, distance: dist };
     });
@@ -831,22 +871,22 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
     return showAllMode ? withDist : nearby;
   }, [allPrograms, userLocation, showAllMode]);
 
-  // تأثيرات الموقع وجلب البرامج والمفضلة والمرشدين والإشعارات (نفس الكود السابق)
-  useEffect(() => {
-    if (!user?.id || locationLoadedRef.current) return;
-    const saved = localStorage.getItem(`manual_loc_${user.id}`);
-    if (saved) {
-      try {
-        const { lat, lng } = JSON.parse(saved);
-        if (isValidLocation(lat, lng)) {
-          setUserLocation({ lat, lng });
-          setLocationSource('manual');
-          setLocationStatus('acquired');
-          locationLoadedRef.current = true;
-          return;
-        }
-      } catch(e) {}
+  // ===== دوال تحديد الموقع (مأخوذة من ExplorePage) =====
+  const updateUserLocationState = (lat, lng, accuracy, isManual = false) => {
+    if (!isValidLocation(lat, lng)) return false;
+    setUserLocation([lat, lng]);
+    setUserAccuracy(accuracy);
+    setLocationActive(true);
+    setLocationStatus('acquired');
+    setLocationSource(isManual ? 'manual' : 'gps');
+    if (isManual) {
+      localStorage.setItem('manual_user_location', JSON.stringify({ coords: [lng, lat], accuracy, timestamp: Date.now() }));
     }
+    return true;
+  };
+
+  const startAutoTracking = useCallback(() => {
+    if (manualMode) return;
     if (!navigator.geolocation) {
       setLocationStatus('error');
       setLocationError(t('locationError'));
@@ -859,10 +899,7 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
     setLocationStatus('locating');
     const loadingToast = toast.loading(t('locating'));
     locationTimeoutRef.current = setTimeout(() => {
-      if (watchIdRef.current) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
-        watchIdRef.current = null;
-      }
+      if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
       setIsLocating(false);
       setLocationStatus('error');
       toast.dismiss(loadingToast);
@@ -877,27 +914,25 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
           else {
             setIsLocating(false);
             setLocationStatus('error');
-            setLocationError(t('locationError'));
             toast.dismiss(loadingToast);
             toast.error(t('locationError'), { duration: 4000 });
             if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
             if (locationTimeoutRef.current) clearTimeout(locationTimeoutRef.current);
             retryCountRef.current = 0;
-            locationLoadedRef.current = true;
           }
           return;
         }
         retryCountRef.current = 0;
         if (locationTimeoutRef.current) clearTimeout(locationTimeoutRef.current);
-        setUserLocation({ lat: latitude, lng: longitude });
-        setLocationSource('gps');
-        setLocationError(null);
-        setLocationStatus('acquired');
-        locationLoadedRef.current = true;
-        if (user?.id) localStorage.setItem(`manual_loc_${user.id}`, JSON.stringify({ lat: latitude, lng: longitude }));
-        setIsLocating(false);
-        toast.dismiss(loadingToast);
-        toast.success(lang === 'ar' ? `📍 دقة ${Math.round(accuracy)}م` : `📍 ${Math.round(accuracy)}m accuracy`, { duration: 2000 });
+        const success = updateUserLocationState(latitude, longitude, accuracy, false);
+        if (success) {
+          setIsLocating(false);
+          setLocationStatus('acquired');
+          toast.dismiss(loadingToast);
+          if (accuracy <= MIN_ACCURACY_THRESHOLD) {
+            toast.success(lang === 'ar' ? `📍 دقة ${Math.round(accuracy)}م` : `📍 ${Math.round(accuracy)}m accuracy`, { duration: 2000 });
+          }
+        }
       },
       (error) => {
         console.error('Geolocation error:', error);
@@ -909,18 +944,57 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
         setLocationStatus('error');
         setLocationError(errorMsg);
         toast.error(errorMsg, { duration: 4000 });
-        locationLoadedRef.current = true;
         if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
         if (locationTimeoutRef.current) clearTimeout(locationTimeoutRef.current);
       },
       { enableHighAccuracy: true, maximumAge: 30000, timeout: 10000 }
     );
+  }, [lang, t, manualMode]);
+
+  useEffect(() => {
     return () => {
       if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
       if (locationTimeoutRef.current) clearTimeout(locationTimeoutRef.current);
     };
-  }, [user?.id, t, lang]);
+  }, []);
 
+  // ===== الوضع اليدوي (للتوافق مع ExplorePage، لكن بدون خريطة نضيف زر) =====
+  const enableManualMode = () => {
+    if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
+    if (locationTimeoutRef.current) clearTimeout(locationTimeoutRef.current);
+    setManualMode(true);
+    setLocationStatus('idle');
+    // في حالة عدم وجود خريطة، نطلب من المستخدم إدخال إحداثيات يدوياً (سيتم تنفيذ ذلك لاحقاً)
+    toast(t('manualModeActive'), { duration: 2000 });
+    // يمكننا هنا فتح نافذة لإدخال الإحداثيات، لكننا سنكتفي بتفعيل الوضع اليدوي وانتظار المستخدم
+    // (سيتم التعامل معه عبر زر آخر لتعيين الموقع يدوياً)
+  };
+  const disableManualMode = () => {
+    setManualMode(false);
+    setLocationStatus('idle');
+    startAutoTracking();
+    toast(t('manualModeOff'), { duration: 1500 });
+  };
+  const handleManualLocationToggle = () => { if (manualMode) disableManualMode(); else enableManualMode(); };
+
+  // ===== تعيين موقع يدوي عبر إدخال (بديل عن النقر على الخريطة) =====
+  const [manualLat, setManualLat] = useState('');
+  const [manualLng, setManualLng] = useState('');
+  const handleSetManualLocation = () => {
+    const lat = parseFloat(manualLat);
+    const lng = parseFloat(manualLng);
+    if (!isValidLocation(lat, lng)) {
+      toast.error(t('invalidLocation'));
+      return;
+    }
+    updateUserLocationState(lat, lng, 50, true);
+    toast.success(t('manualSuccess'));
+    setManualMode(false);
+    setManualLat('');
+    setManualLng('');
+  };
+
+  // ===== تأثيرات تحميل البرامج والمرشدين والمفضلة والإشعارات =====
   useEffect(() => {
     if (userLocation && !initialLoadDone && !isFetchingRef.current) fetchAllPrograms();
   }, [userLocation, initialLoadDone, fetchAllPrograms]);
@@ -987,12 +1061,42 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
     }
   }, []);
 
+  // ===== زر تحديث الموقع (يعيد تشغيل التتبع) =====
   const handleUpdateLocation = useCallback(() => {
     if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
     if (locationTimeoutRef.current) clearTimeout(locationTimeoutRef.current);
-    locationLoadedRef.current = false;
     setUserLocation(null);
     setLocationStatus('idle');
+    setLocationError(null);
+    retryCountRef.current = 0;
+    // إذا كان في الوضع اليدوي، نعطله أولاً
+    if (manualMode) {
+      setManualMode(false);
+    }
+    startAutoTracking();
+  }, [startAutoTracking, manualMode]);
+
+  // ===== بدء التتبع عند تحميل الصفحة =====
+  useEffect(() => {
+    // استعادة الموقع اليدوي المحفوظ
+    const savedLocation = localStorage.getItem('manual_user_location');
+    if (savedLocation) {
+      try {
+        const data = JSON.parse(savedLocation);
+        if (data.coords && data.coords.length === 2) {
+          const lng = data.coords[0];
+          const lat = data.coords[1];
+          if (isValidLocation(lat, lng)) {
+            updateUserLocationState(lat, lng, data.accuracy || 50, true);
+            setManualMode(true);
+            setLocationStatus('acquired');
+            return;
+          } else localStorage.removeItem('manual_user_location');
+        } else localStorage.removeItem('manual_user_location');
+      } catch(e) { localStorage.removeItem('manual_user_location'); }
+    }
+    // إذا لم يكن هناك موقع محفوظ، نبدأ التتبع التلقائي
+    startAutoTracking();
   }, []);
 
   const ScrollTopButton = useMemo(() => {
@@ -1024,7 +1128,7 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
 
   return (
     <div ref={contentRef} className={`${bgColor} ${textColor} h-full overflow-y-auto pb-20`} dir="rtl">
-      {/* الهيدر ونفس المحتوى السابق */}
+      {/* الهيدر (مع إضافة حالة الموقع) */}
       <div className="sticky top-0 z-20 bg-gradient-to-r from-green-500 to-emerald-600 text-white shadow-lg">
         <div className="px-4 pt-4 pb-3">
           <div className="flex items-center justify-between mb-3">
@@ -1092,11 +1196,40 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
             <button onClick={handleUpdateLocation} className="px-2.5 py-1 rounded-lg text-[10px] font-medium bg-blue-600 text-white hover:bg-blue-700 transition flex items-center gap-1" disabled={isLocating}>
               <FaLocationArrow size={10} /> {t('updateLocation')}
             </button>
+            <button onClick={handleManualLocationToggle} className={`px-2.5 py-1 rounded-lg text-[10px] font-medium transition ${manualMode ? 'bg-yellow-500 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}>
+              <MousePointer size={12} className="inline" /> {manualMode ? t('useAutoLocation') : t('setManualLocation')}
+            </button>
             <button onClick={handleRefresh} className="px-2.5 py-1 rounded-lg text-[10px] font-medium bg-gray-600 text-white hover:bg-gray-700 transition flex items-center gap-1" disabled={loading}>
               <FaRedoAlt size={10} className={loading ? 'animate-spin' : ''} /> {t('refresh')}
             </button>
           </div>
         </div>
+
+        {/* في حالة الوضع اليدوي، نعرض حقول إدخال الإحداثيات */}
+        {manualMode && (
+          <div className="mb-3 p-3 bg-yellow-50 dark:bg-yellow-900/20 rounded-xl">
+            <p className="text-sm text-yellow-700 dark:text-yellow-300 mb-2">{t('manualModeActive')}</p>
+            <div className="flex flex-wrap gap-2 items-center">
+              <input
+                type="number"
+                placeholder={lang === 'ar' ? 'خط العرض' : 'Latitude'}
+                value={manualLat}
+                onChange={(e) => setManualLat(e.target.value)}
+                className="p-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm w-28"
+              />
+              <input
+                type="number"
+                placeholder={lang === 'ar' ? 'خط الطول' : 'Longitude'}
+                value={manualLng}
+                onChange={(e) => setManualLng(e.target.value)}
+                className="p-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm w-28"
+              />
+              <button onClick={handleSetManualLocation} className="bg-green-600 text-white px-3 py-1.5 rounded-lg text-sm">
+                {lang === 'ar' ? 'تعيين الموقع' : 'Set Location'}
+              </button>
+            </div>
+          </div>
+        )}
 
         {loading && !initialLoadDone && (
           <div className="text-center py-10"><FaSpinner className="animate-spin h-8 w-8 text-green-600 mx-auto" /><p className="mt-2 text-sm text-gray-500 dark:text-gray-400">{t('loading')}</p></div>
