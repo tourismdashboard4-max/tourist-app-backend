@@ -10,12 +10,12 @@ import { protect } from '../middleware/authMiddleware.js';
 const router = express.Router();
 
 // ============================================
-// ✅ 1. إرسال رمز التحقق للتسجيل
+// ✅ 1. إرسال رمز التحقق (يدعم عدة أغراض)
 // ============================================
 router.post('/send-otp', async (req, res) => {
   try {
-    const { email } = req.body;
-    console.log('📧 Received OTP request for:', email);
+    const { email, purpose = 'register' } = req.body;
+    console.log('📧 Received OTP request for:', email, 'purpose:', purpose);
     console.log('🕐 Server time:', new Date().toISOString());
 
     if (!email) {
@@ -27,25 +27,34 @@ router.post('/send-otp', async (req, res) => {
 
     const cleanEmail = email.toLowerCase().trim();
 
-    // التحقق من عدم وجود المستخدم
-    const existingUser = await pool.query(
+    // التحقق من وجود المستخدم (إلا إذا كان الغرض هو تحديث الملف الشخصي)
+    const userResult = await pool.query(
       'SELECT id FROM app.users WHERE email = $1',
       [cleanEmail]
     );
-    
-    if (existingUser.rows.length > 0) {
+    const userExists = userResult.rows.length > 0;
+
+    if (purpose !== 'profile_update' && userExists) {
       return res.status(400).json({ 
         success: false, 
         message: 'البريد الإلكتروني مسجل بالفعل' 
       });
     }
 
-    // إلغاء الرموز السابقة
+    // إذا كان الغرض هو profile_update و المستخدم غير موجود → خطأ
+    if (purpose === 'profile_update' && !userExists) {
+      return res.status(404).json({
+        success: false,
+        message: 'البريد الإلكتروني غير مسجل'
+      });
+    }
+
+    // إلغاء الرموز السابقة لنفس البريد ونفس الغرض
     await pool.query(
       `UPDATE app.otps 
        SET expires_at = NOW() 
        WHERE identifier = $1 AND purpose = $2 AND verified = false`,
-      [cleanEmail, 'register']
+      [cleanEmail, purpose]
     );
 
     // توليد رمز جديد
@@ -60,29 +69,33 @@ router.post('/send-otp', async (req, res) => {
       `INSERT INTO app.otps (
         identifier, email, code, purpose, expires_at, created_at
       ) VALUES ($1, $2, $3, $4, $5, NOW())`,
-      [cleanEmail, cleanEmail, code, 'register', expiresAt]
+      [cleanEmail, cleanEmail, code, purpose, expiresAt]
     );
 
-    // إرسال البريد الإلكتروني
+    // إرسال البريد الإلكتروني (تختلف الرسالة حسب الغرض)
+    let subject = '🔐 رمز التحقق - تطبيق السائح';
+    let htmlContent = `
+      <div dir="rtl" style="font-family: 'Cairo', sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f9f9f9; border-radius: 10px;">
+        <div style="text-align: center; margin-bottom: 30px;">
+          <h1 style="color: #10b981; font-size: 28px;">🌍 تطبيق السائح</h1>
+        </div>
+        <div style="background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+          <h2 style="color: #333; margin-bottom: 20px;">${purpose === 'profile_update' ? 'تحديث الملف الشخصي' : 'مرحباً بك!'}</h2>
+          <p style="color: #666; font-size: 16px; line-height: 1.6;">رمز التحقق الخاص بك هو:</p>
+          <div style="background-color: #f0f9ff; padding: 20px; border-radius: 8px; text-align: center; margin: 20px 0;">
+            <span style="font-size: 48px; font-weight: bold; color: #3b82f6; letter-spacing: 5px;">${code}</span>
+          </div>
+          <p style="color: #666; font-size: 14px;">هذا الرمز صالح لمدة <strong>10 دقائق</strong></p>
+          ${purpose === 'profile_update' ? '<p style="color: #666; font-size: 14px;">يُستخدم هذا الرمز لتأكيد تغيير بياناتك الشخصية.</p>' : ''}
+        </div>
+      </div>
+    `;
+
     try {
       await sendEmail({
         to: cleanEmail,
-        subject: '🔐 رمز التحقق - تطبيق السائح',
-        html: `
-          <div dir="rtl" style="font-family: 'Cairo', sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f9f9f9; border-radius: 10px;">
-            <div style="text-align: center; margin-bottom: 30px;">
-              <h1 style="color: #10b981; font-size: 28px;">🌍 تطبيق السائح</h1>
-            </div>
-            <div style="background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
-              <h2 style="color: #333; margin-bottom: 20px;">مرحباً بك!</h2>
-              <p style="color: #666; font-size: 16px; line-height: 1.6;">رمز التحقق الخاص بك هو:</p>
-              <div style="background-color: #f0f9ff; padding: 20px; border-radius: 8px; text-align: center; margin: 20px 0;">
-                <span style="font-size: 48px; font-weight: bold; color: #3b82f6; letter-spacing: 5px;">${code}</span>
-              </div>
-              <p style="color: #666; font-size: 14px;">هذا الرمز صالح لمدة <strong>10 دقائق</strong></p>
-            </div>
-          </div>
-        `
+        subject: subject,
+        html: htmlContent
       });
       console.log(`📧 Email sent successfully to ${cleanEmail}`);
     } catch (emailError) {
@@ -123,8 +136,7 @@ router.post('/verify-otp', async (req, res) => {
 
     const cleanEmail = email.toLowerCase().trim();
 
-    // ✅ البحث عن الرمز بغض النظر عن الـ purpose
-    // نبحث في جميع الأغراض
+    // البحث عن الرمز بغض النظر عن الـ purpose
     const otpResult = await pool.query(
       `SELECT * FROM app.otps 
        WHERE identifier = $1 AND code = $2 
@@ -136,12 +148,6 @@ router.post('/verify-otp', async (req, res) => {
     const otpRecord = otpResult.rows[0];
     console.log('🔍 OTP Record found:', otpRecord ? '✅ YES' : '❌ NO');
     
-    if (otpRecord) {
-      console.log('📋 OTP Purpose:', otpRecord.purpose);
-      console.log('⏰ Expires at:', otpRecord.expires_at);
-      console.log('🕐 Current time:', new Date().toISOString());
-    }
-
     if (!otpRecord) {
       return res.status(400).json({
         success: false,
@@ -191,7 +197,13 @@ router.post('/verify-otp', async (req, res) => {
       }
     }
 
-    // لأي غرض آخر (phone-verification, etc.)
+    // ✅ لأي غرض آخر (profile_update, phone-verification, etc.)
+    // نقوم بالتحقق من الرمز ونجاحه
+    await pool.query(
+      'UPDATE app.otps SET verified = true WHERE id = $1',
+      [otpRecord.id]
+    );
+
     res.json({
       success: true,
       isNewUser: false,
