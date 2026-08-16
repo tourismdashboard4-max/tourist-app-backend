@@ -1,8 +1,6 @@
-// backend/src/routes/programRoutes.js - نسخة معدلة بالكامل مع Cloudinary
+// backend/src/routes/programRoutes.js - النسخة الأصلية (بدون Cloudinary)
 import express from 'express';
 import multer from 'multer';
-import { CloudinaryStorage } from 'multer-storage-cloudinary';
-import { v2 as cloudinary } from 'cloudinary';
 import path from 'path';
 import fs from 'fs';
 import { protect, authorize } from '../middleware/authMiddleware.js';
@@ -13,35 +11,25 @@ import { pool } from '../config/database.js';
 const router = express.Router();
 
 // ============================================
-// إعداد Cloudinary
+// إعداد Multer لرفع الصور (تخزين محلي)
 // ============================================
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
-
-// ============================================
-// إعداد Multer مع Cloudinary (بدلاً من التخزين المحلي)
-// ============================================
-const storage = new CloudinaryStorage({
-  cloudinary: cloudinary,
-  params: {
-    folder: 'programs',
-    format: async (req, file) => {
-      const ext = file.mimetype.split('/')[1];
-      return ext === 'png' ? 'png' : 'jpg';
-    },
-    public_id: (req, file) => {
-      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-      return `program-${uniqueSuffix}`;
-    },
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = 'uploads/programs';
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    cb(null, dir);
   },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, `program-${uniqueSuffix}${path.extname(file.originalname)}`);
+  }
 });
 
 const upload = multer({
   storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowedTypes = /jpeg|jpg|png|gif|webp/;
     const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
@@ -53,30 +41,6 @@ const upload = multer({
     }
   }
 });
-
-// ============================================
-// Helper: استخراج public_id من رابط Cloudinary
-// ============================================
-const getPublicIdFromUrl = (url) => {
-  if (!url) return null;
-  // مثال: https://res.cloudinary.com/cloud_name/image/upload/v1234567890/programs/program-123456.jpg
-  // public_id = programs/program-123456
-  try {
-    const parts = url.split('/');
-    const uploadIndex = parts.indexOf('upload');
-    if (uploadIndex === -1) return null;
-    // اجمع الأجزاء بعد upload (تجاهل الإصدار v...)
-    const publicIdParts = parts.slice(uploadIndex + 2);
-    // إزالة الامتداد
-    const lastPart = publicIdParts[publicIdParts.length - 1];
-    const withoutExt = lastPart.split('.')[0];
-    publicIdParts[publicIdParts.length - 1] = withoutExt;
-    return publicIdParts.join('/');
-  } catch (e) {
-    console.error('Error extracting public_id:', e);
-    return null;
-  }
-};
 
 // ============================================
 // Helper: جلب الصور لبرنامج معين
@@ -92,7 +56,6 @@ const getProgramImages = async (programId) => {
   return result.rows;
 };
 
-// Helper: إضافة الصور إلى كائن البرنامج
 const enrichWithImages = async (program) => {
   const images = await getProgramImages(program.id);
   return {
@@ -122,7 +85,6 @@ const programUpdateValidation = [
 
 // ============================================
 // ✅ GET /api/programs
-// الحصول على جميع البرامج (مع الصور)
 // ============================================
 router.get('/', async (req, res) => {
   try {
@@ -166,11 +128,8 @@ router.get('/', async (req, res) => {
     queryParams.push(parseInt(limit), parseInt(offset));
     
     const result = await pool.query(query, queryParams);
-    
-    // إضافة الصور لكل برنامج
     const programsWithImages = await Promise.all(result.rows.map(enrichWithImages));
     
-    // الحصول على العدد الإجمالي
     let countQuery = 'SELECT COUNT(*) FROM programs WHERE (status = $1 OR status IS NULL)';
     const countParams = ['active'];
     
@@ -203,7 +162,6 @@ router.get('/', async (req, res) => {
 
 // ============================================
 // ✅ GET /api/programs/:id
-// الحصول على برنامج محدد (مع الصور)
 // ============================================
 router.get('/:id', async (req, res) => {
   try {
@@ -243,7 +201,6 @@ router.get('/:id', async (req, res) => {
 
 // ============================================
 // ✅ POST /api/programs
-// إنشاء برنامج جديد (للمرشدين فقط)
 // ============================================
 router.post('/', protect, authorize('guide'), programValidation, validate, async (req, res) => {
   try {
@@ -255,7 +212,6 @@ router.post('/', protect, authorize('guide'), programValidation, validate, async
     } = req.body;
     
     console.log('📤 Creating program for guide:', guideId);
-    console.log('📤 Program data:', req.body);
     
     const query = `
       INSERT INTO programs (
@@ -302,18 +258,19 @@ router.post('/', protect, authorize('guide'), programValidation, validate, async
 
 // ============================================
 // ✅ POST /api/programs/:id/images
-// رفع صور لبرنامج (للمرشد صاحب البرنامج فقط)
 // ============================================
 router.post('/:id/images', protect, authorize('guide'), upload.array('images', 10), async (req, res) => {
   try {
     const programId = req.params.id;
     const guideId = req.user.id;
     
-    // التحقق من ملكية البرنامج
     const checkQuery = 'SELECT id FROM programs WHERE id = $1 AND guide_id = $2::uuid';
     const checkResult = await pool.query(checkQuery, [programId, guideId]);
     
     if (checkResult.rows.length === 0) {
+      if (req.files) {
+        req.files.forEach(file => fs.unlink(file.path, () => {}));
+      }
       return res.status(403).json({
         success: false,
         message: 'غير مصرح لك برفع صور لهذا البرنامج'
@@ -328,14 +285,13 @@ router.post('/:id/images', protect, authorize('guide'), upload.array('images', 1
     }
     
     const uploadedImages = [];
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
     const isPrimaryRequested = req.body.is_primary === 'true';
     
     for (let i = 0; i < req.files.length; i++) {
       const file = req.files[i];
-      // file.path هو الرابط الكامل من Cloudinary
-      const fullUrl = file.path;
+      const fullUrl = `${baseUrl}/uploads/programs/${path.basename(file.path)}`;
       
-      // تحديد إذا كانت هذه الصورة هي الأساسية
       let shouldBePrimary = (isPrimaryRequested && i === 0);
       if (!shouldBePrimary && i === 0) {
         const existingPrimary = await pool.query(
@@ -354,7 +310,6 @@ router.post('/:id/images', protect, authorize('guide'), upload.array('images', 1
       );
       uploadedImages.push(insertResult.rows[0]);
       
-      // إذا كانت هذه الصورة رئيسية، قم بإلغاء رئيسية الصور الأخرى
       if (shouldBePrimary) {
         await pool.query(
           'UPDATE program_images SET is_primary = false WHERE program_id = $1 AND id != $2',
@@ -371,6 +326,9 @@ router.post('/:id/images', protect, authorize('guide'), upload.array('images', 1
     
   } catch (error) {
     console.error('❌ Upload images error:', error);
+    if (req.files) {
+      req.files.forEach(file => fs.unlink(file.path, () => {}));
+    }
     res.status(500).json({
       success: false,
       message: 'حدث خطأ في رفع الصور: ' + error.message
@@ -380,14 +338,12 @@ router.post('/:id/images', protect, authorize('guide'), upload.array('images', 1
 
 // ============================================
 // ✅ DELETE /api/programs/:programId/images/:imageId
-// حذف صورة معينة (للمرشد صاحب البرنامج فقط)
 // ============================================
 router.delete('/:programId/images/:imageId', protect, authorize('guide'), async (req, res) => {
   try {
     const { programId, imageId } = req.params;
     const guideId = req.user.id;
     
-    // التحقق من ملكية البرنامج
     const checkQuery = 'SELECT id FROM programs WHERE id = $1 AND guide_id = $2::uuid';
     const checkResult = await pool.query(checkQuery, [programId, guideId]);
     if (checkResult.rows.length === 0) {
@@ -397,7 +353,6 @@ router.delete('/:programId/images/:imageId', protect, authorize('guide'), async 
       });
     }
     
-    // جلب معلومات الصورة
     const imageQuery = 'SELECT image_url, is_primary FROM program_images WHERE id = $1 AND program_id = $2';
     const imageResult = await pool.query(imageQuery, [imageId, programId]);
     if (imageResult.rows.length === 0) {
@@ -407,26 +362,13 @@ router.delete('/:programId/images/:imageId', protect, authorize('guide'), async 
       });
     }
     
-    const imageUrl = imageResult.rows[0].image_url;
-    
-    // حذف الصورة من قاعدة البيانات
     await pool.query('DELETE FROM program_images WHERE id = $1', [imageId]);
     
-    // حذف الملف من Cloudinary
-    try {
-      const publicId = getPublicIdFromUrl(imageUrl);
-      if (publicId) {
-        const result = await cloudinary.uploader.destroy(publicId);
-        console.log('🗑️ Cloudinary delete result:', result);
-      } else {
-        console.warn('⚠️ Could not extract public_id from URL:', imageUrl);
-      }
-    } catch (cloudinaryError) {
-      console.error('❌ Error deleting from Cloudinary:', cloudinaryError);
-      // لا نرمي خطأ هنا حتى لا نعطل العملية
+    const filePath = imageResult.rows[0].image_url.replace(/^.*?\/uploads/, 'uploads');
+    if (fs.existsSync(filePath)) {
+      fs.unlink(filePath, () => {});
     }
     
-    // إذا كانت الصورة المحذوفة هي الرئيسية، قم بتعيين صورة أخرى كرئيسية
     if (imageResult.rows[0].is_primary) {
       const remaining = await pool.query(
         'SELECT id FROM program_images WHERE program_id = $1 LIMIT 1',
@@ -456,14 +398,12 @@ router.delete('/:programId/images/:imageId', protect, authorize('guide'), async 
 
 // ============================================
 // ✅ PUT /api/programs/:id
-// تحديث برنامج (للمرشد صاحب البرنامج فقط)
 // ============================================
 router.put('/:id', protect, authorize('guide'), programUpdateValidation, validate, async (req, res) => {
   try {
     const { id } = req.params;
     const guideId = req.user.id;
     
-    // التحقق من أن البرنامج يخص هذا المرشد
     const checkQuery = 'SELECT * FROM programs WHERE id = $1 AND guide_id = $2::uuid';
     const checkResult = await pool.query(checkQuery, [id, guideId]);
     
@@ -474,7 +414,6 @@ router.put('/:id', protect, authorize('guide'), programUpdateValidation, validat
       });
     }
     
-    // بناء استعلام التحديث ديناميكياً
     const updates = [];
     const values = [];
     let paramIndex = 1;
@@ -530,14 +469,12 @@ router.put('/:id', protect, authorize('guide'), programUpdateValidation, validat
 
 // ============================================
 // ✅ DELETE /api/programs/:id
-// حذف برنامج (للمرشد صاحب البرنامج فقط)
 // ============================================
 router.delete('/:id', protect, authorize('guide'), async (req, res) => {
   try {
     const { id } = req.params;
     const guideId = req.user.id;
     
-    // التحقق من أن البرنامج يخص هذا المرشد
     const checkQuery = 'SELECT * FROM programs WHERE id = $1 AND guide_id = $2::uuid';
     const checkResult = await pool.query(checkQuery, [id, guideId]);
     
@@ -548,24 +485,16 @@ router.delete('/:id', protect, authorize('guide'), async (req, res) => {
       });
     }
     
-    // حذف الصور من Cloudinary أولاً
     const images = await pool.query('SELECT image_url FROM program_images WHERE program_id = $1', [id]);
     for (const img of images.rows) {
-      try {
-        const publicId = getPublicIdFromUrl(img.image_url);
-        if (publicId) {
-          await cloudinary.uploader.destroy(publicId);
-          console.log('🗑️ Deleted from Cloudinary:', publicId);
-        }
-      } catch (err) {
-        console.error('Error deleting from Cloudinary:', err);
+      const filePath = img.image_url.replace(/^.*?\/uploads/, 'uploads');
+      if (fs.existsSync(filePath)) {
+        fs.unlink(filePath, () => {});
       }
     }
     
-    // حذف سجلات الصور من قاعدة البيانات
     await pool.query('DELETE FROM program_images WHERE program_id = $1', [id]);
     
-    // حذف البرنامج
     const query = 'DELETE FROM programs WHERE id = $1 RETURNING *';
     const result = await pool.query(query, [id]);
     
@@ -586,7 +515,6 @@ router.delete('/:id', protect, authorize('guide'), async (req, res) => {
 
 // ============================================
 // ✅ PATCH /api/programs/:id/status
-// تحديث حالة البرنامج
 // ============================================
 router.patch('/:id/status', protect, authorize('guide'), async (req, res) => {
   try {
@@ -601,7 +529,6 @@ router.patch('/:id/status', protect, authorize('guide'), async (req, res) => {
       });
     }
     
-    // التحقق من أن البرنامج يخص هذا المرشد
     const checkQuery = 'SELECT * FROM programs WHERE id = $1 AND guide_id = $2::uuid';
     const checkResult = await pool.query(checkQuery, [id, guideId]);
     
@@ -639,7 +566,6 @@ router.patch('/:id/status', protect, authorize('guide'), async (req, res) => {
 
 // ============================================
 // ✅ GET /api/programs/guide/:guideId
-// الحصول على برامج مرشد محدد (مع الصور)
 // ============================================
 router.get('/guide/:guideId', async (req, res) => {
   try {
@@ -677,7 +603,7 @@ router.get('/guide/:guideId', async (req, res) => {
 router.get('/test', (req, res) => {
   res.json({
     success: true,
-    message: '✅ Program routes are working with PostgreSQL and Cloudinary image support',
+    message: '✅ Program routes are working with PostgreSQL and image support',
     timestamp: new Date().toISOString(),
     serverTime: new Date().toLocaleString()
   });
