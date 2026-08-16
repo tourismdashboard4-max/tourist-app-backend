@@ -1,11 +1,6 @@
-// backend/src/routes/programRoutes.js
-// ✅ نسخة Cloudinary – تأكد من تثبيت الحزم أولاً:
-// npm install cloudinary multer-storage-cloudinary
-
+// backend/src/routes/programRoutes.js - نسخة أصلية (تخزين محلي)
 import express from 'express';
 import multer from 'multer';
-import { CloudinaryStorage } from 'multer-storage-cloudinary';
-import { v2 as cloudinary } from 'cloudinary';
 import path from 'path';
 import fs from 'fs';
 import { protect, authorize } from '../middleware/authMiddleware.js';
@@ -16,30 +11,20 @@ import { pool } from '../config/database.js';
 const router = express.Router();
 
 // ============================================
-// إعداد Cloudinary (استخدام متغيرات البيئة)
+// إعداد Multer لرفع الصور (تخزين محلي)
 // ============================================
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
-
-// ============================================
-// إعداد Multer مع CloudinaryStorage
-// ============================================
-const storage = new CloudinaryStorage({
-  cloudinary: cloudinary,
-  params: {
-    folder: 'programs',
-    format: async (req, file) => {
-      const ext = file.mimetype.split('/')[1];
-      return ext === 'png' ? 'png' : 'jpg';
-    },
-    public_id: (req, file) => {
-      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-      return `program-${uniqueSuffix}`;
-    },
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = 'uploads/programs';
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    cb(null, dir);
   },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, `program-${uniqueSuffix}${path.extname(file.originalname)}`);
+  }
 });
 
 const upload = multer({
@@ -56,26 +41,6 @@ const upload = multer({
     }
   }
 });
-
-// ============================================
-// Helper: استخراج public_id من رابط Cloudinary
-// ============================================
-const getPublicIdFromUrl = (url) => {
-  if (!url) return null;
-  try {
-    const parts = url.split('/');
-    const uploadIndex = parts.indexOf('upload');
-    if (uploadIndex === -1) return null;
-    const publicIdParts = parts.slice(uploadIndex + 2);
-    const lastPart = publicIdParts[publicIdParts.length - 1];
-    const withoutExt = lastPart.split('.')[0];
-    publicIdParts[publicIdParts.length - 1] = withoutExt;
-    return publicIdParts.join('/');
-  } catch (e) {
-    console.error('Error extracting public_id:', e);
-    return null;
-  }
-};
 
 // ============================================
 // Helper: جلب الصور لبرنامج معين
@@ -303,6 +268,9 @@ router.post('/:id/images', protect, authorize('guide'), upload.array('images', 1
     const checkResult = await pool.query(checkQuery, [programId, guideId]);
     
     if (checkResult.rows.length === 0) {
+      if (req.files) {
+        req.files.forEach(file => fs.unlink(file.path, () => {}));
+      }
       return res.status(403).json({
         success: false,
         message: 'غير مصرح لك برفع صور لهذا البرنامج'
@@ -317,12 +285,13 @@ router.post('/:id/images', protect, authorize('guide'), upload.array('images', 1
     }
     
     const uploadedImages = [];
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
     const isPrimaryRequested = req.body.is_primary === 'true';
     
     for (let i = 0; i < req.files.length; i++) {
       const file = req.files[i];
-      const fullUrl = file.path; // رابط Cloudinary
-    
+      const fullUrl = `${baseUrl}/uploads/programs/${path.basename(file.path)}`;
+      
       let shouldBePrimary = (isPrimaryRequested && i === 0);
       if (!shouldBePrimary && i === 0) {
         const existingPrimary = await pool.query(
@@ -357,6 +326,9 @@ router.post('/:id/images', protect, authorize('guide'), upload.array('images', 1
     
   } catch (error) {
     console.error('❌ Upload images error:', error);
+    if (req.files) {
+      req.files.forEach(file => fs.unlink(file.path, () => {}));
+    }
     res.status(500).json({
       success: false,
       message: 'حدث خطأ في رفع الصور: ' + error.message
@@ -390,19 +362,11 @@ router.delete('/:programId/images/:imageId', protect, authorize('guide'), async 
       });
     }
     
-    const imageUrl = imageResult.rows[0].image_url;
-    
     await pool.query('DELETE FROM program_images WHERE id = $1', [imageId]);
     
-    // حذف من Cloudinary
-    try {
-      const publicId = getPublicIdFromUrl(imageUrl);
-      if (publicId) {
-        await cloudinary.uploader.destroy(publicId);
-        console.log('🗑️ Deleted from Cloudinary:', publicId);
-      }
-    } catch (err) {
-      console.error('Error deleting from Cloudinary:', err);
+    const filePath = imageResult.rows[0].image_url.replace(/^.*?\/uploads/, 'uploads');
+    if (fs.existsSync(filePath)) {
+      fs.unlink(filePath, () => {});
     }
     
     if (imageResult.rows[0].is_primary) {
@@ -523,14 +487,9 @@ router.delete('/:id', protect, authorize('guide'), async (req, res) => {
     
     const images = await pool.query('SELECT image_url FROM program_images WHERE program_id = $1', [id]);
     for (const img of images.rows) {
-      try {
-        const publicId = getPublicIdFromUrl(img.image_url);
-        if (publicId) {
-          await cloudinary.uploader.destroy(publicId);
-          console.log('🗑️ Deleted from Cloudinary:', publicId);
-        }
-      } catch (err) {
-        console.error('Error deleting from Cloudinary:', err);
+      const filePath = img.image_url.replace(/^.*?\/uploads/, 'uploads');
+      if (fs.existsSync(filePath)) {
+        fs.unlink(filePath, () => {});
       }
     }
     
@@ -644,7 +603,7 @@ router.get('/guide/:guideId', async (req, res) => {
 router.get('/test', (req, res) => {
   res.json({
     success: true,
-    message: '✅ Program routes are working with Cloudinary and PostgreSQL',
+    message: '✅ Program routes are working with PostgreSQL and image support',
     timestamp: new Date().toISOString(),
     serverTime: new Date().toLocaleString()
   });
