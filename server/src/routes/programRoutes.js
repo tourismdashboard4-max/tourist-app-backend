@@ -1,4 +1,7 @@
-// backend/src/routes/programRoutes.js - نسخة Cloudinary (مع دعم الحزم المثبتة)
+// backend/src/routes/programRoutes.js
+// ✅ نسخة Cloudinary – تأكد من تثبيت الحزم أولاً:
+// npm install cloudinary multer-storage-cloudinary
+
 import express from 'express';
 import multer from 'multer';
 import { CloudinaryStorage } from 'multer-storage-cloudinary';
@@ -13,7 +16,7 @@ import { pool } from '../config/database.js';
 const router = express.Router();
 
 // ============================================
-// إعداد Cloudinary
+// إعداد Cloudinary (استخدام متغيرات البيئة)
 // ============================================
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -22,7 +25,7 @@ cloudinary.config({
 });
 
 // ============================================
-// إعداد Multer مع Cloudinary
+// إعداد Multer مع CloudinaryStorage
 // ============================================
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
@@ -318,8 +321,8 @@ router.post('/:id/images', protect, authorize('guide'), upload.array('images', 1
     
     for (let i = 0; i < req.files.length; i++) {
       const file = req.files[i];
-      const fullUrl = file.path;
-      
+      const fullUrl = file.path; // رابط Cloudinary
+    
       let shouldBePrimary = (isPrimaryRequested && i === 0);
       if (!shouldBePrimary && i === 0) {
         const existingPrimary = await pool.query(
@@ -391,6 +394,7 @@ router.delete('/:programId/images/:imageId', protect, authorize('guide'), async 
     
     await pool.query('DELETE FROM program_images WHERE id = $1', [imageId]);
     
+    // حذف من Cloudinary
     try {
       const publicId = getPublicIdFromUrl(imageUrl);
       if (publicId) {
