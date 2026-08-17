@@ -26,7 +26,9 @@ const upload = multer({
     }
 });
 
-// رفع صورة شخصية
+// ============================================
+// ✅ رفع صورة شخصية
+// ============================================
 router.post('/upload/avatar', authenticate, upload.single('image'), async (req, res) => {
     try {
         const userId = req.user.id;
@@ -80,7 +82,9 @@ router.post('/upload/avatar', authenticate, upload.single('image'), async (req, 
     }
 });
 
-// رفع صورة برنامج (للمرشدين فقط)
+// ============================================
+// ✅ رفع صورة برنامج (للمرشدين فقط)
+// ============================================
 router.post('/upload/program', authenticate, upload.single('image'), async (req, res) => {
     try {
         const userId = req.user.id;
@@ -145,7 +149,80 @@ router.post('/upload/program', authenticate, upload.single('image'), async (req,
     }
 });
 
-// حذف صورة
+// ============================================
+// ✅ ✅ رفع صورة للمحادثة (دعم الدردشة)
+// ============================================
+router.post('/upload/chat-image', authenticate, upload.single('image'), async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const file = req.file;
+        const { ticketId } = req.body;
+
+        if (!file) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'الرجاء اختيار صورة' 
+            });
+        }
+
+        // التحقق من أن المستخدم مشارك في التذكرة (اختياري، لكنه إجراء أمني)
+        if (ticketId) {
+            const ticketCheck = await req.pool.query(
+                `SELECT id FROM app.support_tickets 
+                 WHERE id = $1 
+                 AND (user_id = $2 
+                      OR (metadata ? 'participants' AND metadata->'participants' ? $2::text)
+                      OR (metadata ? 'guideId' AND metadata->>'guideId' = $2::text)
+                      OR (metadata ? 'touristId' AND metadata->>'touristId' = $2::text))
+                 LIMIT 1`,
+                [ticketId, userId]
+            );
+            if (ticketCheck.rows.length === 0) {
+                return res.status(403).json({ 
+                    success: false, 
+                    message: 'غير مصرح لك برفع صور لهذه المحادثة' 
+                });
+            }
+        }
+
+        const fileExt = file.originalname.split('.').pop();
+        const fileName = `chat-${Date.now()}-${Math.round(Math.random() * 1E9)}.${fileExt}`;
+        const filePath = `chat_images/${fileName}`;
+
+        // رفع الصورة إلى Supabase Storage (bucket: chat_images)
+        const { data, error } = await supabase.storage
+            .from('chat_images')
+            .upload(filePath, file.buffer, {
+                contentType: file.mimetype,
+                cacheControl: '3600'
+            });
+
+        if (error) throw error;
+
+        // الحصول على URL العام
+        const { data: { publicUrl } } = supabase.storage
+            .from('chat_images')
+            .getPublicUrl(filePath);
+
+        res.json({
+            success: true,
+            message: 'تم رفع الصورة بنجاح',
+            imageUrl: publicUrl,
+            url: publicUrl
+        });
+
+    } catch (error) {
+        console.error('Error uploading chat image:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'فشل رفع الصورة' 
+        });
+    }
+});
+
+// ============================================
+// ✅ حذف صورة
+// ============================================
 router.delete('/upload/:bucket/:fileName', authenticate, async (req, res) => {
     try {
         const { bucket, fileName } = req.params;
