@@ -1,11 +1,37 @@
-// server/src/routes/supportRoutes.js - النسخة النهائية مع إرسال الإشعارات لجميع المشاركين
+// server/src/routes/supportRoutes.js - النسخة المعدلة لدعم المعرفات المختلطة (UUID + رقمي)
 import express from 'express';
 import { pool } from '../../server.js';
 import { protect } from '../middleware/authMiddleware.js';
 import notificationService from '../services/notificationService.js';
-import { io, onlineUsers } from '../../server.js'; // ✅ استيراد WebSocket
+import { io, onlineUsers } from '../../server.js';
 
 const router = express.Router();
+
+// ============================================
+// ✅ دالة مساعدة لتحويل أي معرف إلى رقمي (old_id)
+// ============================================
+async function getUserIdNumber(userId) {
+  if (!userId) return null;
+  // إذا كان رقمياً، نعيده كما هو
+  if (!isNaN(Number(userId))) return Number(userId);
+  // وإلا فهو UUID، نستعلم عن old_id
+  try {
+    const result = await pool.query(
+      `SELECT old_id FROM app.users WHERE id = $1`,
+      [userId]
+    );
+    if (result.rows.length > 0 && result.rows[0].old_id) {
+      return Number(result.rows[0].old_id);
+    }
+    // إذا لم يوجد old_id، نحاول إرجاع الرقم من المعرف إن أمكن (مثلاً إذا كان المعرف على شكل "123" لكن من نوع text)
+    const numeric = parseInt(userId);
+    if (!isNaN(numeric)) return numeric;
+    return null; // لا يمكن التحويل
+  } catch (error) {
+    console.error('❌ Error getting user numeric ID:', error);
+    return null;
+  }
+}
 
 // ============================================
 // ✅ الحصول على تذاكر المستخدم (مع دعم metadata.guideId, touristId, participants، ...)
@@ -92,18 +118,29 @@ router.post('/tickets', protect, async (req, res) => {
     );
     const userName = userResult.rows[0]?.full_name || userResult.rows[0]?.email || `مستخدم ${userId}`;
     
+    // ============================================
+    // ✅ إرسال إشعار للمرشد (إذا كانت محادثة مرشد)
+    // ============================================
     if (type === 'guide_chat' && metadata?.guideId) {
-      const guideId = metadata.guideId;
-      await notificationService.create(guideId, {
-        title: 'محادثة جديدة من مسافر',
-        message: `${userName} بدأ محادثة معك: ${message?.substring(0, 100) || 'يريد التواصل معك'}`,
-        type: 'guide_chat',
-        priority: 'high',
-        action_url: `/support?ticket=${ticket.id}`,
-        data: JSON.stringify({ ticketId: ticket.id, userId, type: 'new_chat', guideId })
-      });
+      const guideNumericId = await getUserIdNumber(metadata.guideId);
+      if (guideNumericId) {
+        await notificationService.create(guideNumericId, {
+          title: 'محادثة جديدة من مسافر',
+          message: `${userName} بدأ محادثة معك: ${message?.substring(0, 100) || 'يريد التواصل معك'}`,
+          type: 'guide_chat',
+          priority: 'high',
+          action_url: `/support?ticket=${ticket.id}`,
+          data: JSON.stringify({ ticketId: ticket.id, userId, type: 'new_chat', guideId: metadata.guideId })
+        });
+        console.log(`✅ [Support] Notification sent to guide (numeric ID: ${guideNumericId})`);
+      } else {
+        console.warn(`⚠️ [Support] Could not convert guideId ${metadata.guideId} to numeric ID, skipping notification.`);
+      }
     }
     
+    // ============================================
+    // ✅ إشعارات للمسؤولين
+    // ============================================
     const adminsResult = await pool.query(
       `SELECT id FROM app.users WHERE role IN ('admin', 'support')`
     );
@@ -244,7 +281,6 @@ router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
     if (ticket.metadata?.guideId) participants.add(ticket.metadata.guideId);
     if (ticket.metadata?.touristId) participants.add(ticket.metadata.touristId);
     if (ticket.metadata?.created_by_id) participants.add(ticket.metadata.created_by_id);
-    // إذا كانت التذكرة من نوع guide_chat وأحد المشاركين هو صاحب التذكرة (مسافر) والآخر هو المرشد، كلاهما مضاف بالفعل
     // إضافة المسؤولين (اختياري)
     const admins = await pool.query(`SELECT id FROM app.users WHERE role IN ('admin', 'support')`);
     admins.rows.forEach(admin => participants.add(admin.id));
@@ -263,7 +299,6 @@ router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
         });
         console.log(`📡 WebSocket new_message sent to participant ${participantStr}`);
       } else {
-        // لا بأس، الإشعار سيتم جلبها عبر polling لاحقاً
         console.log(`ℹ️ Participant ${participantStr} not online, will fetch via polling`);
       }
     });
@@ -282,20 +317,26 @@ router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
     });
     // =====================================================================
 
-    // إشعارات قاعدة البيانات (notificationService) كما هي موجودة مسبقاً
+    // ============================================
+    // ✅ إشعارات قاعدة البيانات (مع تحويل المعرفات)
+    // ============================================
     if (ticket.type === 'guide_chat' && ticket.metadata?.guideId && userId !== ticket.metadata.guideId) {
-      const guideId = ticket.metadata.guideId;
-      await notificationService.create(guideId, {
-        title: 'رسالة جديدة من مسافر',
-        message: `${senderName}: ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`,
-        type: 'guide_chat_message',
-        priority: 'high',
-        action_url: `/support?ticket=${ticketId}`,
-        data: JSON.stringify({ ticketId, userId, message: message.substring(0, 200), type: 'new_message' })
-      });
+      const guideNumericId = await getUserIdNumber(ticket.metadata.guideId);
+      if (guideNumericId) {
+        await notificationService.create(guideNumericId, {
+          title: 'رسالة جديدة من مسافر',
+          message: `${senderName}: ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`,
+          type: 'guide_chat_message',
+          priority: 'high',
+          action_url: `/support?ticket=${ticketId}`,
+          data: JSON.stringify({ ticketId, userId, message: message.substring(0, 200), type: 'new_message' })
+        });
+        console.log(`✅ [Support] Notification sent to guide (numeric ID: ${guideNumericId})`);
+      }
     }
     
     if ((isGuide || isAdmin) && !isOwner) {
+      // إرسال إشعار لصاحب التذكرة (المسافر)
       await notificationService.create(ticket.user_id, {
         title: isGuide ? 'رد من المرشد' : 'رد على تذكرة الدعم',
         message: `${senderName}: ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`,
@@ -307,6 +348,7 @@ router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
     }
     
     if (!isAdmin && !isGuide) {
+      // إشعار للمسؤولين
       const adminsResult = await pool.query(`SELECT id FROM app.users WHERE role IN ('admin', 'support')`);
       for (const admin of adminsResult.rows) {
         await notificationService.create(admin.id, {
@@ -331,7 +373,9 @@ router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
   }
 });
 
-// باقي التوابع (close, rate, admin, guide) كما هي دون تغيير ...
+// ============================================
+// ✅ إغلاق التذكرة
+// ============================================
 router.put('/tickets/:ticketId/close', protect, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -354,6 +398,9 @@ router.put('/tickets/:ticketId/close', protect, async (req, res) => {
   }
 });
 
+// ============================================
+// ✅ تقييم التذكرة
+// ============================================
 router.post('/tickets/:ticketId/rate', protect, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -369,6 +416,9 @@ router.post('/tickets/:ticketId/rate', protect, async (req, res) => {
   }
 });
 
+// ============================================
+// ✅ تذاكر المسؤول
+// ============================================
 router.get('/admin/tickets', protect, async (req, res) => {
   try {
     if (req.user.role !== 'admin' && req.user.role !== 'support') return res.status(403).json({ success: false, message: 'غير مصرح' });
@@ -380,6 +430,9 @@ router.get('/admin/tickets', protect, async (req, res) => {
   }
 });
 
+// ============================================
+// ✅ تذاكر المرشد
+// ============================================
 router.get('/guide/tickets', protect, async (req, res) => {
   try {
     const guideId = req.user.id;
