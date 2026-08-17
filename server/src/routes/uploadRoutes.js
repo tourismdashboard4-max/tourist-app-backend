@@ -41,12 +41,10 @@ router.post('/upload/avatar', authenticate, upload.single('image'), async (req, 
             });
         }
 
-        // إنشاء اسم فريد للصورة
         const fileExt = file.originalname.split('.').pop();
         const fileName = `${userId}-${Date.now()}.${fileExt}`;
         const filePath = `avatars/${fileName}`;
 
-        // رفع الصورة إلى Supabase Storage
         const { data, error } = await supabase.storage
             .from('avatars')
             .upload(filePath, file.buffer, {
@@ -56,12 +54,10 @@ router.post('/upload/avatar', authenticate, upload.single('image'), async (req, 
 
         if (error) throw error;
 
-        // الحصول على URL العام
         const { data: { publicUrl } } = supabase.storage
             .from('avatars')
             .getPublicUrl(filePath);
 
-        // تحديث قاعدة البيانات
         const result = await req.pool.query(
             'UPDATE app.users SET avatar_url = $1 WHERE id = $2 RETURNING avatar_url',
             [publicUrl, userId]
@@ -91,7 +87,6 @@ router.post('/upload/program', authenticate, upload.single('image'), async (req,
         const { programId } = req.body;
         const file = req.file;
 
-        // التحقق من أن المستخدم مرشد
         const guideCheck = await req.pool.query(
             'SELECT id FROM app.guides WHERE user_id = $1',
             [userId]
@@ -150,7 +145,7 @@ router.post('/upload/program', authenticate, upload.single('image'), async (req,
 });
 
 // ============================================
-// ✅ ✅ رفع صورة للمحادثة (دعم الدردشة)
+// ✅ رفع صورة للمحادثة (دعم الدردشة)
 // ============================================
 router.post('/upload/chat-image', authenticate, upload.single('image'), async (req, res) => {
     try {
@@ -165,7 +160,7 @@ router.post('/upload/chat-image', authenticate, upload.single('image'), async (r
             });
         }
 
-        // التحقق من أن المستخدم مشارك في التذكرة (اختياري، لكنه إجراء أمني)
+        // التحقق من مشاركة المستخدم في التذكرة
         if (ticketId) {
             const ticketCheck = await req.pool.query(
                 `SELECT id FROM app.support_tickets 
@@ -189,7 +184,6 @@ router.post('/upload/chat-image', authenticate, upload.single('image'), async (r
         const fileName = `chat-${Date.now()}-${Math.round(Math.random() * 1E9)}.${fileExt}`;
         const filePath = `chat_images/${fileName}`;
 
-        // رفع الصورة إلى Supabase Storage (bucket: chat_images)
         const { data, error } = await supabase.storage
             .from('chat_images')
             .upload(filePath, file.buffer, {
@@ -199,7 +193,6 @@ router.post('/upload/chat-image', authenticate, upload.single('image'), async (r
 
         if (error) throw error;
 
-        // الحصول على URL العام
         const { data: { publicUrl } } = supabase.storage
             .from('chat_images')
             .getPublicUrl(filePath);
@@ -228,7 +221,6 @@ router.delete('/upload/:bucket/:fileName', authenticate, async (req, res) => {
         const { bucket, fileName } = req.params;
         const userId = req.user.id;
 
-        // التحقق من صلاحية الحذف
         if (bucket === 'avatars' && !fileName.startsWith(userId)) {
             return res.status(403).json({ 
                 success: false, 
@@ -242,7 +234,6 @@ router.delete('/upload/:bucket/:fileName', authenticate, async (req, res) => {
 
         if (error) throw error;
 
-        // تحديث قاعدة البيانات
         if (bucket === 'avatars') {
             await req.pool.query(
                 'UPDATE app.users SET avatar_url = NULL WHERE id = $1',
