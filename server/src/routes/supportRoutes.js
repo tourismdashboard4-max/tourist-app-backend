@@ -1,4 +1,4 @@
-// server/src/routes/supportRoutes.js - النسخة المعدلة لدعم المعرفات المختلطة (UUID + رقمي) مع تحسين الصلاحيات والإشعارات
+// server/src/routes/supportRoutes.js - النسخة المعدلة لدعم المعرفات المختلطة (UUID + رقمي) مع تحسين الصلاحيات والإشعارات ودعم الصور
 import express from 'express';
 import { pool } from '../../server.js';
 import { protect } from '../middleware/authMiddleware.js';
@@ -31,7 +31,7 @@ async function getUserIdNumber(userId) {
 }
 
 // ============================================
-// ✅ الحصول على تذاكر المستخدم (مع دعم metadata.guideId, touristId, participants، ...)
+// ✅ الحصول على تذاكر المستخدم
 // ============================================
 router.get('/tickets', protect, async (req, res) => {
   try {
@@ -75,7 +75,7 @@ router.get('/tickets', protect, async (req, res) => {
 });
 
 // ============================================
-// ✅ إنشاء تذكرة جديدة (مع دعم guide_chat و metadata)
+// ✅ إنشاء تذكرة جديدة
 // ============================================
 router.post('/tickets', protect, async (req, res) => {
   try {
@@ -83,8 +83,6 @@ router.post('/tickets', protect, async (req, res) => {
     const userId = user_id || req.user.id;
     
     console.log('📝 [Support] Creating ticket for user_id:', userId);
-    console.log('📝 [Support] From token user_id:', req.user.id);
-    console.log('📝 [Support] From body user_id:', user_id);
     console.log('📝 [Support] Type:', type, 'Metadata:', metadata);
 
     if (!subject) {
@@ -94,19 +92,15 @@ router.post('/tickets', protect, async (req, res) => {
     // التأكد من وجود participants في metadata
     if (type === 'guide_chat' && metadata) {
       if (!metadata.participants) {
-        // بناء participants من guideId و touristId أو created_by
         const participants = [];
         if (metadata.guideId) participants.push(metadata.guideId);
         if (metadata.touristId) participants.push(metadata.touristId);
         if (metadata.created_by) participants.push(metadata.created_by);
         if (metadata.created_by_id) participants.push(metadata.created_by_id);
-        // إضافة userId إذا لم يكن موجوداً
         if (userId && !participants.includes(userId)) participants.push(userId);
         metadata.participants = participants;
       }
-      // التأكد من أن guideId و touristId موجودان
       if (!metadata.guideId && metadata.participants) {
-        // حاول استنتاج guideId
         const other = metadata.participants.find(p => p !== userId);
         if (other) metadata.guideId = other;
       }
@@ -124,8 +118,8 @@ router.post('/tickets', protect, async (req, res) => {
 
     if (message) {
       await pool.query(
-        `INSERT INTO app.support_messages (ticket_id, user_id, message, is_from_user, created_at)
-         VALUES ($1, $2, $3, true, NOW())`,
+        `INSERT INTO app.support_messages (ticket_id, user_id, message, type, image_url, is_from_user, created_at)
+         VALUES ($1, $2, $3, 'text', NULL, true, NOW())`,
         [ticket.id, userId, message]
       );
     }
@@ -136,9 +130,7 @@ router.post('/tickets', protect, async (req, res) => {
     );
     const userName = userResult.rows[0]?.full_name || userResult.rows[0]?.email || `مستخدم ${userId}`;
     
-    // ============================================
-    // ✅ إرسال إشعار للمرشد (إذا كانت محادثة مرشد)
-    // ============================================
+    // إشعار للمرشد
     if (type === 'guide_chat' && metadata?.guideId) {
       const guideNumericId = await getUserIdNumber(metadata.guideId);
       if (guideNumericId) {
@@ -156,9 +148,7 @@ router.post('/tickets', protect, async (req, res) => {
       }
     }
     
-    // ============================================
-    // ✅ إشعارات للمسؤولين
-    // ============================================
+    // إشعارات للمسؤولين
     const adminsResult = await pool.query(
       `SELECT id FROM app.users WHERE role IN ('admin', 'support')`
     );
@@ -206,12 +196,10 @@ router.get('/tickets/:ticketId/messages', protect, async (req, res) => {
     const ticket = ticketResult.rows[0];
     const isAdmin = req.user.role === 'admin' || req.user.role === 'support';
     
-    // ✅ تحسين التحقق: استخدام participants من metadata
     let isParticipant = false;
     if (ticket.metadata && ticket.metadata.participants) {
       isParticipant = ticket.metadata.participants.some(p => String(p) === String(userId));
     }
-    // إذا لم توجد participants، نتحقق بالطرق القديمة
     if (!isParticipant) {
       const isOwner = ticket.user_id === userId;
       const isGuide = ticket.type === 'guide_chat' && ticket.metadata?.guideId === userId;
@@ -245,19 +233,20 @@ router.get('/tickets/:ticketId/messages', protect, async (req, res) => {
 });
 
 // ============================================
-// ✅ إرسال رسالة (مع إشعارات WebSocket محسّنة)
+// ✅ إرسال رسالة (مع دعم الصور)
 // ============================================
 router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
   try {
     const userId = req.user.id;
     const { ticketId } = req.params;
-    const { message } = req.body;
+    const { message, type = 'text', image_url } = req.body;
 
-    if (!message || !message.trim()) {
+    // السماح برسالة فارغة إذا كانت صورة
+    if ((!message || !message.trim()) && type !== 'image') {
       return res.status(400).json({ success: false, message: 'الرسالة مطلوبة' });
     }
 
-    console.log('📤 [Support] Send message - userId:', userId, 'ticketId:', ticketId);
+    console.log('📤 [Support] Send message - userId:', userId, 'ticketId:', ticketId, 'type:', type);
 
     const ticketResult = await pool.query(
       `SELECT t.*, u.full_name as user_name, u.email as user_email
@@ -276,7 +265,16 @@ router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
     const isOwner = ticket.user_id === userId;
     const isGuide = ticket.type === 'guide_chat' && ticket.metadata?.guideId === userId;
 
-    if (!isOwner && !isAdmin && !isGuide) {
+    // التحقق من الصلاحيات
+    let isParticipant = false;
+    if (ticket.metadata && ticket.metadata.participants) {
+      isParticipant = ticket.metadata.participants.some(p => String(p) === String(userId));
+    }
+    if (!isParticipant) {
+      isParticipant = isOwner || isGuide;
+    }
+
+    if (!isAdmin && !isParticipant) {
       return res.status(403).json({ success: false, message: 'غير مصرح لك بإرسال رسائل لهذه التذكرة' });
     }
 
@@ -284,11 +282,12 @@ router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
       return res.status(400).json({ success: false, message: 'التذكرة مغلقة لا يمكن إرسال رسائل' });
     }
 
+    // إدراج الرسالة مع دعم الصور
     const messageResult = await pool.query(
-      `INSERT INTO app.support_messages (ticket_id, user_id, message, is_from_user, created_at)
-       VALUES ($1, $2, $3, $4, NOW())
+      `INSERT INTO app.support_messages (ticket_id, user_id, message, type, image_url, is_from_user, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())
        RETURNING *`,
-      [ticketId, userId, message, !isAdmin && !isGuide]
+      [ticketId, userId, message || '', type, image_url || null, !isAdmin && !isGuide]
     );
 
     await pool.query(
@@ -304,8 +303,7 @@ router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
     );
     const senderName = senderResult.rows[0]?.full_name || senderResult.rows[0]?.email || `مستخدم ${userId}`;
 
-    // ======================== ⚡ إرسال WebSocket لجميع المشاركين ========================
-    // جمع جميع المشاركين من التذكرة والميتاداتا
+    // ===== WebSocket =====
     const participants = new Set();
     participants.add(ticket.user_id);
     if (ticket.metadata?.guideId) participants.add(ticket.metadata.guideId);
@@ -314,21 +312,20 @@ router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
     if (ticket.metadata?.participants && Array.isArray(ticket.metadata.participants)) {
       ticket.metadata.participants.forEach(p => participants.add(p));
     }
-    // إضافة المسؤولين (اختياري)
     const admins = await pool.query(`SELECT id FROM app.users WHERE role IN ('admin', 'support')`);
     admins.rows.forEach(admin => participants.add(admin.id));
 
-    // إزالة المرسل من القائمة حتى لا يرسل لنفسه (لكن يمكن تركه)
-    // participants.delete(userId); // إذا أردت عدم إرسال للمرسل نفسه
+    const displayMessage = type === 'image' ? '📷 صورة' : message;
 
-    // إرسال WebSocket لكل مشارك
     participants.forEach(participantId => {
       const participantStr = String(participantId);
       const socketId = onlineUsers.get(participantStr);
       if (socketId && io) {
         io.to(socketId).emit('new_message', {
           ticketId: ticket.id,
-          message: message,
+          message: displayMessage,
+          type: type,
+          imageUrl: image_url || null,
           senderId: userId,
           senderName: senderName,
           createdAt: messageResult.rows[0].created_at,
@@ -340,62 +337,55 @@ router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
       }
     });
 
-    // إرسال تحديث last_message للمشاركين (لتحديث القوائم)
     participants.forEach(participantId => {
       const participantStr = String(participantId);
       const socketId = onlineUsers.get(participantStr);
       if (socketId && io) {
         io.to(socketId).emit('update_last_message', {
           ticketId: ticket.id,
-          lastMessage: message,
+          lastMessage: displayMessage,
           lastMessageTime: messageResult.rows[0].created_at
         });
       }
     });
-    // =====================================================================
 
-    // ============================================
-    // ✅ إشعارات قاعدة البيانات (مع تحويل المعرفات)
-    // ============================================
-    // إرسال إشعار للمرشد إذا كانت الرسالة من مسافر
+    // ===== إشعارات قاعدة البيانات =====
     if (ticket.type === 'guide_chat' && ticket.metadata?.guideId && userId !== ticket.metadata.guideId) {
       const guideNumericId = await getUserIdNumber(ticket.metadata.guideId);
       if (guideNumericId) {
         await notificationService.create(guideNumericId, {
           title: 'رسالة جديدة من مسافر',
-          message: `${senderName}: ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`,
+          message: `${senderName}: ${displayMessage.substring(0, 100)}${displayMessage.length > 100 ? '...' : ''}`,
           type: 'guide_chat_message',
           priority: 'high',
           action_url: `/support?ticket=${ticketId}`,
-          data: JSON.stringify({ ticketId, userId, message: message.substring(0, 200), type: 'new_message' })
+          data: JSON.stringify({ ticketId, userId, message: displayMessage, type: 'new_message' })
         });
         console.log(`✅ [Support] Notification sent to guide (numeric ID: ${guideNumericId})`);
       }
     }
     
-    // إذا كان المرشد أو المسؤول يرد على المستخدم (غير المالك)
     if ((isGuide || isAdmin) && !isOwner) {
       await notificationService.create(ticket.user_id, {
         title: isGuide ? 'رد من المرشد' : 'رد على تذكرة الدعم',
-        message: `${senderName}: ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`,
+        message: `${senderName}: ${displayMessage.substring(0, 100)}${displayMessage.length > 100 ? '...' : ''}`,
         type: isGuide ? 'guide_reply' : 'support_reply',
         priority: 'high',
         action_url: `/support?ticket=${ticketId}`,
-        data: JSON.stringify({ ticketId, message: message.substring(0, 200), type: 'reply' })
+        data: JSON.stringify({ ticketId, message: displayMessage, type: 'reply' })
       });
     }
     
-    // إشعار للمسؤولين إذا كانت الرسالة من مستخدم عادي (غير مسؤول/مرشد)
     if (!isAdmin && !isGuide) {
       const adminsResult = await pool.query(`SELECT id FROM app.users WHERE role IN ('admin', 'support')`);
       for (const admin of adminsResult.rows) {
         await notificationService.create(admin.id, {
           title: ticket.type === 'guide_chat' ? 'رسالة جديدة في محادثة مرشد' : 'رسالة دعم جديدة',
-          message: `رسالة جديدة من ${senderName}: ${message.substring(0, 50)}${message.length > 50 ? '...' : ''}`,
+          message: `رسالة جديدة من ${senderName}: ${displayMessage.substring(0, 50)}${displayMessage.length > 50 ? '...' : ''}`,
           type: 'support_message',
           priority: 'high',
           action_url: `/admin/support?ticket=${ticketId}`,
-          data: JSON.stringify({ ticketId, userId, message: message.substring(0, 200), chatType: ticket.type })
+          data: JSON.stringify({ ticketId, userId, message: displayMessage, chatType: ticket.type })
         });
       }
     }
