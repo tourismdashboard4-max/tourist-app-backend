@@ -1,5 +1,6 @@
 // server/src/routes/supportRoutes.js - النسخة المعدلة لدعم المعرفات المختلطة (UUID + رقمي) مع تحسين الصلاحيات والإشعارات ودعم الصور
 // ✅ تمت إضافة مسار /read لتحديث حالة القراءة، وإصلاح مشكلة 500 عند إرسال الصور
+// ✅ يتطلب وجود الأعمدة: type, image_url, read, read_at في جدول support_messages
 
 import express from 'express';
 import { pool } from '../../server.js';
