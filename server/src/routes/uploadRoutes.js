@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { createClient } from '@supabase/supabase-js';
-import { authenticate } from '../middleware/auth.js';
+import { protect } from '../middleware/authMiddleware.js';
+import { pool } from '../../server.js'; // ✅ استيراد pool من server.js
 
 const router = Router();
 
@@ -29,7 +30,7 @@ const upload = multer({
 // ============================================
 // ✅ رفع صورة شخصية
 // ============================================
-router.post('/upload/avatar', authenticate, upload.single('image'), async (req, res) => {
+router.post('/upload/avatar', protect, upload.single('image'), async (req, res) => {
     try {
         const userId = req.user.id;
         const file = req.file;
@@ -58,7 +59,7 @@ router.post('/upload/avatar', authenticate, upload.single('image'), async (req, 
             .from('avatars')
             .getPublicUrl(filePath);
 
-        const result = await req.pool.query(
+        const result = await pool.query(
             'UPDATE app.users SET avatar_url = $1 WHERE id = $2 RETURNING avatar_url',
             [publicUrl, userId]
         );
@@ -81,13 +82,13 @@ router.post('/upload/avatar', authenticate, upload.single('image'), async (req, 
 // ============================================
 // ✅ رفع صورة برنامج (للمرشدين فقط)
 // ============================================
-router.post('/upload/program', authenticate, upload.single('image'), async (req, res) => {
+router.post('/upload/program', protect, upload.single('image'), async (req, res) => {
     try {
         const userId = req.user.id;
         const { programId } = req.body;
         const file = req.file;
 
-        const guideCheck = await req.pool.query(
+        const guideCheck = await pool.query(
             'SELECT id FROM app.guides WHERE user_id = $1',
             [userId]
         );
@@ -123,7 +124,7 @@ router.post('/upload/program', authenticate, upload.single('image'), async (req,
             .getPublicUrl(filePath);
 
         if (programId) {
-            await req.pool.query(
+            await pool.query(
                 'UPDATE app.programs SET image_url = $1 WHERE id = $2 AND guide_id = (SELECT id FROM app.guides WHERE user_id = $3)',
                 [publicUrl, programId, userId]
             );
@@ -147,7 +148,7 @@ router.post('/upload/program', authenticate, upload.single('image'), async (req,
 // ============================================
 // ✅ رفع صورة للمحادثة (دعم الدردشة)
 // ============================================
-router.post('/upload/chat-image', authenticate, upload.single('image'), async (req, res) => {
+router.post('/upload/chat-image', protect, upload.single('image'), async (req, res) => {
     try {
         const userId = req.user.id;
         const file = req.file;
@@ -162,7 +163,7 @@ router.post('/upload/chat-image', authenticate, upload.single('image'), async (r
 
         // التحقق من مشاركة المستخدم في التذكرة
         if (ticketId) {
-            const ticketCheck = await req.pool.query(
+            const ticketCheck = await pool.query(
                 `SELECT id FROM app.support_tickets 
                  WHERE id = $1 
                  AND (user_id = $2 
@@ -216,7 +217,7 @@ router.post('/upload/chat-image', authenticate, upload.single('image'), async (r
 // ============================================
 // ✅ حذف صورة
 // ============================================
-router.delete('/upload/:bucket/:fileName', authenticate, async (req, res) => {
+router.delete('/upload/:bucket/:fileName', protect, async (req, res) => {
     try {
         const { bucket, fileName } = req.params;
         const userId = req.user.id;
@@ -235,7 +236,7 @@ router.delete('/upload/:bucket/:fileName', authenticate, async (req, res) => {
         if (error) throw error;
 
         if (bucket === 'avatars') {
-            await req.pool.query(
+            await pool.query(
                 'UPDATE app.users SET avatar_url = NULL WHERE id = $1',
                 [userId]
             );
