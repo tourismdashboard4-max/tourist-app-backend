@@ -29,6 +29,9 @@ import notificationRoutes from './src/routes/notificationRoutes.js';
 import supportRoutes from './src/routes/supportRoutes.js';
 import upgradeRoutes from './src/routes/upgradeRoutes.js';
 
+// ✅ استيراد مسارات رفع الصور
+import uploadRoutes from './src/routes/uploadRoutes.js';
+
 // استيراد دوال الوقت المساعدة
 import { createExpiryDate, isOTPValid, getTimeRemaining } from './src/utils/timeUtils.js';
 
@@ -922,6 +925,9 @@ app.use('/api/chats', chatRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/support', supportRoutes);
 app.use('/api/upgrade', upgradeRoutes);
+
+// ✅ ✅ ✅ تفعيل مسارات رفع الصور (مثل /api/upload/chat-image)
+app.use('/api', uploadRoutes);
 
 // ===================== Test & Health =====================
 app.get('/api/test', (req, res) => {
