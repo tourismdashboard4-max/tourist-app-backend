@@ -162,7 +162,6 @@ router.post('/upload/chat-image', protect, uploadChat.single('image'), async (re
     });
   } catch (error) {
     console.error('Error uploading chat image:', error);
-    // حذف الملف في حالة الخطأ
     if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
     res.status(500).json({ success: false, message: 'فشل رفع الصورة' });
   }
