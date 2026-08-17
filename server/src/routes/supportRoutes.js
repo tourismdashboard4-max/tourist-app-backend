@@ -1,4 +1,6 @@
 // server/src/routes/supportRoutes.js - النسخة المعدلة لدعم المعرفات المختلطة (UUID + رقمي) مع تحسين الصلاحيات والإشعارات ودعم الصور
+// ✅ تمت إضافة مسار /read لتحديث حالة القراءة، وإصلاح مشكلة 500 عند إرسال الصور
+
 import express from 'express';
 import { pool } from '../../server.js';
 import { protect } from '../middleware/authMiddleware.js';
@@ -397,6 +399,64 @@ router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
 
   } catch (error) {
     console.error('❌ Send message error:', error);
+    res.status(500).json({ success: false, message: 'حدث خطأ' });
+  }
+});
+
+// ============================================
+// ✅ تحديث حالة قراءة التذكرة (تعليم الرسائل كمقروءة)
+// ============================================
+router.put('/tickets/:ticketId/read', protect, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { ticketId } = req.params;
+
+    // التحقق من أن المستخدم مشارك في التذكرة
+    const ticketResult = await pool.query(
+      `SELECT * FROM app.support_tickets WHERE id = $1`,
+      [ticketId]
+    );
+    if (ticketResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'التذكرة غير موجودة' });
+    }
+
+    const ticket = ticketResult.rows[0];
+    const isAdmin = req.user.role === 'admin' || req.user.role === 'support';
+    let isParticipant = false;
+    if (ticket.metadata?.participants) {
+      isParticipant = ticket.metadata.participants.some(p => String(p) === String(userId));
+    }
+    if (!isParticipant) {
+      const isOwner = ticket.user_id === userId;
+      const isGuide = ticket.type === 'guide_chat' && ticket.metadata?.guideId === userId;
+      isParticipant = isOwner || isGuide;
+    }
+    if (!isAdmin && !isParticipant) {
+      return res.status(403).json({ success: false, message: 'غير مصرح لك بهذه العملية' });
+    }
+
+    // تحديث حالة قراءة الرسائل (تحديث عمود read إلى true لجميع رسائل التذكرة باستثناء رسائل المرسل)
+    await pool.query(
+      `UPDATE app.support_messages 
+       SET read = true, read_at = NOW() 
+       WHERE ticket_id = $1 AND user_id != $2`,
+      [ticketId, userId]
+    );
+
+    // إرجاع عدد الرسائل التي تم تحديثها
+    const countResult = await pool.query(
+      `SELECT COUNT(*) FROM app.support_messages 
+       WHERE ticket_id = $1 AND user_id != $2 AND read = true`,
+      [ticketId, userId]
+    );
+
+    res.json({
+      success: true,
+      message: 'تم تحديث حالة القراءة',
+      updatedCount: parseInt(countResult.rows[0].count)
+    });
+  } catch (error) {
+    console.error('❌ Error marking ticket as read:', error);
     res.status(500).json({ success: false, message: 'حدث خطأ' });
   }
 });
