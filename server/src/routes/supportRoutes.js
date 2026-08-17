@@ -1,4 +1,4 @@
-// server/src/routes/supportRoutes.js - النسخة المعدلة لدعم المعرفات المختلطة (UUID + رقمي)
+// server/src/routes/supportRoutes.js - النسخة المعدلة لدعم المعرفات المختلطة (UUID + رقمي) مع تحسين الصلاحيات والإشعارات
 import express from 'express';
 import { pool } from '../../server.js';
 import { protect } from '../middleware/authMiddleware.js';
@@ -12,9 +12,7 @@ const router = express.Router();
 // ============================================
 async function getUserIdNumber(userId) {
   if (!userId) return null;
-  // إذا كان رقمياً، نعيده كما هو
   if (!isNaN(Number(userId))) return Number(userId);
-  // وإلا فهو UUID، نستعلم عن old_id
   try {
     const result = await pool.query(
       `SELECT old_id FROM app.users WHERE id = $1`,
@@ -23,10 +21,9 @@ async function getUserIdNumber(userId) {
     if (result.rows.length > 0 && result.rows[0].old_id) {
       return Number(result.rows[0].old_id);
     }
-    // إذا لم يوجد old_id، نحاول إرجاع الرقم من المعرف إن أمكن (مثلاً إذا كان المعرف على شكل "123" لكن من نوع text)
     const numeric = parseInt(userId);
     if (!isNaN(numeric)) return numeric;
-    return null; // لا يمكن التحويل
+    return null;
   } catch (error) {
     console.error('❌ Error getting user numeric ID:', error);
     return null;
@@ -92,6 +89,27 @@ router.post('/tickets', protect, async (req, res) => {
 
     if (!subject) {
       return res.status(400).json({ success: false, message: 'الموضوع مطلوب' });
+    }
+
+    // التأكد من وجود participants في metadata
+    if (type === 'guide_chat' && metadata) {
+      if (!metadata.participants) {
+        // بناء participants من guideId و touristId أو created_by
+        const participants = [];
+        if (metadata.guideId) participants.push(metadata.guideId);
+        if (metadata.touristId) participants.push(metadata.touristId);
+        if (metadata.created_by) participants.push(metadata.created_by);
+        if (metadata.created_by_id) participants.push(metadata.created_by_id);
+        // إضافة userId إذا لم يكن موجوداً
+        if (userId && !participants.includes(userId)) participants.push(userId);
+        metadata.participants = participants;
+      }
+      // التأكد من أن guideId و touristId موجودان
+      if (!metadata.guideId && metadata.participants) {
+        // حاول استنتاج guideId
+        const other = metadata.participants.find(p => p !== userId);
+        if (other) metadata.guideId = other;
+      }
     }
 
     const ticketResult = await pool.query(
@@ -169,7 +187,7 @@ router.post('/tickets', protect, async (req, res) => {
 });
 
 // ============================================
-// ✅ الحصول على رسائل التذكرة
+// ✅ الحصول على رسائل التذكرة (مع تحسين الصلاحيات)
 // ============================================
 router.get('/tickets/:ticketId/messages', protect, async (req, res) => {
   try {
@@ -187,10 +205,21 @@ router.get('/tickets/:ticketId/messages', protect, async (req, res) => {
 
     const ticket = ticketResult.rows[0];
     const isAdmin = req.user.role === 'admin' || req.user.role === 'support';
-    const isOwner = ticket.user_id === userId;
-    const isGuide = ticket.type === 'guide_chat' && ticket.metadata?.guideId === userId;
+    
+    // ✅ تحسين التحقق: استخدام participants من metadata
+    let isParticipant = false;
+    if (ticket.metadata && ticket.metadata.participants) {
+      isParticipant = ticket.metadata.participants.some(p => String(p) === String(userId));
+    }
+    // إذا لم توجد participants، نتحقق بالطرق القديمة
+    if (!isParticipant) {
+      const isOwner = ticket.user_id === userId;
+      const isGuide = ticket.type === 'guide_chat' && ticket.metadata?.guideId === userId;
+      isParticipant = isOwner || isGuide;
+    }
 
-    if (!isOwner && !isAdmin && !isGuide) {
+    if (!isAdmin && !isParticipant) {
+      console.warn(`⚠️ Access denied for user ${userId} to ticket ${ticketId}`);
       return res.status(403).json({ success: false, message: 'غير مصرح لك برؤية هذه التذكرة' });
     }
 
@@ -216,7 +245,7 @@ router.get('/tickets/:ticketId/messages', protect, async (req, res) => {
 });
 
 // ============================================
-// ✅ إرسال رسالة (مع إشعارات WebSocket لجميع المشاركين)
+// ✅ إرسال رسالة (مع إشعارات WebSocket محسّنة)
 // ============================================
 router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
   try {
@@ -276,15 +305,23 @@ router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
     const senderName = senderResult.rows[0]?.full_name || senderResult.rows[0]?.email || `مستخدم ${userId}`;
 
     // ======================== ⚡ إرسال WebSocket لجميع المشاركين ========================
+    // جمع جميع المشاركين من التذكرة والميتاداتا
     const participants = new Set();
     participants.add(ticket.user_id);
     if (ticket.metadata?.guideId) participants.add(ticket.metadata.guideId);
     if (ticket.metadata?.touristId) participants.add(ticket.metadata.touristId);
     if (ticket.metadata?.created_by_id) participants.add(ticket.metadata.created_by_id);
+    if (ticket.metadata?.participants && Array.isArray(ticket.metadata.participants)) {
+      ticket.metadata.participants.forEach(p => participants.add(p));
+    }
     // إضافة المسؤولين (اختياري)
     const admins = await pool.query(`SELECT id FROM app.users WHERE role IN ('admin', 'support')`);
     admins.rows.forEach(admin => participants.add(admin.id));
 
+    // إزالة المرسل من القائمة حتى لا يرسل لنفسه (لكن يمكن تركه)
+    // participants.delete(userId); // إذا أردت عدم إرسال للمرسل نفسه
+
+    // إرسال WebSocket لكل مشارك
     participants.forEach(participantId => {
       const participantStr = String(participantId);
       const socketId = onlineUsers.get(participantStr);
@@ -303,7 +340,7 @@ router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
       }
     });
 
-    // أيضًا إرسال تحديث last_message لكل المشاركين (لتحديث القوائم)
+    // إرسال تحديث last_message للمشاركين (لتحديث القوائم)
     participants.forEach(participantId => {
       const participantStr = String(participantId);
       const socketId = onlineUsers.get(participantStr);
@@ -320,6 +357,7 @@ router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
     // ============================================
     // ✅ إشعارات قاعدة البيانات (مع تحويل المعرفات)
     // ============================================
+    // إرسال إشعار للمرشد إذا كانت الرسالة من مسافر
     if (ticket.type === 'guide_chat' && ticket.metadata?.guideId && userId !== ticket.metadata.guideId) {
       const guideNumericId = await getUserIdNumber(ticket.metadata.guideId);
       if (guideNumericId) {
@@ -335,8 +373,8 @@ router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
       }
     }
     
+    // إذا كان المرشد أو المسؤول يرد على المستخدم (غير المالك)
     if ((isGuide || isAdmin) && !isOwner) {
-      // إرسال إشعار لصاحب التذكرة (المسافر)
       await notificationService.create(ticket.user_id, {
         title: isGuide ? 'رد من المرشد' : 'رد على تذكرة الدعم',
         message: `${senderName}: ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`,
@@ -347,8 +385,8 @@ router.post('/tickets/:ticketId/messages', protect, async (req, res) => {
       });
     }
     
+    // إشعار للمسؤولين إذا كانت الرسالة من مستخدم عادي (غير مسؤول/مرشد)
     if (!isAdmin && !isGuide) {
-      // إشعار للمسؤولين
       const adminsResult = await pool.query(`SELECT id FROM app.users WHERE role IN ('admin', 'support')`);
       for (const admin of adminsResult.rows) {
         await notificationService.create(admin.id, {
