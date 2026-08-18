@@ -15,11 +15,12 @@ const router = Router();
 // ============================================
 const uploadsDir = path.join(__dirname, '../../uploads');
 const chatImagesDir = path.join(uploadsDir, 'chat_images');
+const chatAudioDir = path.join(uploadsDir, 'chat_audio'); // 🆕 مجلد الصوتيات
 const avatarsDir = path.join(uploadsDir, 'avatars');
 const programsDir = path.join(uploadsDir, 'programs');
 
 // إنشاء المجلدات إذا لم تكن موجودة
-[chatImagesDir, avatarsDir, programsDir].forEach(dir => {
+[chatImagesDir, chatAudioDir, avatarsDir, programsDir].forEach(dir => {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
 
@@ -34,6 +35,18 @@ const chatStorage = multer.diskStorage({
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     const ext = path.extname(file.originalname);
     cb(null, `chat-${uniqueSuffix}${ext}`);
+  }
+});
+
+// 🆕 تخزين الصوتيات
+const chatAudioStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, chatAudioDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = path.extname(file.originalname);
+    cb(null, `audio-${uniqueSuffix}${ext}`);
   }
 });
 
@@ -69,7 +82,17 @@ const imageFilter = (req, file, cb) => {
   cb(new Error('نوع الملف غير مدعوم. استخدم JPG, PNG, GIF, WEBP فقط.'));
 };
 
+// 🆕 فلتر الصوتيات
+const audioFilter = (req, file, cb) => {
+  const allowedTypes = /webm|mp3|wav|mpeg|ogg/;
+  const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+  const mimetype = allowedTypes.test(file.mimetype);
+  if (mimetype && extname) return cb(null, true);
+  cb(new Error('نوع الملف غير مدعوم. استخدم MP3, WAV, WEBM, OGG فقط.'));
+};
+
 const uploadChat = multer({ storage: chatStorage, limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: imageFilter });
+const uploadChatAudio = multer({ storage: chatAudioStorage, limits: { fileSize: 10 * 1024 * 1024 }, fileFilter: audioFilter }); // 🆕 10MB كحد أقصى
 const uploadAvatar = multer({ storage: avatarStorage, limits: { fileSize: 2 * 1024 * 1024 }, fileFilter: imageFilter });
 const uploadProgram = multer({ storage: programStorage, limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: imageFilter });
 
@@ -168,6 +191,47 @@ router.post('/upload/chat-image', protect, uploadChat.single('image'), async (re
 });
 
 // ============================================
+// 🆕 رفع مقطع صوتي للمحادثة
+// ============================================
+router.post('/upload/chat-audio', protect, uploadChatAudio.single('audio'), async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { ticketId } = req.body;
+    if (!req.file) return res.status(400).json({ success: false, message: 'الرجاء اختيار مقطع صوتي' });
+
+    // التحقق من مشاركة المستخدم في التذكرة
+    if (ticketId) {
+      const ticketCheck = await pool.query(
+        `SELECT id FROM app.support_tickets 
+         WHERE id = $1 
+         AND (user_id = $2 
+              OR (metadata ? 'participants' AND metadata->'participants' ? $2::text)
+              OR (metadata ? 'guideId' AND metadata->>'guideId' = $2::text)
+              OR (metadata ? 'touristId' AND metadata->>'touristId' = $2::text))
+         LIMIT 1`,
+        [ticketId, userId]
+      );
+      if (ticketCheck.rows.length === 0) {
+        fs.unlinkSync(req.file.path);
+        return res.status(403).json({ success: false, message: 'غير مصرح لك برفع ملفات صوتية لهذه المحادثة' });
+      }
+    }
+
+    const audioUrl = `/uploads/chat_audio/${req.file.filename}`;
+    res.json({
+      success: true,
+      message: 'تم رفع المقطع الصوتي بنجاح',
+      audioUrl,
+      url: audioUrl
+    });
+  } catch (error) {
+    console.error('Error uploading chat audio:', error);
+    if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+    res.status(500).json({ success: false, message: 'فشل رفع المقطع الصوتي' });
+  }
+});
+
+// ============================================
 // ✅ حذف صورة (بسيط)
 // ============================================
 router.delete('/upload/:bucket/:fileName', protect, async (req, res) => {
@@ -176,6 +240,7 @@ router.delete('/upload/:bucket/:fileName', protect, async (req, res) => {
     const userId = req.user.id;
     const filePath = path.join(uploadsDir, bucket, fileName);
 
+    // منع حذف ملفات ليست خاصة بالمستخدم
     if (bucket === 'avatars' && !fileName.startsWith('avatar-')) {
       return res.status(403).json({ success: false, message: 'غير مصرح لك بحذف هذه الصورة' });
     }
