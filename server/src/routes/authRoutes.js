@@ -1,7 +1,5 @@
 // server/src/routes/authRoutes.js
-// ✅ النسخة المحسّنة – تدعم profile_update مع إرسال OTP إلى البريد الجديد
-// ✅ إصلاح منطق التحقق من OTP بحيث يكون مرنًا لجميع الأغراض
-// ✅ استخدام createExpiryDate من ملف utils بدلاً من server.js
+// ✅ النسخة المحسّنة – تدعم verify_old_email و verify_new_email مع تحكم في وجود البريد
 
 import express from 'express';
 import { pool } from '../config/database.js';
@@ -14,7 +12,7 @@ import { protect } from '../middleware/authMiddleware.js';
 const router = express.Router();
 
 // ============================================
-// ✅ 1. إرسال رمز التحقق (يدعم عدة أغراض)
+// ✅ 1. إرسال رمز التحقق (يدعم عدة أغراض مع تحكم بالوجود)
 // ============================================
 router.post('/send-otp', async (req, res) => {
   try {
@@ -31,24 +29,41 @@ router.post('/send-otp', async (req, res) => {
 
     const cleanEmail = email.toLowerCase().trim();
 
-    // ✅ التحقق من وجود المستخدم (إلا إذا كان الغرض هو profile_update)
+    // التحقق من وجود المستخدم
     const userResult = await pool.query(
       'SELECT id FROM app.users WHERE email = $1',
       [cleanEmail]
     );
     const userExists = userResult.rows.length > 0;
 
-    // 🔥 إذا كان الغرض profile_update، لا نطلب وجود المستخدم
-    // لأن البريد الجديد قد لا يكون مسجلاً، وهذا هو المطلوب لإثبات الملكية
-    if (purpose !== 'profile_update' && userExists) {
+    // تحديد ما إذا كان يجب أن يكون البريد موجوداً أم لا حسب الـ purpose
+    let requireExisting = false;
+    let requireNotExisting = false;
+
+    if (purpose === 'register') {
+      requireNotExisting = true; // يجب ألا يكون موجوداً
+    } else if (purpose === 'reset-password' || purpose === 'verify_old_email') {
+      requireExisting = true; // يجب أن يكون موجوداً
+    } else if (purpose === 'profile_update' || purpose === 'verify_new_email') {
+      // يمكن أن يكون موجوداً أو لا (نسمح)
+      // لكننا لا نتحقق من الوجود
+    } else {
+      // للأغراض الأخرى الافتراضية، نسمح
+    }
+
+    // التحقق من الشروط
+    if (requireExisting && !userExists) {
+      return res.status(404).json({
+        success: false,
+        message: 'البريد الإلكتروني غير مسجل'
+      });
+    }
+    if (requireNotExisting && userExists) {
       return res.status(400).json({
         success: false,
         message: 'البريد الإلكتروني مسجل بالفعل'
       });
     }
-
-    // إذا كان الغرض profile_update والمستخدم غير موجود، نسمح بإرسال OTP
-    // (لأننا نريد التحقق من البريد الجديد الذي قد لا يكون مسجلاً)
 
     // إلغاء الرموز السابقة لنفس البريد ونفس الغرض
     await pool.query(
@@ -81,13 +96,14 @@ router.post('/send-otp', async (req, res) => {
           <h1 style="color: #10b981; font-size: 28px;">🌍 تطبيق السائح</h1>
         </div>
         <div style="background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
-          <h2 style="color: #333; margin-bottom: 20px;">${purpose === 'profile_update' ? 'تحديث البريد الإلكتروني' : 'مرحباً بك!'}</h2>
+          <h2 style="color: #333; margin-bottom: 20px;">${purpose === 'verify_old_email' ? 'تأكيد البريد الحالي' : purpose === 'verify_new_email' ? 'تأكيد البريد الجديد' : purpose === 'profile_update' ? 'تحديث الملف الشخصي' : 'مرحباً بك!'}</h2>
           <p style="color: #666; font-size: 16px; line-height: 1.6;">رمز التحقق الخاص بك هو:</p>
           <div style="background-color: #f0f9ff; padding: 20px; border-radius: 8px; text-align: center; margin: 20px 0;">
             <span style="font-size: 48px; font-weight: bold; color: #3b82f6; letter-spacing: 5px;">${code}</span>
           </div>
           <p style="color: #666; font-size: 14px;">هذا الرمز صالح لمدة <strong>10 دقائق</strong></p>
-          ${purpose === 'profile_update' ? '<p style="color: #666; font-size: 14px;">يُستخدم هذا الرمز لتأكيد تغيير بريدك الإلكتروني.</p>' : ''}
+          ${purpose === 'verify_old_email' ? '<p style="color: #666; font-size: 14px;">يُستخدم هذا الرمز لتأكيد هويتك قبل تغيير البريد الإلكتروني.</p>' : ''}
+          ${purpose === 'verify_new_email' ? '<p style="color: #666; font-size: 14px;">يُستخدم هذا الرمز لتأكيد ملكية البريد الإلكتروني الجديد.</p>' : ''}
         </div>
       </div>
     `;
@@ -202,7 +218,7 @@ router.post('/verify-otp', async (req, res) => {
       }
     }
 
-    // ✅ لأي غرض آخر (profile_update, phone-verification, etc.)
+    // ✅ لأي غرض آخر (profile_update, verify_old_email, verify_new_email, phone-verification, etc.)
     // نقوم بالتحقق من الرمز ونجاحه
     await pool.query(
       'UPDATE app.otps SET verified = true WHERE id = $1',
