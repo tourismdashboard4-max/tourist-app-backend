@@ -1,10 +1,14 @@
 // server/src/routes/authRoutes.js
+// ✅ النسخة المحسّنة – تدعم profile_update مع إرسال OTP إلى البريد الجديد
+// ✅ إصلاح منطق التحقق من OTP بحيث يكون مرنًا لجميع الأغراض
+// ✅ استخدام createExpiryDate من ملف utils بدلاً من server.js
+
 import express from 'express';
 import { pool } from '../config/database.js';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import { sendEmail } from '../utils/email.js';
-import { createExpiryDate, isOTPValid, getTimeRemaining } from '../../server.js';
+import { createExpiryDate, isOTPValid, getTimeRemaining } from '../utils/timeUtils.js';
 import { protect } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
@@ -19,40 +23,37 @@ router.post('/send-otp', async (req, res) => {
     console.log('🕐 Server time:', new Date().toISOString());
 
     if (!email) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'البريد الإلكتروني مطلوب' 
+      return res.status(400).json({
+        success: false,
+        message: 'البريد الإلكتروني مطلوب'
       });
     }
 
     const cleanEmail = email.toLowerCase().trim();
 
-    // التحقق من وجود المستخدم (إلا إذا كان الغرض هو تحديث الملف الشخصي)
+    // ✅ التحقق من وجود المستخدم (إلا إذا كان الغرض هو profile_update)
     const userResult = await pool.query(
       'SELECT id FROM app.users WHERE email = $1',
       [cleanEmail]
     );
     const userExists = userResult.rows.length > 0;
 
+    // 🔥 إذا كان الغرض profile_update، لا نطلب وجود المستخدم
+    // لأن البريد الجديد قد لا يكون مسجلاً، وهذا هو المطلوب لإثبات الملكية
     if (purpose !== 'profile_update' && userExists) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'البريد الإلكتروني مسجل بالفعل' 
+      return res.status(400).json({
+        success: false,
+        message: 'البريد الإلكتروني مسجل بالفعل'
       });
     }
 
-    // إذا كان الغرض هو profile_update و المستخدم غير موجود → خطأ
-    if (purpose === 'profile_update' && !userExists) {
-      return res.status(404).json({
-        success: false,
-        message: 'البريد الإلكتروني غير مسجل'
-      });
-    }
+    // إذا كان الغرض profile_update والمستخدم غير موجود، نسمح بإرسال OTP
+    // (لأننا نريد التحقق من البريد الجديد الذي قد لا يكون مسجلاً)
 
     // إلغاء الرموز السابقة لنفس البريد ونفس الغرض
     await pool.query(
-      `UPDATE app.otps 
-       SET expires_at = NOW() 
+      `UPDATE app.otps
+       SET expires_at = NOW()
        WHERE identifier = $1 AND purpose = $2 AND verified = false`,
       [cleanEmail, purpose]
     );
@@ -80,13 +81,13 @@ router.post('/send-otp', async (req, res) => {
           <h1 style="color: #10b981; font-size: 28px;">🌍 تطبيق السائح</h1>
         </div>
         <div style="background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
-          <h2 style="color: #333; margin-bottom: 20px;">${purpose === 'profile_update' ? 'تحديث الملف الشخصي' : 'مرحباً بك!'}</h2>
+          <h2 style="color: #333; margin-bottom: 20px;">${purpose === 'profile_update' ? 'تحديث البريد الإلكتروني' : 'مرحباً بك!'}</h2>
           <p style="color: #666; font-size: 16px; line-height: 1.6;">رمز التحقق الخاص بك هو:</p>
           <div style="background-color: #f0f9ff; padding: 20px; border-radius: 8px; text-align: center; margin: 20px 0;">
             <span style="font-size: 48px; font-weight: bold; color: #3b82f6; letter-spacing: 5px;">${code}</span>
           </div>
           <p style="color: #666; font-size: 14px;">هذا الرمز صالح لمدة <strong>10 دقائق</strong></p>
-          ${purpose === 'profile_update' ? '<p style="color: #666; font-size: 14px;">يُستخدم هذا الرمز لتأكيد تغيير بياناتك الشخصية.</p>' : ''}
+          ${purpose === 'profile_update' ? '<p style="color: #666; font-size: 14px;">يُستخدم هذا الرمز لتأكيد تغيير بريدك الإلكتروني.</p>' : ''}
         </div>
       </div>
     `;
@@ -112,15 +113,15 @@ router.post('/send-otp', async (req, res) => {
 
   } catch (error) {
     console.error('❌ Send OTP error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'فشل إرسال رمز التحقق' 
+    res.status(500).json({
+      success: false,
+      message: 'فشل إرسال رمز التحقق'
     });
   }
 });
 
 // ============================================
-// ✅ 2. التحقق من الرمز (النسخة النهائية - تعمل مع كل الأغراض)
+// ✅ 2. التحقق من الرمز (النسخة النهائية – تدعم جميع الأغراض)
 // ============================================
 router.post('/verify-otp', async (req, res) => {
   try {
@@ -128,26 +129,32 @@ router.post('/verify-otp', async (req, res) => {
     console.log('📧 Verify OTP request:', { email, code, purpose });
 
     if (!email || !code) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'البريد الإلكتروني ورمز التحقق مطلوبان' 
+      return res.status(400).json({
+        success: false,
+        message: 'البريد الإلكتروني ورمز التحقق مطلوبان'
       });
     }
 
     const cleanEmail = email.toLowerCase().trim();
 
-    // البحث عن الرمز بغض النظر عن الـ purpose
-    const otpResult = await pool.query(
-      `SELECT * FROM app.otps 
-       WHERE identifier = $1 AND code = $2 
-         AND verified = false AND expires_at > NOW()
-       ORDER BY created_at DESC LIMIT 1`,
-      [cleanEmail, code]
-    );
-    
+    // البحث عن الرمز مع مراعاة الـ purpose إن وُجد
+    let query = `SELECT * FROM app.otps
+                 WHERE identifier = $1 AND code = $2
+                   AND verified = false AND expires_at > NOW()`;
+    const params = [cleanEmail, code];
+
+    if (purpose) {
+      query += ' AND purpose = $3';
+      params.push(purpose);
+    }
+
+    query += ' ORDER BY created_at DESC LIMIT 1';
+
+    const otpResult = await pool.query(query, params);
     const otpRecord = otpResult.rows[0];
+
     console.log('🔍 OTP Record found:', otpRecord ? '✅ YES' : '❌ NO');
-    
+
     if (!otpRecord) {
       return res.status(400).json({
         success: false,
@@ -165,14 +172,13 @@ router.post('/verify-otp', async (req, res) => {
         message: 'رمز التحقق صحيح'
       });
     }
-    
+
     if (otpRecord.purpose === 'register') {
       // هذا رمز للتسجيل
       const userResult = await pool.query(
         'SELECT id FROM app.users WHERE email = $1',
         [cleanEmail]
       );
-      
       const user = userResult.rows[0];
 
       if (!user) {
@@ -181,7 +187,6 @@ router.post('/verify-otp', async (req, res) => {
           'UPDATE app.otps SET verified = true WHERE id = $1',
           [otpRecord.id]
         );
-        
         return res.json({
           success: true,
           isNewUser: true,
@@ -213,9 +218,9 @@ router.post('/verify-otp', async (req, res) => {
 
   } catch (error) {
     console.error('❌ Verify OTP error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'حدث خطأ في التحقق' 
+    res.status(500).json({
+      success: false,
+      message: 'حدث خطأ في التحقق'
     });
   }
 });
@@ -242,7 +247,7 @@ router.post('/register', async (req, res) => {
       'SELECT id FROM app.users WHERE email = $1',
       [cleanEmail]
     );
-    
+
     if (existingUser.rows.length > 0) {
       return res.status(400).json({
         success: false,
@@ -267,11 +272,11 @@ router.post('/register', async (req, res) => {
 
     // إنشاء توكن JWT
     const token = jwt.sign(
-      { 
-        id: user.id, 
-        email: user.email, 
+      {
+        id: user.id,
+        email: user.email,
         fullName: user.full_name,
-        type: 'user' 
+        type: 'user'
       },
       process.env.JWT_SECRET || 'your-secret-key',
       { expiresIn: '30d' }
@@ -331,9 +336,9 @@ router.post('/login', async (req, res) => {
     console.log('🔐 Login attempt:', email);
 
     if (!email || !password) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'البريد الإلكتروني وكلمة المرور مطلوبان' 
+      return res.status(400).json({
+        success: false,
+        message: 'البريد الإلكتروني وكلمة المرور مطلوبان'
       });
     }
 
@@ -341,35 +346,35 @@ router.post('/login', async (req, res) => {
     const userResult = await pool.query(
       `SELECT id, full_name, email, password_hash, avatar, phone, role,
               created_at, last_login, login_count
-       FROM app.users 
+       FROM app.users
        WHERE email = $1`,
       [email.toLowerCase().trim()]
     );
-    
+
     const user = userResult.rows[0];
     console.log('👤 User found:', user ? '✅ YES' : '❌ NO');
 
     if (!user) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'البريد الإلكتروني أو كلمة المرور غير صحيحة' 
+      return res.status(401).json({
+        success: false,
+        message: 'البريد الإلكتروني أو كلمة المرور غير صحيحة'
       });
     }
 
     // التحقق من كلمة المرور
     const isPasswordMatch = await bcrypt.compare(password, user.password_hash);
-    
+
     if (!isPasswordMatch) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'البريد الإلكتروني أو كلمة المرور غير صحيحة' 
+      return res.status(401).json({
+        success: false,
+        message: 'البريد الإلكتروني أو كلمة المرور غير صحيحة'
       });
     }
 
     // تحديث آخر تسجيل دخول وعدد المرات
     await pool.query(
-      `UPDATE app.users 
-       SET last_login = NOW(), login_count = COALESCE(login_count, 0) + 1 
+      `UPDATE app.users
+       SET last_login = NOW(), login_count = COALESCE(login_count, 0) + 1
        WHERE id = $1`,
       [user.id]
     );
@@ -379,15 +384,15 @@ router.post('/login', async (req, res) => {
       'SELECT id, wallet_number, balance, currency FROM app.wallets WHERE user_id = $1',
       [user.id]
     );
-    
+
     const wallet = walletResult.rows[0];
 
     const token = jwt.sign(
-      { 
-        id: user.id, 
-        email: user.email, 
+      {
+        id: user.id,
+        email: user.email,
         fullName: user.full_name,
-        type: 'user' 
+        type: 'user'
       },
       process.env.JWT_SECRET || 'your-secret-key',
       { expiresIn: '30d' }
@@ -419,9 +424,9 @@ router.post('/login', async (req, res) => {
 
   } catch (error) {
     console.error('❌ Login error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'حدث خطأ في تسجيل الدخول' 
+    res.status(500).json({
+      success: false,
+      message: 'حدث خطأ في تسجيل الدخول'
     });
   }
 });
@@ -435,9 +440,9 @@ router.post('/forgot-password', async (req, res) => {
     console.log('🔄 Forgot password request for:', email);
 
     if (!email) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'البريد الإلكتروني مطلوب' 
+      return res.status(400).json({
+        success: false,
+        message: 'البريد الإلكتروني مطلوب'
       });
     }
 
@@ -448,18 +453,18 @@ router.post('/forgot-password', async (req, res) => {
       'SELECT id FROM app.users WHERE email = $1',
       [cleanEmail]
     );
-    
+
     if (userResult.rows.length === 0) {
-      return res.status(404).json({ 
-        success: false, 
+      return res.status(404).json({
+        success: false,
         message: 'البريد الإلكتروني غير مسجل'
       });
     }
 
     // إلغاء الرموز السابقة
     await pool.query(
-      `UPDATE app.otps 
-       SET expires_at = NOW() 
+      `UPDATE app.otps
+       SET expires_at = NOW()
        WHERE identifier = $1 AND purpose = $2 AND verified = false`,
       [cleanEmail, 'reset-password']
     );
@@ -514,9 +519,9 @@ router.post('/forgot-password', async (req, res) => {
 
   } catch (error) {
     console.error('❌ Forgot password error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'فشل إرسال رمز الاستعادة' 
+    res.status(500).json({
+      success: false,
+      message: 'فشل إرسال رمز الاستعادة'
     });
   }
 });
@@ -539,8 +544,8 @@ router.post('/reset-password', async (req, res) => {
 
     // البحث عن الرمز الصحيح
     const otpResult = await pool.query(
-      `SELECT * FROM app.otps 
-       WHERE identifier = $1 AND code = $2 AND purpose = $3 
+      `SELECT * FROM app.otps
+       WHERE identifier = $1 AND code = $2 AND purpose = $3
          AND verified = false AND expires_at > NOW()
        ORDER BY created_at DESC LIMIT 1`,
       [cleanEmail, code, 'reset-password']
@@ -579,31 +584,31 @@ router.post('/reset-password', async (req, res) => {
 
   } catch (error) {
     console.error('❌ Reset password error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'حدث خطأ في تغيير كلمة المرور' 
+    res.status(500).json({
+      success: false,
+      message: 'حدث خطأ في تغيير كلمة المرور'
     });
   }
 });
 
 // ============================================
-// ✅ 7. الحصول على ملف المستخدم
+// ✅ 7. الحصول على ملف المستخدم (محمي)
 // ============================================
 router.get('/profile/:userId', protect, async (req, res) => {
   try {
     const userResult = await pool.query(
       `SELECT id, full_name, email, avatar, phone, created_at, last_login, login_count
-       FROM app.users 
+       FROM app.users
        WHERE id = $1`,
       [req.params.userId]
     );
-    
+
     const user = userResult.rows[0];
 
     if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'المستخدم غير موجود' 
+      return res.status(404).json({
+        success: false,
+        message: 'المستخدم غير موجود'
       });
     }
 
@@ -623,15 +628,15 @@ router.get('/profile/:userId', protect, async (req, res) => {
 
   } catch (error) {
     console.error('❌ Profile error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'حدث خطأ في تحميل الملف الشخصي' 
+    res.status(500).json({
+      success: false,
+      message: 'حدث خطأ في تحميل الملف الشخصي'
     });
   }
 });
 
 // ============================================
-// ✅ إرسال رمز التحقق للجوال
+// ✅ 8. إرسال رمز التحقق للجوال (محمي)
 // ============================================
 router.post('/send-phone-otp', protect, async (req, res) => {
   try {
@@ -650,7 +655,7 @@ router.post('/send-phone-otp', protect, async (req, res) => {
     // التحقق من صيغة الرقم السعودي
     const saudiPhoneRegex = /^(05|5)[0-9]{8}$|^\+9665[0-9]{8}$/;
     const cleanPhone = phone.replace(/\s/g, '');
-    
+
     if (!saudiPhoneRegex.test(cleanPhone)) {
       return res.status(400).json({
         success: false,
@@ -663,7 +668,7 @@ router.post('/send-phone-otp', protect, async (req, res) => {
       'SELECT id FROM app.users WHERE phone = $1',
       [cleanPhone]
     );
-    
+
     if (existingUser.rows.length > 0 && existingUser.rows[0].id !== userId) {
       return res.status(400).json({
         success: false,
@@ -673,10 +678,10 @@ router.post('/send-phone-otp', protect, async (req, res) => {
 
     // إنشاء رمز تحقق عشوائي
     const code = Math.floor(100000 + Math.random() * 900000).toString();
-    
+
     // إنشاء وقت انتهاء الصلاحية
     const expiresAt = createExpiryDate(10);
-    
+
     // حفظ الرمز في قاعدة البيانات
     await pool.query(
       `INSERT INTO app.otps (
@@ -704,7 +709,7 @@ router.post('/send-phone-otp', protect, async (req, res) => {
 });
 
 // ============================================
-// ✅ التحقق من رمز الجوال
+// ✅ 9. التحقق من رمز الجوال (محمي)
 // ============================================
 router.post('/verify-phone-otp', protect, async (req, res) => {
   try {
@@ -722,8 +727,8 @@ router.post('/verify-phone-otp', protect, async (req, res) => {
 
     // البحث عن الرمز الصحيح
     const otpResult = await pool.query(
-      `SELECT * FROM app.otps 
-       WHERE user_id = $1 AND code = $2 AND purpose = $3 
+      `SELECT * FROM app.otps
+       WHERE user_id = $1 AND code = $2 AND purpose = $3
          AND verified = false AND expires_at > NOW()
        ORDER BY created_at DESC LIMIT 1`,
       [userId, code, 'phone-verification']
@@ -740,9 +745,9 @@ router.post('/verify-phone-otp', protect, async (req, res) => {
 
     // تحديث رقم الجوال في ملف المستخدم
     const phone = otpRecord.identifier;
-    
+
     await pool.query(
-      `UPDATE app.users 
+      `UPDATE app.users
        SET phone = $1, phone_verified = true, updated_at = NOW()
        WHERE id = $2`,
       [phone, userId]
@@ -764,6 +769,69 @@ router.post('/verify-phone-otp', protect, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'فشل التحقق'
+    });
+  }
+});
+
+// ============================================
+// ✅ 10. تغيير كلمة المرور (محمي)
+// ============================================
+router.post('/change-password', protect, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'كلمة المرور الحالية والجديدة مطلوبة'
+      });
+    }
+
+    // الحصول على كلمة المرور المشفرة للمستخدم
+    const userResult = await pool.query(
+      'SELECT password_hash FROM app.users WHERE id = $1',
+      [userId]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'المستخدم غير موجود'
+      });
+    }
+
+    const user = userResult.rows[0];
+
+    // التحقق من كلمة المرور الحالية
+    const isMatch = await bcrypt.compare(currentPassword, user.password_hash);
+
+    if (!isMatch) {
+      return res.status(401).json({
+        success: false,
+        message: 'كلمة المرور الحالية غير صحيحة'
+      });
+    }
+
+    // تشفير كلمة المرور الجديدة
+    const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+
+    // تحديث كلمة المرور
+    await pool.query(
+      'UPDATE app.users SET password_hash = $1, updated_at = NOW() WHERE id = $2',
+      [hashedNewPassword, userId]
+    );
+
+    res.json({
+      success: true,
+      message: 'تم تغيير كلمة المرور بنجاح'
+    });
+
+  } catch (error) {
+    console.error('❌ Change password error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'حدث خطأ في تغيير كلمة المرور'
     });
   }
 });
