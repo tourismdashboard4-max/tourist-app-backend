@@ -1,1658 +1,1233 @@
-// client/src/services/api.js
-// ✅ النسخة المعدلة – مع دعم الصورة الافتراضية وتحسين معالجة الصور
-// ✅ إضافة دالة changePassword لتغيير كلمة المرور بشكل منفصل
-// ✅ إصلاح دالة sendOTP: إزالة fallback purposes وإرجاع الخطأ كما هو (لا تحويل إلى جوال)
+// client/src/pages/HomePage.jsx
+// ✅ النسخة النهائية – أزرار علوية متوازية مثل أزرار البطاقة (flex-1)
+// ✅ زر "تحديد" بدلاً من رمز التحديث، مع وظيفة تحديث الموقع وجلب البرامج القريبة
+// ✅ مزامنة وضع العرض (القريبة/الكل) مع ExplorePage عبر localStorage
+// ✅ إضافة مستمع لحدث profileUpdated لتحديث الاسم والصورة فوراً عند تغيير الملف الشخصي
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://tourist-app-api.onrender.com/api';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { 
+  FaStar, FaSun, FaMoon, FaMapMarkerAlt, 
+  FaBoxOpen, FaSpinner, FaLocationArrow, FaRedoAlt, FaArrowUp,
+  FaHeart, FaCalendarCheck, FaMapMarkedAlt, FaCheckCircle
+} from 'react-icons/fa';
+import { 
+  MapPin, Bell, Search, Users, 
+  Navigation, MessageCircle, CalendarCheck, Shield, Sun, Moon, Compass,
+  Home, User, Map as MapIcon, Star, Crosshair, MousePointer
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import toast from 'react-hot-toast';
 
-// ===== صورة افتراضية (SVG مشفر) =====
-const DEFAULT_IMAGE = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"%3E%3Crect width="400" height="300" fill="%2310b981"/%3E%3Ctext x="50%25" y="50%25" font-family="Arial" font-size="24" fill="white" text-anchor="middle" dy=".3em"%3ENo Image%3C/text%3E%3C/svg%3E';
+const API_BASE = 'https://tourist-app-api.onrender.com';
+const NEARBY_RADIUS_KM = 245;
+const LOCATION_TIMEOUT = 15000;
+const MAX_RETRY_ATTEMPTS = 5;
+const MIN_ACCURACY_THRESHOLD = 200;
 
-// ===== دوال مساعدة للصور =====
+const IMAGE_CACHE_KEY = 'guide_programs_images_cache';
+const LEGACY_IMAGE_KEY = (programId) => `program_images_${programId}`;
+const LOCAL_BOOKINGS_KEY = (userId) => `local_bookings_${userId}`;
+const SHOW_ALL_MODE_KEY = 'show_all_programs_mode'; // ✅ مفتاح التخزين الموحد
+
+// ===== صورة افتراضية مدمجة (SVG) =====
+const DEFAULT_IMAGE = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"%3E%3Crect width="400" height="300" fill="%2310b981"/%3E%3Ctext x="50%25" y="50%25" font-family="Arial" font-size="28" fill="white" text-anchor="middle" dy=".3em"%3ENo Image%3C/text%3E%3C/svg%3E';
+
+// ===== دوال الصور =====
 const buildImageUrl = (url) => {
   if (!url || typeof url !== 'string') return null;
   if (url.startsWith('blob:') || url.startsWith('data:')) return url;
   if (url.startsWith('http://') || url.startsWith('https://')) return url;
-  if (url.startsWith('/uploads')) return `${API_BASE_URL.replace('/api', '')}${url}`;
-  if (url.startsWith('/')) return `${API_BASE_URL.replace('/api', '')}${url}`;
-  return `${API_BASE_URL.replace('/api', '')}/${url}`;
+  if (url.startsWith('/uploads')) return `${API_BASE}${url}`;
+  if (url.startsWith('/')) return `${API_BASE}${url}`;
+  return `${API_BASE}/${url}`;
 };
 
-const getImageUrl = (img) => {
-  if (!img) return null;
-  if (typeof img === 'string') return img;
-  if (typeof img === 'object') {
-    return img.url || img.image_url || img.src || null;
+const saveImagesToCache = (programId, images) => {
+  try {
+    const cache = JSON.parse(localStorage.getItem(IMAGE_CACHE_KEY) || '{}');
+    const urls = (images || []).map(url => ({ url: typeof url === 'string' ? url : url.url, is_primary: false }));
+    cache[programId] = {
+      images: urls.length ? urls : [{ url: DEFAULT_IMAGE, is_primary: false }],
+      timestamp: Date.now()
+    };
+    localStorage.setItem(IMAGE_CACHE_KEY, JSON.stringify(cache));
+  } catch (e) { console.warn('Failed to save images to cache:', e); }
+};
+
+const getImagesFromCache = (programId) => {
+  try {
+    const cache = JSON.parse(localStorage.getItem(IMAGE_CACHE_KEY) || '{}');
+    const entry = cache[programId];
+    if (!entry) return null;
+    if (Date.now() - entry.timestamp > 3600000) {
+      delete cache[programId];
+      localStorage.setItem(IMAGE_CACHE_KEY, JSON.stringify(cache));
+      return null;
+    }
+    return entry.images.map(img => img.url).filter(Boolean);
+  } catch (e) { return null; }
+};
+
+const getLegacyImages = (programId) => {
+  try {
+    const key = LEGACY_IMAGE_KEY(programId);
+    const saved = localStorage.getItem(key);
+    if (saved) {
+      const images = JSON.parse(saved);
+      if (images && images.length > 0) return images;
+    }
+    return null;
+  } catch (e) { return null; }
+};
+
+const saveProgramImages = async (programId, images) => {
+  try {
+    if (!programId) return;
+    const urls = images.map(img => buildImageUrl(img)).filter(Boolean);
+    if (urls.length === 0) urls.push(DEFAULT_IMAGE);
+    saveImagesToCache(programId, urls);
+    localStorage.setItem(LEGACY_IMAGE_KEY(programId), JSON.stringify(urls));
+  } catch (error) { console.error('Error saving program images:', error); }
+};
+
+const getProgramImages = (programId) => {
+  try {
+    if (!programId) return [DEFAULT_IMAGE];
+    const cached = getImagesFromCache(programId);
+    if (cached && cached.length > 0) return cached;
+    const legacy = getLegacyImages(programId);
+    if (legacy && legacy.length > 0) {
+      saveImagesToCache(programId, legacy);
+      return legacy;
+    }
+    return [DEFAULT_IMAGE];
+  } catch (error) {
+    console.error('Error retrieving program images:', error);
+    return [DEFAULT_IMAGE];
   }
-  return null;
 };
 
-// ===== خريطة UUID -> old_id (للمرشدين) =====
-let guidesIdMap = null;
-let guidesMapPromise = null;
-
-const loadGuidesMap = async () => {
-  if (guidesIdMap) return guidesIdMap;
-  if (guidesMapPromise) return guidesMapPromise;
-  guidesMapPromise = (async () => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/guides`);
-      const data = await response.json();
-      let guidesList = [];
-      if (data.success && Array.isArray(data.guides)) guidesList = data.guides;
-      else if (Array.isArray(data)) guidesList = data;
-      else if (data.data && Array.isArray(data.data)) guidesList = data.data;
-      const map = {};
-      guidesList.forEach(guide => {
-        const uuid = guide.id || guide.uuid;
-        const numericId = guide.old_id;
-        if (uuid && numericId && !isNaN(Number(numericId))) {
-          map[uuid] = Number(numericId);
-        }
-      });
-      guidesIdMap = map;
-      console.log('✅ Guides map loaded:', guidesIdMap);
-      return guidesIdMap;
-    } catch (err) {
-      console.error('Failed to load guides map:', err);
-      return {};
-    } finally {
-      guidesMapPromise = null;
-    }
-  })();
-  return guidesMapPromise;
+// ===== دوال المسافات والأنشطة =====
+const getDistance = (lat1, lon1, lat2, lon2) => {
+  if (!lat1 || !lon1 || !lat2 || !lon2) return Infinity;
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat/2) ** 2 +
+            Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) *
+            Math.sin(dLon/2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
 };
 
-// ============================================================
-// 📦 API OBJECT
-// ============================================================
-export const api = {
-  // ============================================
-  // 📧 OTP SERVICES - رموز التحقق
-  // ============================================
+const isValidLocation = (lat, lng) => {
+  return lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+};
+
+const getActivityType = (program, lang) => {
+  const text = ((program.name || '') + ' ' + (program.description || '')).toLowerCase();
+  if (text.includes('بحر') || text.includes('بحري') || text.includes('marine')) 
+    return { ar: 'رحلات بحرية', en: 'Marine trips', icon: '🌊', color: 'blue' };
+  if (text.includes('تسلق') || text.includes('جبل') || text.includes('mountain') || text.includes('climb')) 
+    return { ar: 'تسلق جبال', en: 'Mountain climbing', icon: '⛰️', color: 'green' };
+  if (text.includes('سفاري') || text.includes('safari')) 
+    return { ar: 'رحلات سفاري', en: 'Safari trips', icon: '🦁', color: 'orange' };
+  if (text.includes('براشوت') || text.includes('مظلة') || text.includes('parachute')) 
+    return { ar: 'رحلات براشوت', en: 'Parachute trips', icon: '🪂', color: 'purple' };
+  return { ar: 'برنامج سياحي', en: 'Tour program', icon: '🏞️', color: 'teal' };
+};
+
+// ===== الترجمات =====
+const LOCALES = {
+  ar: {
+    appName: 'تطبيق السائح',
+    welcome: 'مرحباً بك',
+    search: 'ابحث عن وجهة...',
+    explore: 'استكشف',
+    nearbyPrograms: 'البرامج القريبة منك',
+    map: 'الخريطة',
+    nearby: 'القريبة',
+    guides: 'المرشدون',
+    favorites: 'المفضلة',
+    archiveTrips: 'أرشيف الرحلات',
+    guideDashboard: 'لوحة التحكم',
+    loading: 'جاري تحميل البرامج...',
+    noPrograms: 'لا توجد برامج سياحية قريبة حالياً',
+    noProgramsAtAll: 'لا توجد برامج سياحية متاحة',
+    loginRequired: 'الرجاء تسجيل الدخول أولاً',
+    distance: 'كم',
+    price: 'ريال',
+    rating: 'تقييم',
+    chat: 'دردشة',
+    book: 'احجز',
+    viewOnMap: 'خريطة',
+    addToFavorites: 'مفضلة',
+    removeFromFavorites: 'تمت الإزالة',
+    requestSent: 'تم إرسال طلب الحجز بنجاح',
+    bookingFailed: 'فشل إرسال طلب الحجز',
+    locationUpdated: 'تم تحديث الموقع',
+    usingGps: '📍 تتبع مباشر',
+    usingManual: '📍 يدوي',
+    updateLocation: 'تحديث موقعي',
+    refresh: 'تحديث',
+    connectionError: 'فشل الاتصال بالإنترنت',
+    tryAgainLater: 'حاول مرة أخرى لاحقاً',
+    exploreNature: 'استكشف الطبيعة الخلابة',
+    home: 'الرئيسية',
+    profile: 'الملف الشخصي',
+    notifications: 'الإشعارات',
+    viewAll: 'عرض الكل',
+    showNearby: 'القريبة فقط',
+    showAll: 'عرض الكل',
+    noLocation: 'لم يتم تحديد الموقع',
+    getLocation: 'تحديد الموقع',
+    retry: 'إعادة المحاولة',
+    locating: 'جاري تحديد موقعك...',
+    locationError: 'تعذر تحديد موقعك. تأكد من تفعيل GPS',
+    locationPermissionDenied: 'الوصول إلى الموقع ممنوع',
+    locationTimeout: 'انتهت مهلة تحديد الموقع',
+    cannotChatOwn: 'لا يمكنك فتح محادثة مع نفسك',
+    location: 'الموقع',
+    programsNearby: 'برامج سياحية ضمن 245 كم',
+    loadingImages: 'جاري تحميل الصور...',
+    noImage: 'لا توجد صورة',
+    alreadyBooked: 'تم طلب حجز',
+    bookingExists: 'لديك طلب حجز معلق لهذا البرنامج',
+    chatWithGuide: '💬 دردشة مع المرشد',
+    bookNow: 'احجز الآن',
+    cannotBookOwn: 'لا يمكنك حجز برنامجك الخاص',
+    addedToFavorites: '✅ تمت الإضافة إلى المفضلة',
+    removedFromFavorites: '🗑️ تمت الإزالة من المفضلة',
+    duration: 'المدة',
+    myLocation: 'موقعي',
+    enableLocation: 'تفعيل الموقع',
+    retryLocation: 'إعادة المحاولة',
+    kmAway: 'كم',
+    accuracyMeters: 'م',
+    locationAcquired: '✅ تم تحديد موقعك',
+    invalidLocation: 'الموقع المستلم غير صحيح',
+    locate: 'تحديد',
+  },
+  en: {
+    appName: 'Tourist App',
+    welcome: 'Welcome',
+    search: 'Search...',
+    explore: 'Explore',
+    nearbyPrograms: 'Nearby Programs',
+    map: 'Map',
+    nearby: 'Nearby',
+    guides: 'Guides',
+    favorites: 'Favorites',
+    archiveTrips: 'Archive',
+    guideDashboard: 'Dashboard',
+    loading: 'Loading programs...',
+    noPrograms: 'No nearby programs available',
+    noProgramsAtAll: 'No tour programs available',
+    loginRequired: 'Please login first',
+    distance: 'km',
+    price: 'SAR',
+    rating: 'Rating',
+    chat: 'Chat',
+    book: 'Book',
+    viewOnMap: 'Map',
+    addToFavorites: 'Favorite',
+    removeFromFavorites: 'Removed',
+    requestSent: 'Booking request sent',
+    bookingFailed: 'Booking failed',
+    locationUpdated: 'Location updated',
+    usingGps: '📍 Live tracking',
+    usingManual: '📍 Manual',
+    updateLocation: 'Update location',
+    refresh: 'Refresh',
+    connectionError: 'Connection failed',
+    tryAgainLater: 'Please try again later',
+    exploreNature: 'Explore beautiful nature',
+    home: 'Home',
+    profile: 'Profile',
+    notifications: 'Notifications',
+    viewAll: 'View All',
+    showNearby: 'Nearby',
+    showAll: 'Show All',
+    noLocation: 'Location not set',
+    getLocation: 'Get Location',
+    retry: 'Retry',
+    locating: 'Locating you...',
+    locationError: 'Could not determine your location. Please enable GPS',
+    locationPermissionDenied: 'Location permission denied',
+    locationTimeout: 'Location request timeout',
+    cannotChatOwn: 'Cannot start chat with yourself',
+    location: 'Location',
+    programsNearby: 'Tour programs within 245 km',
+    loadingImages: 'Loading images...',
+    noImage: 'No image',
+    alreadyBooked: 'Booking Requested',
+    bookingExists: 'You have a pending booking for this program',
+    chatWithGuide: '💬 Chat With Guide',
+    bookNow: 'Book Now',
+    cannotBookOwn: 'You cannot book your own program',
+    addedToFavorites: '✅ Added to favorites',
+    removedFromFavorites: '🗑️ Removed from favorites',
+    duration: 'Duration',
+    myLocation: 'My Location',
+    enableLocation: 'Enable location',
+    retryLocation: 'Retry',
+    kmAway: 'km',
+    accuracyMeters: 'm',
+    locationAcquired: '✅ Location acquired',
+    invalidLocation: 'Invalid location received',
+    locate: 'Locate',
+  }
+};
+
+// ===== ProgramCard =====
+const ProgramCard = React.memo(({ program, lang, onBook, onView, onChat, isFavorite, onToggleFavorite, dark, isBooked }) => {
+  const t = (key) => LOCALES[lang]?.[key] || key;
+  const activity = getActivityType(program, lang);
+  const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const [imageError, setImageError] = useState(false);
+  const [loadingImage, setLoadingImage] = useState(false);
   
-  /**
-   * إرسال رمز التحقق (OTP) عبر البريد الإلكتروني.
-   * @param {string} email - البريد الإلكتروني المستهدف
-   * @param {string} purpose - الغرض من الإرسال (register, profile_update, reset-password, update-email, verify-email)
-   * @returns {Promise} - يعيد استجابة الخادم، أو يرمي استثناء في حال فشل.
-   * ملاحظة: تم إزالة آلية fallback، سنرمي الخطأ كما هو لإبلاغ المستخدم.
-   */
-  async sendOTP(email, purpose = 'register') {
-    try {
-      console.log('📤 Sending OTP request for:', email, 'purpose:', purpose);
-      const response = await fetch(`${API_BASE_URL}/api/auth/send-otp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, purpose })
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل إرسال رمز التحقق');
-      }
-      return data;
-    } catch (error) {
-      console.error('❌ Send OTP error:', error);
-      throw error;
-    }
-  },
-
-  async verifyOTP(email, code, purpose = 'register') {
-    try {
-      console.log('📤 Verifying OTP for:', email, 'purpose:', purpose);
-      const response = await fetch(`${API_BASE_URL}/api/auth/verify-otp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, code, purpose })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل التحقق');
-      return data;
-    } catch (error) {
-      console.error('❌ Verify OTP error:', error);
-      throw error;
-    }
-  },
-
-  async register(email, fullName, password) {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, fullName, password })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل إنشاء الحساب');
-      return data;
-    } catch (error) {
-      console.error('❌ Register error:', error);
-      throw error;
-    }
-  },
-
-  async resendOTP(email) {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/auth/resend-otp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل إعادة الإرسال');
-      return data;
-    } catch (error) {
-      console.error('❌ Resend OTP error:', error);
-      throw error;
-    }
-  },
-
-  // ============================================
-  // 👤 USER SERVICES
-  // ============================================
-  
-  async login(email, password) {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تسجيل الدخول');
-      if (data.token) {
-        localStorage.setItem('token', data.token);
-        localStorage.setItem('user', JSON.stringify(data.user));
-        localStorage.setItem('userType', 'user');
-      }
-      return data;
-    } catch (error) {
-      console.error('❌ Login error:', error);
-      throw error;
-    }
-  },
-
-  async forgotPassword(email) {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/auth/forgot-password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل إرسال رابط الاستعادة');
-      return data;
-    } catch (error) {
-      console.error('❌ Forgot password error:', error);
-      throw error;
-    }
-  },
-
-  async resetPassword(email, code, newPassword) {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/auth/reset-password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, code, newPassword, purpose: 'reset-password' })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل إعادة تعيين كلمة المرور');
-      return data;
-    } catch (error) {
-      console.error('❌ Reset password error:', error);
-      throw error;
-    }
-  },
-
-  async verifyToken(token) {
-    try {
-      if (!token) return { valid: false };
-      const parts = token.split('.');
-      if (parts.length !== 3) return { valid: false };
-      const payload = JSON.parse(atob(parts[1]));
-      const now = Date.now() / 1000;
-      if (payload.exp && payload.exp < now) return { valid: false, expired: true };
-      return { valid: true, user: payload };
-    } catch (error) {
-      console.error('❌ Token verification error:', error);
-      return { valid: false };
-    }
-  },
-
-  logout() {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    localStorage.removeItem('userType');
-    console.log('👋 Logged out successfully');
-  },
-
-  // ============================================
-  // 👤 USER PROFILE SERVICES
-  // ============================================
-
-  async getUserProfile(userId) {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/users/${userId}`, {
-        method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحميل الملف الشخصي');
-      return data;
-    } catch (error) {
-      console.error('❌ Get user profile error:', error);
-      throw error;
-    }
-  },
-
-  async updateUserProfile(userId, updates) {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/users/${userId}/profile`, {
-        method: 'PUT',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify(updates)
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحديث الملف الشخصي');
-      return data;
-    } catch (error) {
-      console.error('❌ Update profile error:', error);
-      throw error;
-    }
-  },
-
-  async uploadAvatar(userId, formData) {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/users/${userId}/avatar`, {
-        method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-        body: formData
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل رفع الصورة');
-      return data;
-    } catch (error) {
-      console.error('❌ Upload avatar error:', error);
-      throw error;
-    }
-  },
-
-  async deleteAvatar(userId) {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/users/${userId}/avatar`, {
-        method: 'DELETE',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل حذف الصورة');
-      return data;
-    } catch (error) {
-      console.error('❌ Delete avatar error:', error);
-      throw error;
-    }
-  },
-
-  // ============================================
-  // 📱 PHONE VERIFICATION (تم الإصلاح)
-  // ============================================
-
-  // ✅ إرسال OTP عبر الجوال مع إرسال userId و phone
-  async sendPhoneVerification(userId, phone) {
-    try {
-      const token = localStorage.getItem('token');
-      console.log('📤 Sending phone OTP for user:', userId, 'phone:', phone);
-      const response = await fetch(`${API_BASE_URL}/api/auth/send-phone-otp`, {
-        method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, phone })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل إرسال رمز التحقق');
-      return data;
-    } catch (error) {
-      console.error('❌ Send phone verification error:', error);
-      throw error;
-    }
-  },
-
-  // ✅ التحقق من OTP الجوال مع إرسال userId و phone و code
-  async verifyPhoneCode(userId, phone, code) {
-    try {
-      const token = localStorage.getItem('token');
-      console.log('📤 Verifying phone OTP for user:', userId, 'phone:', phone);
-      const response = await fetch(`${API_BASE_URL}/api/auth/verify-phone-otp`, {
-        method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, phone, code })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل التحقق');
-      return data;
-    } catch (error) {
-      console.error('❌ Verify phone code error:', error);
-      throw error;
-    }
-  },
-
-  async updatePhone(userId, phone) {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/auth/update-phone`, {
-        method: 'PUT',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحديث رقم الجوال');
-      return data;
-    } catch (error) {
-      console.error('❌ Update phone error:', error);
-      throw error;
-    }
-  },
-
-  // ============================================
-  // 🔐 CHANGE PASSWORD (تمت الإضافة)
-  // ============================================
-  async changePassword(userId, currentPassword, newPassword) {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/auth/change-password`, {
-        method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, currentPassword, newPassword })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تغيير كلمة المرور');
-      return data;
-    } catch (error) {
-      console.error('❌ Change password error:', error);
-      throw error;
-    }
-  },
-
-  // ============================================
-  // 🧑‍🏫 GUIDE SERVICES
-  // ============================================
-  
-  async guideRegister(formData) {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/guides/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fullName: formData.fullName,
-          civilId: formData.civilId,
-          licenseNumber: formData.licenseNumber,
-          email: formData.email,
-          phone: formData.phone,
-          experience: formData.experience || 0,
-          specialties: formData.specialties || '',
-          programLocation: formData.programLocation || null,
-          programLocationName: formData.programLocationName || '',
-          timestamp: new Date().toISOString(),
-          status: 'pending'
-        })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل إرسال طلب التسجيل');
-      return data;
-    } catch (error) {
-      console.error('❌ Guide registration error:', error);
-      throw error;
-    }
-  },
-
-  async guideLogin(licenseNumber, email, password) {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/guides/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ licenseNumber, email, password })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تسجيل الدخول');
-      if (data.token) {
-        localStorage.setItem('token', data.token);
-        localStorage.setItem('user', JSON.stringify(data.user));
-        localStorage.setItem('userType', 'guide');
-      }
-      return data;
-    } catch (error) {
-      console.error('❌ Guide login error:', error);
-      throw error;
-    }
-  },
-
-  async getGuideProfile(guideId, token) {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}`, {
-        method: 'GET',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحميل بيانات المرشد');
-      return data;
-    } catch (error) {
-      console.error('❌ Get guide profile error:', error);
-      throw error;
-    }
-  },
-
-  async updateGuideProfile(guideId, token, updates) {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}`, {
-        method: 'PUT',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(updates)
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحديث البيانات');
-      return data;
-    } catch (error) {
-      console.error('❌ Update guide profile error:', error);
-      throw error;
-    }
-  },
-
-  async getUpgradeStatus(userId) {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/guides/status/${userId}`, {
-        method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحميل الحالة');
-      return data;
-    } catch (error) {
-      console.error('❌ Get upgrade status error:', error);
-      throw error;
-    }
-  },
-
-  // ============================================
-  // 🎯 PROGRAM SERVICES (مع دعم الصورة الافتراضية)
-  // ============================================
-
-  // دالة مساعدة لتجهيز البرامج المسترجعة مع صور افتراضية
-  _processPrograms(programs) {
-    if (!Array.isArray(programs)) return [];
-    return programs.map(p => {
-      // معالجة الصور
-      let images = [];
-      if (p.images && Array.isArray(p.images) && p.images.length > 0) {
-        images = p.images
-          .map(img => {
-            const url = getImageUrl(img);
-            return url ? buildImageUrl(url) : null;
-          })
-          .filter(Boolean);
-      }
-      // إذا كانت الصور فارغة، نضيف الصورة الافتراضية
-      if (images.length === 0) {
-        images = [DEFAULT_IMAGE];
-      }
-      // التأكد من وجود حقل image (أول صورة)
-      const image = images[0] || DEFAULT_IMAGE;
-      return { ...p, images, image };
-    });
-  },
-
-  // حفظ البرامج في localStorage (نادراً ما يُستخدم)
-  saveProgramsToLocal(programs) {
-    try {
-      const dataStr = JSON.stringify(programs);
-      if (dataStr.length > 800 * 1024) {
-        console.warn('⚠️ Programs data too large, skipping localStorage save');
-        return false;
-      }
-      localStorage.setItem('local_programs', dataStr);
-      console.log('✅ Programs saved to localStorage:', programs.length);
-      return true;
-    } catch (error) {
-      if (error.name === 'QuotaExceededError') {
-        console.error('❌ localStorage quota exceeded, clearing old data...');
-        try {
-          localStorage.removeItem('local_programs');
-          const limited = programs.slice(-30);
-          localStorage.setItem('local_programs', JSON.stringify(limited));
-          console.log('✅ Saved last 30 programs after cleanup');
-        } catch (e) {
-          console.error('Failed to save even after cleanup');
+  const getImagesList = useMemo(() => {
+    const images = [];
+    if (program.images && Array.isArray(program.images) && program.images.length > 0) {
+      program.images.forEach(img => {
+        if (typeof img === 'string') {
+          const url = buildImageUrl(img);
+          if (url) images.push(url);
+        } else if (typeof img === 'object' && img !== null) {
+          const url = buildImageUrl(img.url || img.image_url || img);
+          if (url) images.push(url);
         }
-      } else {
-        console.error('❌ Error saving programs:', error);
-      }
-      return false;
+      });
     }
-  },
+    if (program.image && images.length === 0) {
+      const url = buildImageUrl(program.image);
+      if (url) images.push(url);
+    }
+    if (images.length === 0) {
+      images.push(DEFAULT_IMAGE);
+    }
+    return images;
+  }, [program.images, program.image]);
+  
+  const currentImage = getImagesList.length > 0 ? getImagesList[currentImageIndex] : DEFAULT_IMAGE;
+  const totalImages = getImagesList.length;
+  
+  const nextImage = (e) => {
+    e.stopPropagation();
+    if (totalImages > 1) {
+      setCurrentImageIndex((prev) => (prev + 1) % totalImages);
+      setImageError(false);
+    }
+  };
+  const prevImage = (e) => {
+    e.stopPropagation();
+    if (totalImages > 1) {
+      setCurrentImageIndex((prev) => (prev - 1 + totalImages) % totalImages);
+      setImageError(false);
+    }
+  };
+  
+  const distance = program.distance !== Infinity ? program.distance.toFixed(1) : null;
+  const cardBg = dark ? 'bg-gray-800' : 'bg-white';
+  const borderColor = dark ? 'border-gray-700' : 'border-gray-200';
+  const textColor = dark ? 'text-white' : 'text-gray-800';
 
-  getProgramsFromLocal() {
-    try {
-      const programs = localStorage.getItem('local_programs');
-      if (programs) {
-        const parsed = JSON.parse(programs);
-        console.log('📦 Programs loaded from localStorage:', parsed.length);
-        return parsed;
-      }
-    } catch (error) {
-      console.error('❌ Error loading programs:', error);
+  return (
+    <motion.div 
+      initial={{ opacity: 0, y: 20 }} 
+      animate={{ opacity: 1, y: 0 }} 
+      transition={{ duration: 0.3 }}
+      className={`${cardBg} rounded-xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 border ${borderColor}`}
+    >
+      <div className="relative w-full bg-gray-200 dark:bg-gray-700" style={{ minHeight: '200px', maxHeight: '280px' }}>
+        {loadingImage ? (
+          <div className="w-full h-full flex flex-col items-center justify-center text-gray-400 bg-gray-100 dark:bg-gray-700">
+            <FaSpinner className="animate-spin h-8 w-8" />
+            <span className="text-xs mt-1">{t('loadingImages')}</span>
+          </div>
+        ) : currentImage && !imageError ? (
+          <img 
+            key={`${program.id}-${currentImageIndex}-${currentImage}`}
+            src={currentImage} 
+            alt={program.name} 
+            className="w-full h-full object-cover hover:scale-105 transition-transform duration-500" 
+            style={{ minHeight: '200px', maxHeight: '280px' }} 
+            loading="lazy"
+            crossOrigin="anonymous"
+            onLoad={() => setLoadingImage(false)}
+            onError={() => {
+              setImageError(true);
+              setLoadingImage(false);
+              const updatedImages = getImagesList.map((img, idx) => 
+                idx === currentImageIndex ? DEFAULT_IMAGE : img
+              );
+              program.images = updatedImages;
+            }}
+          />
+        ) : (
+          <div className="w-full h-full flex flex-col items-center justify-center text-gray-400 bg-gray-100 dark:bg-gray-700">
+            <FaBoxOpen size={32} />
+            <span className="text-xs mt-1">{t('noImage')}</span>
+            <button 
+              onClick={() => {
+                setLoadingImage(true);
+                setImageError(false);
+                const fetchImages = async () => {
+                  try {
+                    const res = await fetch(`${API_BASE}/api/programs/${program.id}`);
+                    const data = await res.json();
+                    const prog = data.program || data.data || data;
+                    let images = [];
+                    if (prog?.images?.length) {
+                      images = prog.images.map(img => buildImageUrl(img.url || img.image_url)).filter(Boolean);
+                    } else if (prog?.image) {
+                      const url = buildImageUrl(prog.image);
+                      if (url) images = [url];
+                    }
+                    if (images.length > 0) {
+                      await saveProgramImages(program.id, images);
+                      const cached = getProgramImages(program.id);
+                      if (cached && cached.length > 0) {
+                        program.images = cached;
+                        setCurrentImageIndex(0);
+                        setImageError(false);
+                        setLoadingImage(false);
+                      }
+                    } else {
+                      program.images = [DEFAULT_IMAGE];
+                      setImageError(false);
+                      setLoadingImage(false);
+                    }
+                  } catch (e) {
+                    console.error('Failed to reload images:', e);
+                    setLoadingImage(false);
+                    setImageError(false);
+                    program.images = [DEFAULT_IMAGE];
+                  }
+                };
+                fetchImages();
+              }}
+              className="mt-2 text-xs text-green-600 hover:underline"
+            >
+              إعادة تحميل
+            </button>
+          </div>
+        )}
+        
+        {totalImages > 1 && !imageError && currentImage && (
+          <>
+            <button onClick={prevImage} className="absolute left-1 top-1/2 transform -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white p-1 rounded-full transition z-10 text-xs">❮</button>
+            <button onClick={nextImage} className="absolute right-1 top-1/2 transform -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white p-1 rounded-full transition z-10 text-xs">❯</button>
+            <div className="absolute top-1 right-1 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded-full z-10">
+              {currentImageIndex+1}/{totalImages}
+            </div>
+          </>
+        )}
+        
+        <div className="absolute top-2 left-2 bg-black/60 backdrop-blur-sm text-white text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1 z-10">
+          <span>{activity.icon}</span>
+          <span className="hidden sm:inline">{activity[lang]}</span>
+        </div>
+        
+        <button 
+          onClick={(e) => { e.stopPropagation(); onToggleFavorite(program.id); }}
+          className="absolute top-2 right-2 bg-black/40 backdrop-blur-sm p-1.5 rounded-full hover:bg-black/60 transition z-10"
+        >
+          <FaHeart size={14} className={isFavorite ? 'text-red-500' : 'text-white'} />
+        </button>
+        
+        <div className="absolute bottom-14 left-2 bg-black/60 backdrop-blur-sm text-white text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1 z-10">
+          <Star size={10} className="fill-yellow-400 text-yellow-400" />
+          <span>{program.rating || 4.5}</span>
+        </div>
+        
+        <div className="absolute bottom-14 right-2 bg-black/60 backdrop-blur-sm text-white text-xs font-bold px-2 py-0.5 rounded-full z-10">
+          {program.price} {t('price')}
+        </div>
+        
+        {distance && (
+          <div className="absolute bottom-7 left-2 bg-black/60 backdrop-blur-sm text-white text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1 z-10">
+            <Navigation size={10} /> {distance} {t('distance')}
+          </div>
+        )}
+        
+        <div className="absolute bottom-2 right-2 left-28 bg-black/60 backdrop-blur-sm text-white text-xs px-2 py-0.5 rounded-full truncate z-10">
+          {program.name}
+        </div>
+      </div>
+      
+      <div className="p-2">
+        <div className="flex items-center justify-between mb-1">
+          <h3 className={`text-sm font-bold ${textColor} truncate`}>{program.name}</h3>
+          <span className="text-[10px] text-gray-500 dark:text-gray-400">
+            {program.duration || 'غير محدد'}
+          </span>
+        </div>
+        
+        <div className="flex items-center gap-1 text-[10px] text-gray-500 dark:text-gray-400">
+          <MapPin size={10} />
+          <span className="truncate">{program.location_name || program.location || 'موقع البرنامج'}</span>
+        </div>
+        
+        <div className="flex gap-1.5 mt-2">
+          <button onClick={() => onView(program.id)} 
+                  className="flex-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 text-[10px] font-medium py-1.5 px-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition flex items-center justify-center gap-1">
+            <FaMapMarkedAlt size={10} /> {t('viewOnMap')}
+          </button>
+          <button onClick={() => onChat(program.guide_id, program.guide_name)} 
+                  className="flex-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 text-[10px] font-medium py-1.5 px-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition flex items-center justify-center gap-1">
+            <MessageCircle size={10} /> {t('chat')}
+          </button>
+          <button 
+            onClick={() => onBook(program)} 
+            disabled={isBooked}
+            className={`flex-1 text-[10px] font-medium py-1.5 px-2 rounded-lg transition flex items-center justify-center gap-1 ${
+              isBooked 
+                ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed' 
+                : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600'
+            }`}
+          >
+            {isBooked ? (
+              <>
+                <FaCheckCircle size={10} /> {t('alreadyBooked')}
+              </>
+            ) : (
+              <>
+                <CalendarCheck size={10} /> {t('book')}
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </motion.div>
+  );
+});
+
+// ===== الصفحة الرئيسية =====
+function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
+  const t = (key) => LOCALES[lang]?.[key] || key;
+
+  // ✅ حالات محلية لعرض اسم المستخدم وصورته (للتحديث الفوري)
+  const [localDisplayName, setLocalDisplayName] = useState(user?.fullName || user?.name || '');
+  const [localAvatar, setLocalAvatar] = useState(null);
+
+  const [allPrograms, setAllPrograms] = useState([]);
+  const [userLocation, setUserLocation] = useState(null);
+  const [userAccuracy, setUserAccuracy] = useState(null);
+  const [locationActive, setLocationActive] = useState(false);
+  const [manualMode, setManualMode] = useState(false);
+  const [locationStatus, setLocationStatus] = useState('idle');
+  const [locationSource, setLocationSource] = useState(null);
+  const [locationError, setLocationError] = useState(null);
+  const [favoriteIds, setFavoriteIds] = useState(() => {
+    if (user?.id) {
+      const saved = localStorage.getItem(`favorites_${user.id}`);
+      return saved ? JSON.parse(saved) : [];
     }
     return [];
-  },
+  });
 
-  // جلب برامج مرشد معين (مع إضافة الصور الافتراضية)
-  async getGuidePrograms(guideId, token, skipLocalSave = true) {
-    try {
-      console.log('📤 Fetching programs for guide:', guideId);
-      const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}/programs`, {
-        method: 'GET',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحميل البرامج');
-      
-      // معالجة البرامج وإضافة الصور الافتراضية
-      const processedPrograms = this._processPrograms(data.programs || data.data || []);
-      
-      if (!skipLocalSave && processedPrograms.length > 0 && processedPrograms.length < 50) {
-        const allPrograms = this.getProgramsFromLocal();
-        const otherPrograms = allPrograms.filter(p => p.guide_id !== guideId);
-        this.saveProgramsToLocal([...otherPrograms, ...processedPrograms]);
-      }
-      return { success: true, programs: processedPrograms, count: processedPrograms.length };
-    } catch (error) {
-      console.error('❌ Get programs error:', error);
-      return { success: false, programs: [], error: error.message };
+  // ✅ قراءة وضع العرض من localStorage
+  const getInitialShowAllMode = () => {
+    const stored = localStorage.getItem(SHOW_ALL_MODE_KEY);
+    if (stored !== null) {
+      return stored === 'true';
     }
-  },
+    return false; // افتراضياً: عرض القريبة فقط
+  };
 
-  // إضافة برنامج سياحي جديد (مع تخزين محلي محدود)
-  async addTourProgram(guideId, token, programData) {
+  const [showAllMode, setShowAllMode] = useState(getInitialShowAllMode);
+
+  const getBookedProgramIds = useCallback(() => {
+    if (!user?.id) return [];
+    const key = LOCAL_BOOKINGS_KEY(user.id);
+    const stored = localStorage.getItem(key);
+    if (!stored) return [];
     try {
-      console.log('📤 Adding program for guide:', guideId, programData);
-      const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}/programs`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(programData)
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل إضافة البرنامج');
-      return data;
-    } catch (error) {
-      console.error('❌ Add program error:', error);
-      return { success: false, error: error.message };
+      const bookings = JSON.parse(stored);
+      return bookings
+        .filter(b => b.status !== 'cancelled')
+        .map(b => b.program_id)
+        .filter(Boolean);
+    } catch {
+      return [];
     }
-  },
+  }, [user?.id]);
 
-  // تحديث حالة البرنامج (تفعيل/تعطيل)
-  async toggleProgramStatus(guideId, programId, token, status) {
-    try {
-      console.log('📤 Toggling program status:', { programId, status });
-      const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}/programs/${programId}`, {
-        method: 'PATCH',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحديث حالة البرنامج');
-      return data;
-    } catch (error) {
-      console.error('❌ Toggle program error:', error);
-      return { success: false, error: error.message };
+  const [bookedProgramIds, setBookedProgramIds] = useState(() => getBookedProgramIds());
+
+  const refreshBookedPrograms = useCallback(() => {
+    const ids = getBookedProgramIds();
+    setBookedProgramIds(ids);
+    console.log('🔄 تحديث الحجوزات (HomePage):', ids);
+  }, [getBookedProgramIds]);
+
+  useEffect(() => {
+    refreshBookedPrograms();
+    const handleFocus = () => refreshBookedPrograms();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refreshBookedPrograms();
+    };
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [refreshBookedPrograms]);
+
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [bookingLoading, setBookingLoading] = useState(false);
+  const [showScrollTop, setShowScrollTop] = useState(false);
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
+  const [isLocating, setIsLocating] = useState(false);
+  const [guidesMap, setGuidesMap] = useState({});
+  const isFetchingRef = useRef(false);
+  const contentRef = useRef(null);
+  const watchIdRef = useRef(null);
+  const locationTimeoutRef = useRef(null);
+  const retryCountRef = useRef(0);
+
+  const getUserAvatarUrl = useCallback(() => {
+    if (!user) return null;
+    if (user.avatar) return user.avatar.startsWith('http') ? user.avatar : `${API_BASE}${user.avatar}`;
+    if (user.avatar_url) return user.avatar_url.startsWith('http') ? user.avatar_url : `${API_BASE}${user.avatar_url}`;
+    return null;
+  }, [user]);
+
+  // ===== دوال تحديد الموقع =====
+  const updateUserLocationState = useCallback((lat, lng, accuracy, isManual = false) => {
+    if (!isValidLocation(lat, lng)) return false;
+    setUserLocation([lat, lng]);
+    setUserAccuracy(accuracy);
+    setLocationActive(true);
+    setLocationStatus('acquired');
+    setLocationSource(isManual ? 'manual' : 'gps');
+    if (isManual) {
+      localStorage.setItem('manual_user_location', JSON.stringify({ coords: [lng, lat], accuracy, timestamp: Date.now() }));
     }
-  },
+    return true;
+  }, []);
 
-  // جلب جميع البرامج للعرض العام (مع إضافة الصور الافتراضية)
-  async getAllPrograms(skipLocalSave = true) {
-    try {
-      console.log('📤 Fetching all programs');
-      const response = await fetch(`${API_BASE_URL}/api/programs`, {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' }
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحميل البرامج');
-      
-      const processedPrograms = this._processPrograms(data.programs || data.data || []);
-      return { success: true, programs: processedPrograms, count: processedPrograms.length };
-    } catch (error) {
-      console.error('❌ Get all programs error:', error);
-      return { success: false, programs: [], error: error.message };
+  const startAutoTracking = useCallback(() => {
+    if (manualMode) return;
+    if (!navigator.geolocation) {
+      setLocationStatus('error');
+      setLocationError(t('locationError'));
+      toast.error(t('locationError'), { duration: 4000 });
+      return;
     }
-  },
-
-  // حذف برنامج سياحي
-  async deleteProgram(guideId, programId, token) {
-    try {
-      console.log('📤 Deleting program:', programId);
-      const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}/programs/${programId}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل حذف البرنامج');
-      return data;
-    } catch (error) {
-      console.error('❌ Delete program error:', error);
-      return { success: false, error: error.message };
-    }
-  },
-
-  // ============================================
-  // ❤️ FAVORITES SERVICES
-  // ============================================
-
-  _getFavoritesKey() {
-    const userStr = localStorage.getItem('user');
-    if (!userStr) throw new Error('User not logged in');
-    const user = JSON.parse(userStr);
-    return `favorite_programs_user_${user.id}`;
-  },
-
-  async getFavorites() {
-    try {
-      const key = this._getFavoritesKey();
-      const stored = localStorage.getItem(key);
-      const favorites = stored ? JSON.parse(stored) : [];
-      return { success: true, favorites };
-    } catch (error) {
-      console.error('❌ Get favorites error:', error);
-      throw error;
-    }
-  },
-
-  async addFavorite(programId) {
-    try {
-      const key = this._getFavoritesKey();
-      const stored = localStorage.getItem(key);
-      let favorites = stored ? JSON.parse(stored) : [];
-      if (!favorites.includes(programId)) {
-        favorites.push(programId);
-        localStorage.setItem(key, JSON.stringify(favorites));
-      }
-      return { success: true, favorites };
-    } catch (error) {
-      console.error('❌ Add favorite error:', error);
-      throw error;
-    }
-  },
-
-  async removeFavorite(programId) {
-    try {
-      const key = this._getFavoritesKey();
-      const stored = localStorage.getItem(key);
-      let favorites = stored ? JSON.parse(stored) : [];
-      favorites = favorites.filter(id => id !== programId);
-      localStorage.setItem(key, JSON.stringify(favorites));
-      return { success: true, favorites };
-    } catch (error) {
-      console.error('❌ Remove favorite error:', error);
-      throw error;
-    }
-  },
-
-  // ============================================
-  // 🖼️ PROGRAM IMAGES SERVICES
-  // ============================================
-
-  async uploadProgramImages(programId, formData) {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/programs/${programId}/images`, {
-        method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-        body: formData
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل رفع الصور');
-      return data;
-    } catch (error) {
-      console.error('❌ Upload program images error:', error);
-      throw error;
-    }
-  },
-
-  async getProgramImages(programId) {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/programs/${programId}/images`, {
-        method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحميل الصور');
-      // ضمان وجود صورة افتراضية إذا كانت القائمة فارغة
-      if (!data.images || data.images.length === 0) {
-        data.images = [{ image_url: DEFAULT_IMAGE, is_primary: true }];
-      }
-      return data;
-    } catch (error) {
-      console.error('❌ Get program images error:', error);
-      return { success: false, images: [{ image_url: DEFAULT_IMAGE, is_primary: true }] };
-    }
-  },
-
-  async deleteProgramImage(programId, imageId) {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/programs/${programId}/images/${imageId}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل حذف الصورة');
-      return data;
-    } catch (error) {
-      console.error('❌ Delete program image error:', error);
-      throw error;
-    }
-  },
-
-  async setPrimaryProgramImage(programId, imageId) {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/programs/${programId}/images/${imageId}/primary`, {
-        method: 'PUT',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تعيين الصورة الرئيسية');
-      return data;
-    } catch (error) {
-      console.error('❌ Set primary image error:', error);
-      throw error;
-    }
-  },
-
-  // ============================================
-  // 🔧 GENERIC HTTP METHODS
-  // ============================================
-
-  async get(url, params = {}) {
-    try {
-      const token = localStorage.getItem('token');
-      const queryParams = new URLSearchParams(params).toString();
-      const fullUrl = `${API_BASE_URL}${url}${queryParams ? `?${queryParams}` : ''}`;
-      console.log('📤 GET request to:', fullUrl);
-      const response = await fetch(fullUrl, {
-        method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || `فشل الطلب (${response.status})`);
-      return { data };
-    } catch (error) {
-      console.error('❌ GET request error:', error);
-      throw error;
-    }
-  },
-
-  async post(url, data) {
-    try {
-      const token = localStorage.getItem('token');
-      const fullUrl = `${API_BASE_URL}${url}`;
-      console.log('📤 POST request to:', fullUrl);
-      const response = await fetch(fullUrl, {
-        method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-      const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || `فشل الطلب (${response.status})`);
-      return { data: responseData };
-    } catch (error) {
-      console.error('❌ POST request error:', error);
-      throw error;
-    }
-  },
-
-  async put(url, data) {
-    try {
-      const token = localStorage.getItem('token');
-      const fullUrl = `${API_BASE_URL}${url}`;
-      const response = await fetch(fullUrl, {
-        method: 'PUT',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-      const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || `فشل الطلب (${response.status})`);
-      return { data: responseData };
-    } catch (error) {
-      console.error('❌ PUT request error:', error);
-      throw error;
-    }
-  },
-
-  async delete(url) {
-    try {
-      const token = localStorage.getItem('token');
-      const fullUrl = `${API_BASE_URL}${url}`;
-      const response = await fetch(fullUrl, {
-        method: 'DELETE',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
-      });
-      const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || `فشل الطلب (${response.status})`);
-      return { data: responseData };
-    } catch (error) {
-      console.error('❌ DELETE request error:', error);
-      throw error;
-    }
-  },
-
-  // ============================================
-  // 🔔 NOTIFICATION SERVICES
-  // ============================================
-
-  async getUserNotifications(params = {}) {
-    try {
-      const token = localStorage.getItem('token');
-      const userStr = localStorage.getItem('user');
-      const user = userStr ? JSON.parse(userStr) : null;
-      let baseUrl = `${API_BASE_URL}/api/notifications`;
-      if (user?.role === 'admin' || user?.role === 'support') {
-        baseUrl = `${API_BASE_URL}/api/notifications/admin-grouped`;
-        console.log('🔍 [getUserNotifications] Admin detected, using grouped endpoint');
-      }
-      const queryParams = new URLSearchParams(params).toString();
-      const url = `${baseUrl}${queryParams ? `?${queryParams}` : ''}`;
-      console.log('🔍 [getUserNotifications] URL:', url);
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || `فشل تحميل الإشعارات (${response.status})`);
-      return data;
-    } catch (error) {
-      console.error('❌ Get notifications error:', error);
-      const localNotifications = localStorage.getItem('local_notifications');
-      return {
-        success: true,
-        notifications: localNotifications ? JSON.parse(localNotifications) : [],
-        fromLocal: true
-      };
-    }
-  },
-
-  async getNotificationStats() {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/notifications/stats`, {
-        method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحميل الإحصائيات');
-      return data;
-    } catch (error) {
-      console.error('❌ Get stats error:', error);
-      return { unreadCount: 0, totalCount: 0 };
-    }
-  },
-
-  async markNotificationAsRead(notificationId) {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/notifications/${notificationId}/read`, {
-        method: 'PUT',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحديث الإشعار');
-      return data;
-    } catch (error) {
-      console.error('❌ Mark as read error:', error);
-      return { success: true };
-    }
-  },
-
-  async markAllNotificationsAsRead() {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/notifications/read-all`, {
-        method: 'PUT',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحديث الإشعارات');
-      return data;
-    } catch (error) {
-      console.error('❌ Mark all as read error:', error);
-      return { success: true };
-    }
-  },
-
-  async deleteNotification(notificationId) {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/notifications/${notificationId}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل حذف الإشعار');
-      return data;
-    } catch (error) {
-      console.error('❌ Delete notification error:', error);
-      return { success: true };
-    }
-  },
-
-  async deleteMultipleNotifications(notificationIds) {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/notifications/delete-multiple`, {
-        method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notificationIds })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل حذف الإشعارات');
-      return data;
-    } catch (error) {
-      console.error('❌ Delete multiple error:', error);
-      return { success: true };
-    }
-  },
-
-  async replyToNotification(notificationId, message) {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/notifications/reply`, {
-        method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notificationId, message })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل إرسال الرد');
-      return data;
-    } catch (error) {
-      console.error('❌ Reply error:', error);
-      return { success: true };
-    }
-  },
-
-  async sendNotification(data) {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/notifications/send`, {
-        method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.message || 'فشل إرسال الإشعار');
-      return result;
-    } catch (error) {
-      console.error('❌ Send notification error:', error);
-      return { success: false, error: error.message };
-    }
-  },
-
-  async sendUserNotification(userId, title, message, type = 'info') {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/notifications/send`, {
-        method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, title, message, type })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل إرسال الإشعار');
-      return data;
-    } catch (error) {
-      console.error('❌ Send user notification error:', error);
-      return { success: false };
-    }
-  },
-
-  // ============================================
-  // 💬 CHAT SERVICES
-  // ============================================
-
-  async getUserConversations() {
-    try {
-      const token = localStorage.getItem('token');
-      if (!token) {
-        console.log('⚠️ No token found for getUserConversations');
-        return { success: false, conversations: [] };
-      }
-      console.log('📤 Fetching user conversations...');
-      const response = await fetch(`${API_BASE_URL}/api/chats`, {
-        method: 'GET',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        console.error('❌ Conversations error response:', data);
-        return { success: false, conversations: [], error: data.message };
-      }
-      return {
-        success: true,
-        conversations: data.conversations || data.data?.conversations || []
-      };
-    } catch (error) {
-      console.error('❌ Get conversations error:', error);
-      return { success: false, conversations: [], error: error.message };
-    }
-  },
-
-  async startSupportChat(data) {
-    if (typeof data === 'string') data = { subject: data, manual: false };
-    try {
-      const token = localStorage.getItem('token');
-      if (!token) throw new Error('No authentication token found');
-      console.log('📤 Starting support chat with data:', data);
-      const response = await fetch(`${API_BASE_URL}/api/chats/support`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-      const responseData = await response.json();
-      if (!response.ok) {
-        let errorMessage = responseData.message || 'فشل بدء محادثة الدعم';
-        if (errorMessage.includes('status') || errorMessage.includes('column')) {
-          errorMessage = 'خدمة الدعم الفني قيد التحديث، يرجى المحاولة لاحقاً';
-        }
-        throw new Error(errorMessage);
-      }
-      return responseData;
-    } catch (error) {
-      console.error('❌ Start support chat error:', error);
-      throw error;
-    }
-  },
-
-  async createConversation(participantId, type = 'direct', bookingId = null) {
-    try {
-      const token = localStorage.getItem('token');
-      if (!token) throw new Error('No authentication token found');
-      if (!participantId) throw new Error('معرف المستخدم غير صالح');
-      
-      const userStr = localStorage.getItem('touristAppUser') || localStorage.getItem('user');
-      const currentUser = userStr ? JSON.parse(userStr) : null;
-      let finalParticipantId = participantId;
-      
-      if (typeof participantId === 'string' && isNaN(Number(participantId))) {
-        try {
-          const guidesMap = await loadGuidesMap();
-          const numericId = guidesMap[participantId];
-          if (numericId) {
-            finalParticipantId = numericId;
-            console.log(`✅ Converted UUID ${participantId} to numeric ID ${numericId}`);
-          } else {
-            console.warn(`⚠️ Could not find numeric ID for UUID ${participantId}, will use as is (may fail)`);
+    if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
+    if (locationTimeoutRef.current) clearTimeout(locationTimeoutRef.current);
+    setIsLocating(true);
+    setLocationStatus('locating');
+    const loadingToast = toast.loading(t('locating'));
+    locationTimeoutRef.current = setTimeout(() => {
+      if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
+      setIsLocating(false);
+      setLocationStatus('error');
+      toast.dismiss(loadingToast);
+      toast.error(t('locationTimeout'), { duration: 4000 });
+    }, LOCATION_TIMEOUT);
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      (position) => {
+        const { latitude, longitude, accuracy } = position.coords;
+        if (!isValidLocation(latitude, longitude)) {
+          retryCountRef.current += 1;
+          if (retryCountRef.current <= MAX_RETRY_ATTEMPTS) return;
+          else {
+            setIsLocating(false);
+            setLocationStatus('error');
+            toast.dismiss(loadingToast);
+            toast.error(t('locationError'), { duration: 4000 });
+            if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
+            if (locationTimeoutRef.current) clearTimeout(locationTimeoutRef.current);
+            retryCountRef.current = 0;
           }
-        } catch (err) {
-          console.error('Error converting participant ID:', err);
+          return;
         }
-      } else {
-        finalParticipantId = Number(participantId);
-        if (isNaN(finalParticipantId)) throw new Error('معرف المستخدم غير صالح (ليس رقماً)');
-      }
-      
-      let validBookingId = null;
-      if (bookingId !== null && bookingId !== undefined) {
-        const numericBookingId = parseInt(bookingId, 10);
-        if (!isNaN(numericBookingId)) {
-          validBookingId = numericBookingId;
+        retryCountRef.current = 0;
+        if (locationTimeoutRef.current) clearTimeout(locationTimeoutRef.current);
+        const success = updateUserLocationState(latitude, longitude, accuracy, false);
+        if (success) {
+          setIsLocating(false);
+          setLocationStatus('acquired');
+          toast.dismiss(loadingToast);
+          if (accuracy <= MIN_ACCURACY_THRESHOLD) {
+            toast.success(lang === 'ar' ? `📍 دقة ${Math.round(accuracy)}م` : `📍 ${Math.round(accuracy)}m accuracy`, { duration: 2000 });
+          }
+        }
+      },
+      (error) => {
+        console.error('Geolocation error:', error);
+        toast.dismiss(loadingToast);
+        setIsLocating(false);
+        let errorMsg = t('locationError');
+        if (error.code === error.PERMISSION_DENIED) errorMsg = t('locationPermissionDenied');
+        else if (error.code === error.TIMEOUT) errorMsg = t('locationTimeout');
+        setLocationStatus('error');
+        setLocationError(errorMsg);
+        toast.error(errorMsg, { duration: 4000 });
+        if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
+        if (locationTimeoutRef.current) clearTimeout(locationTimeoutRef.current);
+      },
+      { enableHighAccuracy: true, maximumAge: 30000, timeout: 10000 }
+    );
+  }, [lang, t, manualMode, updateUserLocationState]);
+
+  // ===== دالة "تحديد" (تحديث الموقع وجلب البرامج) =====
+  const handleLocate = useCallback(() => {
+    if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
+    if (locationTimeoutRef.current) clearTimeout(locationTimeoutRef.current);
+    setUserLocation(null);
+    setLocationStatus('idle');
+    setLocationError(null);
+    retryCountRef.current = 0;
+    if (manualMode) setManualMode(false);
+    startAutoTracking();
+  }, [startAutoTracking, manualMode]);
+
+  // ===== دوال جلب البرامج =====
+  const fetchFullProgram = useCallback(async (id) => {
+    try {
+      const cachedImages = getProgramImages(id);
+      const res = await fetch(`${API_BASE}/api/programs/${id}`);
+      const data = await res.json();
+      const prog = data.program || data.data || data;
+      if (prog) {
+        let images = [];
+        if (cachedImages && cachedImages.length > 0) {
+          images = cachedImages;
         } else {
-          console.warn('⚠️ bookingId is not a valid integer, ignoring:', bookingId);
+          if (prog.images && prog.images.length > 0) {
+            images = prog.images.map(img => buildImageUrl(img.url || img.image_url || img)).filter(Boolean);
+          } else if (prog.image) {
+            const imgUrl = buildImageUrl(prog.image);
+            if (imgUrl) images = [imgUrl];
+          }
+          await saveProgramImages(id, images);
         }
+        let guide_avatar = null;
+        if (prog.guide_id && guidesMap[prog.guide_id]) guide_avatar = guidesMap[prog.guide_id].avatar;
+        else if (prog.guide_name && guidesMap[prog.guide_name]) guide_avatar = guidesMap[prog.guide_name].avatar;
+        return { ...prog, images: images.length > 0 ? images : [DEFAULT_IMAGE], guide_avatar, hasCachedImages: !!cachedImages };
       }
+    } catch(e) { console.error('Error fetching program:', e); }
+    return null;
+  }, [guidesMap]);
 
+  const fetchAllPrograms = useCallback(async () => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/programs`);
+      if (!res.ok) throw new Error('HTTP error');
+      const data = await res.json();
+      let list = [];
+      if (data.success && Array.isArray(data.programs)) list = data.programs;
+      else if (Array.isArray(data)) list = data;
+      else list = [];
+      const active = list.filter(p => (p.status || '').toLowerCase() === 'active');
+      const detailed = await Promise.all(active.map(p => fetchFullProgram(p.id).catch(() => p)));
+      setAllPrograms(detailed.filter(Boolean));
+      setInitialLoadDone(true);
+    } catch (err) {
+      console.error(err);
+      setError(t('connectionError'));
+    } finally {
+      setLoading(false);
+      isFetchingRef.current = false;
+    }
+  }, [fetchFullProgram, t]);
+
+  // ===== دوال التفاعل =====
+  const toggleFavorite = useCallback((id) => {
+    if (!user) {
+      toast.error(t('loginRequired'));
+      setPage('profile');
+      return;
+    }
+    const isFav = favoriteIds.includes(id);
+    const newFavs = isFav ? favoriteIds.filter(i => i !== id) : [...favoriteIds, id];
+    setFavoriteIds(newFavs);
+    toast.success(isFav ? t('removeFromFavorites') : t('addToFavorites'));
+  }, [user, favoriteIds, t, setPage]);
+
+  const handleChat = useCallback((guideId, guideName) => {
+    if (!user) {
+      toast.error(t('loginRequired'));
+      setPage('profile');
+      return;
+    }
+    if (String(guideId) === String(user.id)) {
+      toast.error(t('cannotChatOwn'));
+      return;
+    }
+    const chatParams = {
+      recipientId: guideId,
+      recipientName: guideName || 'المرشد',
+      timestamp: Date.now()
+    };
+    localStorage.setItem('directChatParams', JSON.stringify(chatParams));
+    toast.success(lang === 'ar' ? `تم فتح المحادثة مع ${guideName}` : `Chat opened with ${guideName}`);
+    setPage('directChat');
+  }, [user, t, setPage, lang]);
+
+  const handleBooking = useCallback(async (program) => {
+    if (!user) {
+      toast.error(t('loginRequired'));
+      setPage('profile');
+      return;
+    }
+    if (String(user.id) === String(program.guide_id)) {
+      toast.error(lang === 'ar' ? 'لا يمكنك حجز برنامجك الخاص' : 'You cannot book your own program');
+      return;
+    }
+    if (bookedProgramIds.includes(program.id)) {
+      toast.info(t('bookingExists'));
+      return;
+    }
+    setBookingLoading(true);
+    try {
+      const token = localStorage.getItem('token');
       const payload = {
-        participantId: finalParticipantId,
-        type,
-        userId: currentUser?.id,
-        ...(validBookingId !== null && { bookingId: validBookingId })
+        user_id: user.id,
+        subject: `طلب حجز: ${program.name}`,
+        type: 'booking',
+        priority: 'normal',
+        message: `أود حجز البرنامج "${program.name}" للمرشد ${program.guide_name}`,
+        metadata: {
+          program_id: program.id,
+          program_name: program.name,
+          guide_id: program.guide_id,
+          guide_name: program.guide_name,
+          tourist_id: user.id,
+          tourist_name: user.name || user.fullName,
+          is_booking: true,
+          created_from: 'home_page'
+        }
       };
-
-      console.log('📤 Creating conversation with payload:', payload);
-      const response = await fetch(`${API_BASE_URL}/api/chats`, {
+      const res = await fetch(`${API_BASE}/api/support/tickets`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token && { Authorization: `Bearer ${token}` })
+        },
         body: JSON.stringify(payload)
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل إنشاء المحادثة');
-      return data;
-    } catch (error) {
-      console.error('❌ Create conversation error:', error);
-      throw error;
+      const result = await res.json();
+      if (result.success) {
+        toast.success(t('requestSent'));
+        const localBooking = {
+          id: Date.now(),
+          user_id: user.id,
+          program_id: program.id,
+          program_name: program.name,
+          program_price: program.price,
+          created_at: new Date().toISOString(),
+          status: 'pending',
+          guide_id: program.guide_id
+        };
+        const key = LOCAL_BOOKINGS_KEY(user.id);
+        const existing = localStorage.getItem(key);
+        let bookings = existing ? JSON.parse(existing) : [];
+        bookings.push(localBooking);
+        localStorage.setItem(key, JSON.stringify(bookings));
+        refreshBookedPrograms();
+      } else {
+        toast.error(result.message || t('bookingFailed'));
+      }
+    } catch(e) {
+      console.error('Booking error:', e);
+      toast.error(lang === 'ar' ? 'حدث خطأ' : 'Error');
+    } finally {
+      setBookingLoading(false);
     }
-  },
+  }, [user, t, setPage, lang, bookedProgramIds, refreshBookedPrograms]);
 
-  async getConversationMessages(conversationId, page = 1, limit = 50) {
-    try {
-      const token = localStorage.getItem('token');
-      if (!token) throw new Error('No authentication token found');
-      const response = await fetch(
-        `${API_BASE_URL}/api/chats/${conversationId}/messages?page=${page}&limit=${limit}`,
-        {
-          method: 'GET',
-          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
-        }
-      );
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحميل الرسائل');
-      return data;
-    } catch (error) {
-      console.error('❌ Get messages error:', error);
-      throw error;
-    }
-  },
+  const handleViewOnMap = useCallback((id) => {
+    localStorage.setItem('selectedProgramId', String(id));
+    setPage('explore');
+  }, [setPage]);
 
-  async sendTextMessage(chatId, content) {
-    try {
-      const token = localStorage.getItem('token');
-      if (!token) throw new Error('No authentication token found');
-      const response = await fetch(`${API_BASE_URL}/api/chats/message/text`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chatId, content })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل إرسال الرسالة');
-      return data;
-    } catch (error) {
-      console.error('❌ Send message error:', error);
-      throw error;
-    }
-  },
+  // ===== دالة تبديل وضع العرض مع المزامنة =====
+  const toggleDisplayMode = useCallback(() => {
+    const newMode = !showAllMode;
+    setShowAllMode(newMode);
+    localStorage.setItem(SHOW_ALL_MODE_KEY, String(newMode));
+    // إرسال حدث مخصص لإعلام المكونات الأخرى (مثل ExplorePage) بالتغيير
+    window.dispatchEvent(new CustomEvent('showAllModeChanged', { detail: { showAllMode: newMode } }));
+  }, [showAllMode]);
 
-  async sendImageMessage(formData, onProgress) {
-    try {
-      const token = localStorage.getItem('token');
-      if (!token) throw new Error('No authentication token found');
-      const response = await fetch(`${API_BASE_URL}/api/chats/message/image`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
-        body: formData
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل إرسال الصورة');
-      return data;
-    } catch (error) {
-      console.error('❌ Send image error:', error);
-      throw error;
-    }
-  },
+  const displayedPrograms = useMemo(() => {
+    if (!userLocation || allPrograms.length === 0) return [];
+    const withDist = allPrograms.map(p => {
+      let dist = Infinity;
+      if (p.location_lat && p.location_lng) {
+        dist = getDistance(userLocation[0], userLocation[1], p.location_lat, p.location_lng);
+      }
+      return { ...p, distance: dist };
+    });
+    withDist.sort((a, b) => a.distance - b.distance);
+    const nearby = withDist.filter(p => p.distance <= NEARBY_RADIUS_KM);
+    return showAllMode ? withDist : nearby;
+  }, [allPrograms, userLocation, showAllMode]);
 
-  async sendFileMessage(formData) {
-    try {
-      const token = localStorage.getItem('token');
-      if (!token) throw new Error('No authentication token found');
-      const response = await fetch(`${API_BASE_URL}/api/chats/message/file`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
-        body: formData
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل إرسال الملف');
-      return data;
-    } catch (error) {
-      console.error('❌ Send file error:', error);
-      throw error;
-    }
-  },
+  // ===== تأثيرات =====
+  useEffect(() => {
+    if (userLocation && !initialLoadDone && !isFetchingRef.current) fetchAllPrograms();
+  }, [userLocation, initialLoadDone, fetchAllPrograms]);
 
-  async rateConversation(conversationId, rating) {
-    try {
-      const token = localStorage.getItem('token');
-      if (!token) throw new Error('No authentication token found');
-      const response = await fetch(`${API_BASE_URL}/api/chats/${conversationId}/rate`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rating })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل إرسال التقييم');
-      return data;
-    } catch (error) {
-      console.error('❌ Rate conversation error:', error);
-      throw error;
-    }
-  },
+  useEffect(() => {
+    if (user?.id) localStorage.setItem(`favorites_${user.id}`, JSON.stringify(favoriteIds));
+  }, [favoriteIds, user]);
 
-  async markMessageAsRead(messageId) {
-    try {
-      const token = localStorage.getItem('token');
-      if (!token) throw new Error('No authentication token found');
-      const response = await fetch(`${API_BASE_URL}/api/chats/message/${messageId}/read`, {
-        method: 'PUT',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحديث حالة القراءة');
-      return data;
-    } catch (error) {
-      console.error('❌ Mark as read error:', error);
-      throw error;
-    }
-  },
-
-  // ============================================
-  // 🎫 SUPPORT TICKETS
-  // ============================================
-
-  async createSupportTicket(data) {
-    try {
-      const token = localStorage.getItem('token');
-      console.log('📤 Creating support ticket with data:', data);
-      const response = await fetch(`${API_BASE_URL}/api/support/tickets`, {
-        method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-      const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || 'فشل إنشاء تذكرة الدعم');
-      return responseData;
-    } catch (error) {
-      console.error('❌ Create support ticket error:', error);
-      return this.createLocalTicket(data);
-    }
-  },
-
-  async getSupportTickets(params = {}) {
-    try {
-      const token = localStorage.getItem('token');
-      const queryParams = new URLSearchParams(params).toString();
-      const url = `${API_BASE_URL}/api/support/tickets${queryParams ? `?${queryParams}` : ''}`;
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
-      });
-      const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || 'فشل تحميل التذاكر');
-      return responseData;
-    } catch (error) {
-      console.error('❌ Get support tickets error:', error);
-      return this.getLocalTickets(params);
-    }
-  },
-
-  async getSupportTicket(ticketId) {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/support/tickets/${ticketId}`, {
-        method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
-      });
-      const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || 'فشل تحميل التذكرة');
-      return responseData;
-    } catch (error) {
-      console.error('❌ Get support ticket error:', error);
-      return this.getLocalTicket(ticketId);
-    }
-  },
-
-  async sendSupportMessage(ticketId, message, attachments = []) {
-    try {
-      const token = localStorage.getItem('token');
-      console.log('📤 Sending support message to ticket:', ticketId);
-      const response = await fetch(`${API_BASE_URL}/api/support/tickets/${ticketId}/messages`, {
-        method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, attachments })
-      });
-      const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || 'فشل إرسال الرسالة');
-      return responseData;
-    } catch (error) {
-      console.error('❌ Send message error:', error);
-      return this.saveLocalMessage(ticketId, message);
-    }
-  },
-
-  async getSupportMessages(ticketId) {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/support/tickets/${ticketId}/messages`, {
-        method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
-      });
-      const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || 'فشل تحميل الرسائل');
-      return responseData;
-    } catch (error) {
-      console.error('❌ Get messages error:', error);
-      return this.getLocalMessages(ticketId);
-    }
-  },
-
-  async updateTicketStatus(ticketId, status) {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/support/tickets/${ticketId}/status`, {
-        method: 'PATCH',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status })
-      });
-      const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || 'فشل تحديث حالة التذكرة');
-      return responseData;
-    } catch (error) {
-      console.error('❌ Update ticket status error:', error);
-      throw error;
-    }
-  },
-
-  // ============================================
-  // 💾 LOCAL STORAGE FUNCTIONS (Fallback)
-  // ============================================
-
-  createLocalTicket(data) {
-    const userStr = localStorage.getItem('user');
-    const user = userStr ? JSON.parse(userStr) : null;
-    const newTicket = {
-      id: Date.now(),
-      user_id: user?.id || data.user_id,
-      user_name: user?.fullName || user?.name || 'مستخدم',
-      subject: data.subject || 'طلب دعم جديد',
-      type: data.type || 'general',
-      priority: data.priority || 'normal',
-      status: 'open',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-      fromLocal: true
+  useEffect(() => {
+    const fetchGuidesMap = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/api/guides`);
+        const data = await response.json();
+        let guidesList = [];
+        if (data && data.data && Array.isArray(data.data)) guidesList = data.data;
+        else if (data && Array.isArray(data)) guidesList = data;
+        else if (data && data.guides && Array.isArray(data.guides)) guidesList = data.guides;
+        else if (data && data.data && data.data.guides && Array.isArray(data.data.guides)) guidesList = data.data.guides;
+        const map = {};
+        guidesList.forEach(guide => {
+          const uuid = guide.id || guide.uuid;
+          const numericId = guide.old_id || guide.oldId;
+          const avatar = buildImageUrl(guide.avatar_url || guide.avatar);
+          const fullName = guide.full_name || guide.name;
+          if (uuid) map[uuid] = { id: numericId ? Number(numericId) : uuid, name: fullName, avatar };
+          if (fullName) map[fullName] = { id: numericId ? Number(numericId) : uuid, name: fullName, avatar };
+        });
+        setGuidesMap(map);
+      } catch (err) { console.error('Failed to fetch guides map:', err); }
     };
-    const ticketsKey = 'support_tickets_local';
-    const existingTickets = localStorage.getItem(ticketsKey);
-    let allTickets = existingTickets ? JSON.parse(existingTickets) : [];
-    allTickets.unshift(newTicket);
-    localStorage.setItem(ticketsKey, JSON.stringify(allTickets));
-    localStorage.setItem(`support_messages_${newTicket.id}`, JSON.stringify([]));
-    return { success: true, ticket: newTicket, fromLocal: true };
-  },
+    fetchGuidesMap();
+  }, []);
 
-  getLocalTickets(params = {}) {
-    const ticketsKey = 'support_tickets_local';
-    const tickets = localStorage.getItem(ticketsKey);
-    let allTickets = tickets ? JSON.parse(tickets) : [];
-    if (params.user_id) allTickets = allTickets.filter(t => t.user_id == params.user_id);
-    if (params.status) allTickets = allTickets.filter(t => t.status === params.status);
-    return { success: true, tickets: allTickets, fromLocal: true };
-  },
-
-  getLocalTicket(ticketId) {
-    const ticketsKey = 'support_tickets_local';
-    const tickets = localStorage.getItem(ticketsKey);
-    let allTickets = tickets ? JSON.parse(tickets) : [];
-    const ticket = allTickets.find(t => t.id == ticketId);
-    return { success: true, ticket: ticket || null, fromLocal: true };
-  },
-
-  getLocalMessages(ticketId) {
-    const messagesKey = `support_messages_${ticketId}`;
-    const messages = localStorage.getItem(messagesKey);
-    const allMessages = messages ? JSON.parse(messages) : [];
-    return { success: true, messages: allMessages, fromLocal: true };
-  },
-
-  saveLocalMessage(ticketId, message) {
-    const userStr = localStorage.getItem('user');
-    const user = userStr ? JSON.parse(userStr) : null;
-    const newMessage = {
-      id: Date.now(),
-      ticket_id: ticketId,
-      message: message,
-      is_from_user: true,
-      sender_name: user?.fullName || user?.name || 'أنت',
-      created_at: new Date().toISOString(),
-      status: 'sent',
-      fromLocal: true
+  useEffect(() => {
+    if (!user?.id) { setUnreadCount(0); return; }
+    const fetchUnreadCount = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${API_BASE}/api/notifications?status=unread&limit=1`, {
+          headers: { Authorization: token ? `Bearer ${token}` : '' }
+        });
+        const data = await res.json();
+        let count = 0;
+        if (data.success && data.pagination) count = data.pagination.total || 0;
+        else if (data.unreadCount !== undefined) count = data.unreadCount;
+        else if (data.data?.unreadCount !== undefined) count = data.data.unreadCount;
+        else if (Array.isArray(data.notifications)) count = data.notifications.filter(n => n.status === 'unread').length;
+        setUnreadCount(count);
+      } catch (err) { console.warn(err); }
     };
-    const messagesKey = `support_messages_${ticketId}`;
-    const existingMessages = localStorage.getItem(messagesKey);
-    let allMessages = existingMessages ? JSON.parse(existingMessages) : [];
-    allMessages.push(newMessage);
-    localStorage.setItem(messagesKey, JSON.stringify(allMessages));
-    const ticketsKey = 'support_tickets_local';
-    const existingTickets = localStorage.getItem(ticketsKey);
-    if (existingTickets) {
-      let allTickets = JSON.parse(existingTickets);
-      const ticketIndex = allTickets.findIndex(t => t.id == ticketId);
-      if (ticketIndex !== -1) {
-        allTickets[ticketIndex].updated_at = new Date().toISOString();
-        allTickets[ticketIndex].last_message = message;
-        localStorage.setItem(ticketsKey, JSON.stringify(allTickets));
-      }
-    }
-    return { success: true, message: newMessage, fromLocal: true };
-  },
+    fetchUnreadCount();
+    const interval = setInterval(fetchUnreadCount, 30000);
+    return () => clearInterval(interval);
+  }, [user]);
 
-  async createSupportChat(userId, userName, message) {
-    try {
-      const ticketResponse = await this.createSupportTicket({
-        user_id: userId,
-        subject: 'طلب دعم جديد',
-        type: 'general',
-        priority: 'normal'
-      });
-      if (ticketResponse.success) {
-        const ticketId = ticketResponse.ticket.id;
-        await this.sendSupportMessage(ticketId, message);
-        return ticketResponse;
+  useEffect(() => {
+    const handleScroll = () => {
+      if (contentRef.current) setShowScrollTop(contentRef.current.scrollTop > 300);
+    };
+    const container = contentRef.current;
+    if (container) {
+      container.addEventListener('scroll', handleScroll);
+      return () => container.removeEventListener('scroll', handleScroll);
+    }
+  }, []);
+
+  // ===== الاستماع لتغييرات localStorage من صفحات أخرى =====
+  useEffect(() => {
+    const handleStorageChange = (e) => {
+      if (e.key === SHOW_ALL_MODE_KEY) {
+        const newValue = e.newValue === 'true';
+        setShowAllMode(newValue);
       }
-    } catch (error) {
-      console.log('⚠️ Creating support chat locally');
-      const newTicket = this.createLocalTicket({
-        user_id: userId,
-        subject: 'طلب دعم جديد',
-        type: 'general',
-        priority: 'normal'
-      });
-      if (newTicket.success) {
-        this.saveLocalMessage(newTicket.ticket.id, message);
-        try {
-          await this.sendNotification({
-            userId: 3,
-            title: '🆕 طلب دعم جديد',
-            message: `${userName} يحتاج إلى مساعدة`,
-            type: 'support',
-            action_url: `/support/chats/${newTicket.ticket.id}`,
-            data: {
-              ticketId: newTicket.ticket.id,
-              userId: userId,
-              userName: userName,
-              message: message
-            }
-          });
-        } catch (notifError) {
-          console.log('Could not send notification to admin');
+    };
+    const handleCustomEvent = (e) => {
+      if (e.detail && typeof e.detail.showAllMode === 'boolean') {
+        setShowAllMode(e.detail.showAllMode);
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('showAllModeChanged', handleCustomEvent);
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('showAllModeChanged', handleCustomEvent);
+    };
+  }, []);
+
+  // ===== تحديد الموقع التلقائي عند التحميل =====
+  useEffect(() => {
+    const savedLocation = localStorage.getItem('manual_user_location');
+    if (savedLocation) {
+      try {
+        const data = JSON.parse(savedLocation);
+        if (data.coords && data.coords.length === 2) {
+          const lng = data.coords[0];
+          const lat = data.coords[1];
+          if (isValidLocation(lat, lng)) {
+            updateUserLocationState(lat, lng, data.accuracy || 50, true);
+            setManualMode(true);
+            setLocationStatus('acquired');
+            return;
+          } else localStorage.removeItem('manual_user_location');
+        } else localStorage.removeItem('manual_user_location');
+      } catch(e) { localStorage.removeItem('manual_user_location'); }
+    }
+    startAutoTracking();
+  }, []);
+
+  // ===== تنظيف المؤقتات =====
+  useEffect(() => {
+    return () => {
+      if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
+      if (locationTimeoutRef.current) clearTimeout(locationTimeoutRef.current);
+    };
+  }, []);
+
+  // ===== 🎯 مستمع لتحديث الملف الشخصي (profileUpdated) =====
+  useEffect(() => {
+    // تحديث القيم المحلية عند تغير user من السياق
+    if (user) {
+      setLocalDisplayName(user.fullName || user.name || '');
+      setLocalAvatar(getUserAvatarUrl());
+    }
+  }, [user, getUserAvatarUrl]);
+
+  useEffect(() => {
+    const handleProfileUpdate = (e) => {
+      const { userId, updatedData } = e.detail;
+      // إذا كان التحديث يخص المستخدم الحالي
+      if (userId === user?.id) {
+        console.log('📢 [HomePage] Profile updated for user:', userId, updatedData);
+        // تحديث الاسم المعروض
+        if (updatedData.fullName || updatedData.name) {
+          setLocalDisplayName(updatedData.fullName || updatedData.name);
         }
+        // تحديث الصورة إذا وجدت
+        if (updatedData.avatar_url) {
+          const avatarUrl = updatedData.avatar_url.startsWith('http') 
+            ? updatedData.avatar_url 
+            : `${API_BASE}${updatedData.avatar_url}`;
+          setLocalAvatar(avatarUrl);
+        } else if (updatedData.avatar_url === null) {
+          setLocalAvatar(null);
+        }
+        // اختيارياً: تحديث السياق إذا لزم الأمر (يمكن تركه للـ AuthContext)
+        toast.success(lang === 'ar' ? '✅ تم تحديث الملف الشخصي' : '✅ Profile updated');
       }
-      return newTicket;
-    }
-  },
+    };
+    window.addEventListener('profileUpdated', handleProfileUpdate);
+    return () => window.removeEventListener('profileUpdated', handleProfileUpdate);
+  }, [user?.id, lang]);
 
-  // ============================================
-  // 📢 ADMIN NOTIFICATIONS
-  // ============================================
+  const ScrollTopButton = useMemo(() => {
+    if (!showScrollTop) return null;
+    return (
+      <button onClick={() => contentRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}
+        className="fixed bottom-20 left-4 bg-green-600 text-white p-3 rounded-full shadow-lg hover:bg-green-700 transition z-50">
+        <FaArrowUp size={18} />
+      </button>
+    );
+  }, [showScrollTop]);
 
-  async getAdminNotifications(params = {}) {
-    try {
-      const token = localStorage.getItem('token');
-      const queryParams = new URLSearchParams(params).toString();
-      const url = `${API_BASE_URL}/api/admin/notifications${queryParams ? `?${queryParams}` : ''}`;
-      console.log('🔍 [getAdminNotifications] URL:', url);
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحميل إشعارات المسؤول');
-      return data;
-    } catch (error) {
-      console.error('❌ Get admin notifications error:', error);
-      return { success: false, notifications: [], unreadCount: 0, error: error.message };
-    }
-  },
-
-  async markAdminNotificationAsRead(notificationId) {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/admin/notifications/${notificationId}/read`, {
-        method: 'PUT',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحديث الإشعار');
-      return data;
-    } catch (error) {
-      console.error('❌ Mark admin notification as read error:', error);
-      return { success: true };
-    }
-  },
-
-  async deleteAdminNotification(notificationId) {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/admin/notifications/${notificationId}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل حذف الإشعار');
-      return data;
-    } catch (error) {
-      console.error('❌ Delete admin notification error:', error);
-      return { success: true };
-    }
-  },
-
-  async archiveAdminNotification(notificationId) {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/admin/notifications/${notificationId}/archive`, {
-        method: 'PUT',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل أرشفة الإشعار');
-      return data;
-    } catch (error) {
-      console.error('❌ Archive admin notification error:', error);
-      return { success: true };
-    }
-  },
-
-  // ============================================
-  // 📝 UPGRADE REQUESTS
-  // ============================================
-
-  async createUpgradeRequest(data) {
-    try {
-      const token = localStorage.getItem('token');
-      console.log('📤 Creating upgrade request with data:', data);
-      const response = await fetch(`${API_BASE_URL}/api/upgrade-requests`, {
-        method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-      const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || 'فشل إنشاء طلب الترقية');
-      return responseData;
-    } catch (error) {
-      console.error('❌ Create upgrade request error:', error);
-      throw error;
-    }
-  },
-
-  async getUpgradeRequests(params = {}) {
-    try {
-      const token = localStorage.getItem('token');
-      const queryParams = new URLSearchParams(params).toString();
-      const url = `${API_BASE_URL}/api/upgrade-requests${queryParams ? `?${queryParams}` : ''}`;
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
-      });
-      const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || 'فشل تحميل طلبات الترقية');
-      return responseData;
-    } catch (error) {
-      console.error('❌ Get upgrade requests error:', error);
-      throw error;
-    }
-  },
-
-  async approveUpgradeRequest(requestId, adminNotes = '') {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/upgrade-requests/${requestId}/approve`, {
-        method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ adminNotes })
-      });
-      const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || 'فشل الموافقة على الطلب');
-      return responseData;
-    } catch (error) {
-      console.error('❌ Approve upgrade request error:', error);
-      throw error;
-    }
-  },
-
-  async rejectUpgradeRequest(requestId, reason) {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/upgrade-requests/${requestId}/reject`, {
-        method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason })
-      });
-      const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || 'فشل رفض الطلب');
-      return responseData;
-    } catch (error) {
-      console.error('❌ Reject upgrade request error:', error);
-      throw error;
-    }
-  },
-
-  async getUserUpgradeRequestStatus() {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/upgrade-requests/my-status`, {
-        method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
-      });
-      const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || 'فشل تحميل حالة الطلب');
-      return responseData;
-    } catch (error) {
-      console.error('❌ Get upgrade request status error:', error);
-      throw error;
-    }
-  },
-
-  async upgradeToGuide(formData) {
-    try {
-      const token = localStorage.getItem('token');
-      console.log('📤 Sending upgrade request to /api/upgrade/upgrade-requests');
-      const response = await fetch(`${API_BASE_URL}/api/upgrade/upgrade-requests`, {
-        method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-        body: formData
-      });
-      const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || 'فشل إرسال طلب الترقية');
-      return responseData;
-    } catch (error) {
-      console.error('❌ Upgrade request error:', error);
-      throw error;
-    }
+  if (!user) {
+    return (
+      <div className="h-full flex items-center justify-center bg-gray-50 dark:bg-gray-900">
+        <div className="text-center p-6 max-w-md">
+          <h2 className="text-2xl font-bold mb-2">{t('welcome')}</h2>
+          <p className="mb-4 text-gray-600 dark:text-gray-400">{t('loginRequired')}</p>
+          <button onClick={() => setPage('profile')} className="bg-green-600 text-white px-6 py-2 rounded-lg">
+            {lang === 'ar' ? 'تسجيل الدخول' : 'Login'}
+          </button>
+        </div>
+      </div>
+    );
   }
-};
 
-export default api;
+  const textColor = dark ? 'text-gray-100' : 'text-gray-900';
+  const bgColor = dark ? 'bg-gray-900' : 'bg-gray-50';
+
+  return (
+    <div ref={contentRef} className={`${bgColor} ${textColor} h-full overflow-y-auto pb-20`} dir="rtl">
+      {/* الهيدر */}
+      <div className="sticky top-0 z-20 bg-gradient-to-r from-green-500 to-emerald-600 text-white shadow-lg">
+        <div className="px-4 pt-4 pb-3">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-white/20 border-2 border-white/30 overflow-hidden flex-shrink-0">
+                {localAvatar ? (
+                  <img src={localAvatar} alt={localDisplayName} className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-white text-lg">
+                    {localDisplayName?.charAt(0) || '👤'}
+                  </div>
+                )}
+              </div>
+              <div>
+                <h1 className="font-bold text-base">{localDisplayName}</h1>
+                <p className="text-[10px] opacity-90 flex items-center gap-1">
+                  {locationStatus === 'locating' && <span className="animate-pulse text-yellow-200">⏳ {t('locating')}</span>}
+                  {locationStatus === 'acquired' && locationSource === 'gps' && (
+                    <span className="bg-blue-500/80 text-[8px] px-1.5 py-0.5 rounded-full mr-1">📍 GPS</span>
+                  )}
+                  {locationStatus === 'acquired' && locationSource === 'manual' && (
+                    <span className="bg-orange-500/80 text-[8px] px-1.5 py-0.5 rounded-full mr-1">📍 يدوي</span>
+                  )}
+                  {locationStatus === 'error' && (
+                    <span className="bg-red-500/80 text-[8px] px-1.5 py-0.5 rounded-full mr-1">⚠️ خطأ</span>
+                  )}
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-1.5">
+              <button onClick={() => setDark(!dark)} className="p-1.5 bg-white/20 rounded-full hover:bg-white/30 transition">
+                {dark ? <Sun size={16} /> : <Moon size={16} />}
+              </button>
+              <button onClick={() => setPage('notifications')} className="relative p-1.5 bg-white/20 rounded-full hover:bg-white/30 transition">
+                <Bell size={16} />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-[8px] rounded-full min-w-[16px] h-[16px] flex items-center justify-center px-1">
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                  </span>
+                )}
+              </button>
+            </div>
+          </div>
+          <div className="relative">
+            <Search className="absolute right-2.5 top-2 text-white/70" size={14} />
+            <input type="text" placeholder={t('search')} className="w-full p-2 pr-8 rounded-lg bg-white/20 backdrop-blur-sm text-white placeholder-white/70 border border-white/30 focus:outline-none focus:border-white focus:bg-white/30 transition text-sm" />
+          </div>
+        </div>
+      </div>
+
+      <div className="p-3">
+        {/* ✅ الأزرار العلوية المتوازية */}
+        <div className="mb-4 flex gap-2">
+          <button 
+            onClick={() => setPage('guides')} 
+            className={`flex-1 py-2.5 rounded-xl font-medium transition text-sm flex items-center justify-center gap-2 ${
+              showAllMode 
+                ? 'bg-cyan-600 text-white' 
+                : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
+            }`}
+          >
+            <Users size={18} />
+            <span>{t('guides')}</span>
+          </button>
+          <button 
+            onClick={toggleDisplayMode} 
+            className={`flex-1 py-2.5 rounded-xl font-medium transition text-sm flex items-center justify-center ${
+              showAllMode 
+                ? 'bg-cyan-600 text-white' 
+                : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
+            }`}
+          >
+            {showAllMode ? t('showNearby') : t('showAll')}
+          </button>
+          <button 
+            onClick={handleLocate} 
+            disabled={isLocating} 
+            className={`flex-1 py-2.5 rounded-xl font-medium transition text-sm flex items-center justify-center gap-1 ${
+              isLocating 
+                ? 'bg-gray-400 dark:bg-gray-600 text-gray-500 cursor-not-allowed' 
+                : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
+            }`}
+          >
+            <Crosshair size={16} />
+            <span>{t('locate')}</span>
+          </button>
+        </div>
+
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-bold text-gray-800 dark:text-white">{t('nearbyPrograms')}</h2>
+          <span className="text-[10px] text-gray-500 dark:text-gray-400">({displayedPrograms.length})</span>
+        </div>
+
+        {loading && !initialLoadDone && (
+          <div className="text-center py-10"><FaSpinner className="animate-spin h-8 w-8 text-green-600 mx-auto" /><p className="mt-2 text-sm text-gray-500 dark:text-gray-400">{t('loading')}</p></div>
+        )}
+        {error && (
+          <div className="text-center py-8 bg-red-50 dark:bg-red-900/20 rounded-xl">
+            <p className="text-red-600 dark:text-red-400 text-sm mb-2">{error}</p>
+            <button onClick={() => fetchAllPrograms()} className="text-green-600 dark:text-green-400 underline text-sm">{t('retry')}</button>
+          </div>
+        )}
+        {!loading && !error && !userLocation && locationStatus !== 'locating' && (
+          <div className="text-center py-10 bg-yellow-50 dark:bg-yellow-900/20 rounded-xl">
+            <FaMapMarkerAlt size={36} className="mx-auto text-yellow-500 mb-3" />
+            <p className="mb-3 text-sm text-gray-700 dark:text-gray-300">{t('noLocation')}</p>
+            <button onClick={startAutoTracking} className="bg-green-600 text-white px-4 py-1.5 rounded-lg text-sm">{t('getLocation')}</button>
+          </div>
+        )}
+        {locationStatus === 'locating' && (
+          <div className="text-center py-10 bg-blue-50 dark:bg-blue-900/20 rounded-xl">
+            <FaSpinner className="animate-spin h-8 w-8 text-blue-500 mx-auto" />
+            <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">{t('locating')}</p>
+          </div>
+        )}
+        {!loading && !error && userLocation && displayedPrograms.length === 0 && locationStatus === 'acquired' && (
+          <div className="text-center py-10 bg-gray-50 dark:bg-gray-800 rounded-xl">
+            <FaBoxOpen size={36} className="mx-auto text-gray-400" />
+            <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">{t('noPrograms')}</p>
+            {!showAllMode && <button onClick={toggleDisplayMode} className="mt-2 text-green-600 dark:text-green-400 underline text-sm">{t('viewAll')}</button>}
+          </div>
+        )}
+
+        <AnimatePresence>
+          {!loading && userLocation && displayedPrograms.length > 0 && locationStatus === 'acquired' && (
+            <div className="space-y-3">
+              {displayedPrograms.map((program) => (
+                <ProgramCard 
+                  key={program.id}
+                  program={program}
+                  lang={lang}
+                  onBook={handleBooking}
+                  onView={handleViewOnMap}
+                  onChat={handleChat}
+                  isFavorite={favoriteIds.includes(program.id)}
+                  onToggleFavorite={toggleFavorite}
+                  dark={dark}
+                  isBooked={bookedProgramIds.includes(program.id)}
+                />
+              ))}
+            </div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      {/* شريط التنقل السفلي */}
+      <div className="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 px-2 py-1.5 z-50">
+        <div className="flex justify-around items-center max-w-md mx-auto">
+          <button onClick={() => setPage('home')} className="flex flex-col items-center gap-0.5 text-green-600 dark:text-green-400">
+            <Home size={20} /><span className="text-[8px]">{t('home')}</span>
+          </button>
+          <button onClick={() => setPage('explore')} className="flex flex-col items-center gap-0.5 text-gray-500 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 transition">
+            <Compass size={20} /><span className="text-[8px]">{t('explore')}</span>
+          </button>
+          <button onClick={() => setPage('notifications')} className="relative flex flex-col items-center gap-0.5 text-gray-500 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 transition">
+            <Bell size={20} />
+            {unreadCount > 0 && <span className="absolute -top-1 -right-2 bg-red-500 text-white text-[8px] rounded-full w-4 h-4 flex items-center justify-center">{unreadCount > 99 ? '99+' : unreadCount}</span>}
+            <span className="text-[8px]">{t('notifications')}</span>
+          </button>
+          <button onClick={() => setPage('profile')} className="flex flex-col items-center gap-0.5 text-gray-500 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 transition">
+            <User size={20} /><span className="text-[8px]">{t('profile')}</span>
+          </button>
+        </div>
+      </div>
+      {ScrollTopButton}
+    </div>
+  );
+}
+
+export default HomePage;
