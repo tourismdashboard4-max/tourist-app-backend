@@ -3,6 +3,7 @@
 // ✅ زر "تحديد" بدلاً من رمز التحديث، مع وظيفة تحديث الموقع وجلب البرامج القريبة
 // ✅ مزامنة وضع العرض (القريبة/الكل) مع ExplorePage عبر localStorage
 // ✅ إضافة مستمع لحدث profileUpdated لتحديث الاسم والصورة فوراً عند تغيير الملف الشخصي
+// ✅ استخدام useAuth مباشرة بدلاً من prop user
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { 
@@ -17,6 +18,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
+import { useAuth } from '../contexts/AuthContext';
 
 const API_BASE = 'https://tourist-app-api.onrender.com';
 const NEARBY_RADIUS_KM = 245;
@@ -27,7 +29,7 @@ const MIN_ACCURACY_THRESHOLD = 200;
 const IMAGE_CACHE_KEY = 'guide_programs_images_cache';
 const LEGACY_IMAGE_KEY = (programId) => `program_images_${programId}`;
 const LOCAL_BOOKINGS_KEY = (userId) => `local_bookings_${userId}`;
-const SHOW_ALL_MODE_KEY = 'show_all_programs_mode'; // ✅ مفتاح التخزين الموحد
+const SHOW_ALL_MODE_KEY = 'show_all_programs_mode';
 
 // ===== صورة افتراضية مدمجة (SVG) =====
 const DEFAULT_IMAGE = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"%3E%3Crect width="400" height="300" fill="%2310b981"/%3E%3Ctext x="50%25" y="50%25" font-family="Arial" font-size="28" fill="white" text-anchor="middle" dy=".3em"%3ENo Image%3C/text%3E%3C/svg%3E';
@@ -505,10 +507,11 @@ const ProgramCard = React.memo(({ program, lang, onBook, onView, onChat, isFavor
 });
 
 // ===== الصفحة الرئيسية =====
-function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
+function HomePage({ lang = 'ar', setPage, dark, setDark }) {
+  const { user } = useAuth(); // ✅ استخدام السياق مباشرة
   const t = (key) => LOCALES[lang]?.[key] || key;
 
-  // ✅ حالات محلية لعرض اسم المستخدم وصورته (للتحديث الفوري)
+  // حالات محلية لعرض اسم المستخدم وصورته (للتحديث الفوري)
   const [localDisplayName, setLocalDisplayName] = useState(user?.fullName || user?.name || '');
   const [localAvatar, setLocalAvatar] = useState(null);
 
@@ -528,13 +531,13 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
     return [];
   });
 
-  // ✅ قراءة وضع العرض من localStorage
+  // قراءة وضع العرض من localStorage
   const getInitialShowAllMode = () => {
     const stored = localStorage.getItem(SHOW_ALL_MODE_KEY);
     if (stored !== null) {
       return stored === 'true';
     }
-    return false; // افتراضياً: عرض القريبة فقط
+    return false;
   };
 
   const [showAllMode, setShowAllMode] = useState(getInitialShowAllMode);
@@ -860,7 +863,6 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
     const newMode = !showAllMode;
     setShowAllMode(newMode);
     localStorage.setItem(SHOW_ALL_MODE_KEY, String(newMode));
-    // إرسال حدث مخصص لإعلام المكونات الأخرى (مثل ExplorePage) بالتغيير
     window.dispatchEvent(new CustomEvent('showAllModeChanged', { detail: { showAllMode: newMode } }));
   }, [showAllMode]);
 
@@ -995,26 +997,23 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
     };
   }, []);
 
-  // ===== 🎯 مستمع لتحديث الملف الشخصي (profileUpdated) =====
+  // ===== 🎯 تحديث الاسم والصورة عند تغير user من السياق =====
   useEffect(() => {
-    // تحديث القيم المحلية عند تغير user من السياق
     if (user) {
       setLocalDisplayName(user.fullName || user.name || '');
       setLocalAvatar(getUserAvatarUrl());
     }
   }, [user, getUserAvatarUrl]);
 
+  // ===== 🎯 مستمع لتحديث الملف الشخصي (profileUpdated) =====
   useEffect(() => {
     const handleProfileUpdate = (e) => {
       const { userId, updatedData } = e.detail;
-      // إذا كان التحديث يخص المستخدم الحالي
       if (userId === user?.id) {
         console.log('📢 [HomePage] Profile updated for user:', userId, updatedData);
-        // تحديث الاسم المعروض
         if (updatedData.fullName || updatedData.name) {
           setLocalDisplayName(updatedData.fullName || updatedData.name);
         }
-        // تحديث الصورة إذا وجدت
         if (updatedData.avatar_url) {
           const avatarUrl = updatedData.avatar_url.startsWith('http') 
             ? updatedData.avatar_url 
@@ -1023,7 +1022,6 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
         } else if (updatedData.avatar_url === null) {
           setLocalAvatar(null);
         }
-        // اختيارياً: تحديث السياق إذا لزم الأمر (يمكن تركه للـ AuthContext)
         toast.success(lang === 'ar' ? '✅ تم تحديث الملف الشخصي' : '✅ Profile updated');
       }
     };
@@ -1112,7 +1110,7 @@ function HomePage({ lang = 'ar', user, setPage, dark, setDark }) {
       </div>
 
       <div className="p-3">
-        {/* ✅ الأزرار العلوية المتوازية */}
+        {/* الأزرار العلوية المتوازية */}
         <div className="mb-4 flex gap-2">
           <button 
             onClick={() => setPage('guides')} 
