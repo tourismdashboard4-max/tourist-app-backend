@@ -1,5 +1,10 @@
 // client/src/contexts/AuthContext.jsx
-// ✅ النسخة النهائية - مع الحفاظ على إعدادات الثيم عند تسجيل الخروج ومنع إعادة التحميل بعد الخروج
+// ✅ النسخة النهائية - تم إصلاح مشكلة عودة الاسم القديم
+// ✅ استخدام setUser بالشكل الوظيفي (functional update)
+// ✅ منع التحديثات المتضاربة باستخدام isUpdatingRef
+// ✅ منع تحديث الاسم إذا لم يتغير فعلياً
+// ✅ منع إعادة تحميل المستخدم من localStorage بعد التحديث
+// ✅ جلب بيانات المستخدم الطازجة من الخادم بعد تسجيل الدخول لضمان التزامن
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import api from '../services/api';
@@ -22,53 +27,39 @@ export const AuthProvider = ({ children }) => {
   const [error, setError] = useState(null);
   const [initialized, setInitialized] = useState(false);
   
-  // ✅ إضافة ref لمنع إعادة تحميل المستخدم أثناء تسجيل الخروج
+  // refs لمنع التحديثات المتضاربة
   const isLoggingOutRef = useRef(false);
+  const isUpdatingRef = useRef(false);
+  const initialLoadDoneRef = useRef(false);
+  const lastUserNameRef = useRef('');
 
-  // ✅ دالة مساعدة لمسح كافة بيانات الجلسة مع الحفاظ على إعدادات الثيم
+  // دالة مساعدة لمسح كافة بيانات الجلسة مع الحفاظ على إعدادات الثيم
   const clearAllStorage = useCallback(() => {
-    // ✅ حفظ إعدادات الثيم قبل المسح
     const savedDarkMode = localStorage.getItem('darkMode');
     const savedAutoTheme = localStorage.getItem('autoTheme');
     
     const keysToRemove = [
-      'token',
-      'user',
-      'userType',
-      'touristAppUser',
-      'touristAppToken',
-      'selectedTicketId',
-      'selectedChatType',
-      'directChatParams',
-      'chatType',
-      'supportParams',
-      'forceTicketId',
-      'forceChatType'
+      'token', 'user', 'userType', 'touristAppUser', 'touristAppToken',
+      'selectedTicketId', 'selectedChatType', 'directChatParams',
+      'chatType', 'supportParams', 'forceTicketId', 'forceChatType'
     ];
     keysToRemove.forEach(key => localStorage.removeItem(key));
     
-    // مسح أي مفاتيح مؤقتة أو خاصة بالمحادثات
     Object.keys(localStorage).forEach(key => {
       if (key.startsWith('temp_') || key.startsWith('chat_') || key.startsWith('notif_')) {
         localStorage.removeItem(key);
       }
     });
     
-    // ✅ استعادة إعدادات الثيم
-    if (savedDarkMode !== null) {
-      localStorage.setItem('darkMode', savedDarkMode);
-      console.log('🎨 Dark mode preserved:', savedDarkMode);
-    }
-    if (savedAutoTheme !== null) {
-      localStorage.setItem('autoTheme', savedAutoTheme);
-      console.log('🎨 Auto theme preserved:', savedAutoTheme);
-    }
+    if (savedDarkMode !== null) localStorage.setItem('darkMode', savedDarkMode);
+    if (savedAutoTheme !== null) localStorage.setItem('autoTheme', savedAutoTheme);
   }, []);
 
-  // تحميل المستخدم من localStorage عند بدء التشغيل
+  // تحميل المستخدم من localStorage عند بدء التشغيل (مرة واحدة فقط)
   useEffect(() => {
+    if (initialLoadDoneRef.current) return;
+    
     const loadUserFromStorage = () => {
-      // ✅ إذا كنا في عملية تسجيل خروج، لا نعيد تحميل أي شيء
       if (isLoggingOutRef.current) {
         console.log('⏸️ Skipping loadUserFromStorage because logout in progress');
         setLoading(false);
@@ -77,26 +68,11 @@ export const AuthProvider = ({ children }) => {
       }
       
       try {
-        // ✅ حفظ الثيم قبل تحميل المستخدم
-        const savedDarkMode = localStorage.getItem('darkMode');
-        const savedAutoTheme = localStorage.getItem('autoTheme');
-        
         const storedUser = localStorage.getItem('user');
         const storedToken = localStorage.getItem('token');
-        const storedUserType = localStorage.getItem('userType');
-        
-        console.log('🔍 Loading from localStorage:', { 
-          hasUser: !!storedUser, 
-          hasToken: !!storedToken,
-          userType: storedUserType,
-          darkMode: savedDarkMode,
-          autoTheme: savedAutoTheme
-        });
         
         if (storedUser && storedToken) {
           const parsedUser = JSON.parse(storedUser);
-          
-          // ✅ تعيين isGuide بشكل صحيح
           const isGuide = parsedUser.role === 'guide' || 
                           parsedUser.type === 'guide' || 
                           parsedUser.isGuide === true ||
@@ -108,18 +84,11 @@ export const AuthProvider = ({ children }) => {
             guideVerified: parsedUser.guide_status === 'approved'
           };
           
-          console.log('✅ User loaded from storage:', { 
-            id: updatedUser.id, 
-            role: updatedUser.role, 
-            type: updatedUser.type,
-            isGuide: updatedUser.isGuide,
-            guide_status: updatedUser.guide_status
-          });
-          
+          console.log('✅ User loaded from storage:', { id: updatedUser.id, name: updatedUser.fullName || updatedUser.name });
           setUser(updatedUser);
           setToken(storedToken);
+          lastUserNameRef.current = updatedUser.fullName || updatedUser.name || '';
         } else {
-          console.log('ℹ️ No user data in localStorage');
           setUser(null);
           setToken(null);
         }
@@ -131,52 +100,157 @@ export const AuthProvider = ({ children }) => {
       } finally {
         setLoading(false);
         setInitialized(true);
+        initialLoadDoneRef.current = true;
       }
     };
 
     loadUserFromStorage();
-  }, [clearAllStorage]); // clearAllStorage مستقرة، لا مشكلة
+  }, [clearAllStorage]);
 
-  // الاستماع إلى أحداث التخزين من النوافذ الأخرى (لتسجيل الخروج المتزامن)
+  // الاستماع لتغييرات localStorage من النوافذ الأخرى (مع تجاهل التحديثات الذاتية)
   useEffect(() => {
     const handleStorageChange = (event) => {
-      // ✅ تجاهل الأحداث إذا كنا في عملية تسجيل خروج
-      if (isLoggingOutRef.current) return;
+      if (isLoggingOutRef.current || isUpdatingRef.current) return;
       
       if (event.key === 'token' && !event.newValue) {
-        // تم حذف التوكن من نافذة أخرى -> تسجيل خروج
         console.log('🔄 Token removed in another tab, logging out');
         setUser(null);
         setToken(null);
         toast.success('تم تسجيل الخروج من نافذة أخرى');
-      } else if (event.key === 'user' && !event.newValue) {
-        setUser(null);
+      } else if (event.key === 'user' && event.newValue) {
+        try {
+          const newUser = JSON.parse(event.newValue);
+          if (newUser && newUser.id === user?.id) {
+            const newName = newUser.fullName || newUser.name || '';
+            // فقط قم بتحديث إذا كان الاسم مختلفاً
+            if (newName !== lastUserNameRef.current) {
+              console.log('🔄 User updated from another tab:', newName);
+              setUser(newUser);
+              lastUserNameRef.current = newName;
+            }
+          }
+        } catch (e) {}
       }
     };
     window.addEventListener('storage', handleStorageChange);
     return () => window.removeEventListener('storage', handleStorageChange);
-  }, []);
+  }, [user?.id]);
 
-  // التحقق من صحة التوكن مع السيرفر (مرة واحدة بعد التحميل)
+  // التحقق من صحة التوكن مع السيرفر
   useEffect(() => {
     if (token && user && !loading && !isLoggingOutRef.current) {
-      verifyTokenWithServer();
+      const verify = async () => {
+        try {
+          const response = await api.verifyToken(token);
+          if (!response.valid) {
+            console.warn('⚠️ Token invalid, logging out');
+            logout();
+          } else {
+            console.log('✅ Token is valid');
+          }
+        } catch (error) {
+          console.error('Token verification error:', error);
+        }
+      };
+      verify();
     }
   }, [token, user, loading]);
 
-  const verifyTokenWithServer = async () => {
-    try {
-      const response = await api.verifyToken(token);
-      if (!response.valid) {
-        console.warn('⚠️ Token invalid, logging out');
-        logout();
-      } else {
-        console.log('✅ Token is valid');
-      }
-    } catch (error) {
-      console.error('Token verification error:', error);
+  // ============================================
+  // ⭐ دالة تحديث المستخدم (محسّنة - functional update)
+  // ============================================
+  const updateUser = useCallback((userData) => {
+    if (!userData) {
+      console.warn('⚠️ updateUser called with null/undefined');
+      return;
     }
-  };
+    
+    // منع التحديثات المتضاربة
+    if (isUpdatingRef.current) {
+      console.log('⏸️ Update already in progress, skipping');
+      return;
+    }
+    isUpdatingRef.current = true;
+    
+    try {
+      // استخدام functional update لضمان الحصول على أحدث قيمة للـ user
+      setUser((prevUser) => {
+        const currentUser = prevUser || {};
+        
+        // التحقق من عدم تغيير الاسم (لتجنب التحديثات غير الضرورية)
+        const newName = userData.fullName || userData.name || currentUser.fullName || currentUser.name || '';
+        const currentName = currentUser.fullName || currentUser.name || '';
+        
+        if (newName === currentName && Object.keys(userData).length === 1) {
+          console.log('⚠️ Skipping update: name unchanged');
+          return currentUser;
+        }
+        
+        // دمج البيانات مع التأكد من عدم فقدان الحقول المهمة
+        const updatedUser = {
+          ...currentUser,
+          ...userData,
+          // التأكد من تعيين isGuide بشكل صحيح
+          isGuide: userData.role === 'guide' || 
+                    userData.type === 'guide' || 
+                    userData.isGuide === true ||
+                    userData.guide_status === 'approved' ||
+                    currentUser.isGuide === true
+        };
+        
+        console.log('🔄 Updating user (functional):', { 
+          oldName: currentName, 
+          newName: updatedUser.fullName || updatedUser.name,
+          id: updatedUser.id 
+        });
+        
+        // تحديث localStorage فوراً
+        try {
+          localStorage.setItem('user', JSON.stringify(updatedUser));
+          
+          // إذا كان هناك تغيير في نوع المستخدم (مرشد/عادي)، تحديث userType
+          if (updatedUser.isGuide) {
+            localStorage.setItem('userType', 'guide');
+          } else {
+            localStorage.setItem('userType', 'user');
+          }
+          
+          // تحديث ref لتتبع آخر اسم تم حفظه
+          lastUserNameRef.current = updatedUser.fullName || updatedUser.name || '';
+          console.log('✅ User saved to localStorage:', lastUserNameRef.current);
+        } catch (storageError) {
+          console.error('❌ Failed to save user to localStorage:', storageError);
+        }
+        
+        return updatedUser;
+      });
+    } catch (error) {
+      console.error('❌ Failed to update user:', error);
+    } finally {
+      // إطلاق التحديث بعد فترة قصيرة
+      setTimeout(() => {
+        isUpdatingRef.current = false;
+        console.log('🔓 Update flags reset');
+      }, 200);
+    }
+  }, []);
+
+  // ============================================
+  // دالة مساعدة لجلب بيانات المستخدم الطازجة من الخادم
+  // ============================================
+  const fetchFreshUserData = useCallback(async (userId) => {
+    if (!userId) return null;
+    try {
+      const response = await api.getUserProfile(userId);
+      if (response.success && response.user) {
+        return response.user;
+      }
+      return null;
+    } catch (error) {
+      console.error('Failed to fetch fresh user data:', error);
+      return null;
+    }
+  }, []);
 
   // ============================================
   // تسجيل الدخول الموحد (للمستخدمين العاديين)
@@ -191,42 +265,51 @@ export const AuthProvider = ({ children }) => {
       console.log('📥 Login response:', response);
       
       if (response.success) {
-        const { token, user } = response;
+        const { token, user: userData } = response;
         
-        // ✅ تعيين isGuide
-        const isGuide = user.role === 'guide' || user.type === 'guide' || user.isGuide === true;
+        const isGuide = userData.role === 'guide' || userData.type === 'guide' || userData.isGuide === true;
         
-        const updatedUser = {
-          ...user,
+        let updatedUser = {
+          ...userData,
           isGuide: isGuide,
-          guideVerified: user.guide_status === 'approved'
+          guideVerified: userData.guide_status === 'approved'
         };
         
-        // التحقق من نوع المستخدم
         if (isGuide) {
           toast.error('هذا الحساب خاص بالمرشدين. يرجى استخدام بوابة دخول المرشدين');
           setLoading(false);
           return { success: false, message: 'هذا الحساب خاص بالمرشدين' };
         }
         
-        // ✅ حفظ الثيم قبل مسح البيانات
+        // ✅ جلب البيانات الطازجة من الخادم لضمان الحصول على أحدث الأسماء
+        const freshUser = await fetchFreshUserData(userData.id);
+        if (freshUser) {
+          console.log('🔄 Got fresh user data from server:', freshUser);
+          updatedUser = {
+            ...updatedUser,
+            fullName: freshUser.full_name || freshUser.fullName || freshUser.name || updatedUser.name,
+            name: freshUser.name || updatedUser.name,
+            avatar_url: freshUser.avatar_url || updatedUser.avatar_url,
+            phone: freshUser.phone || updatedUser.phone,
+            username: freshUser.username || updatedUser.username,
+          };
+        }
+        
         const savedDarkMode = localStorage.getItem('darkMode');
         const savedAutoTheme = localStorage.getItem('autoTheme');
         
-        // تنظيف أي بيانات قديمة
         clearAllStorage();
         
-        // ✅ استعادة الثيم
         if (savedDarkMode !== null) localStorage.setItem('darkMode', savedDarkMode);
         if (savedAutoTheme !== null) localStorage.setItem('autoTheme', savedAutoTheme);
         
-        // حفظ بيانات المستخدم العادي
         localStorage.setItem('token', token);
         localStorage.setItem('user', JSON.stringify(updatedUser));
         localStorage.setItem('userType', 'user');
         
         setToken(token);
         setUser(updatedUser);
+        lastUserNameRef.current = updatedUser.fullName || updatedUser.name || '';
         
         console.log('✅ User logged in:', updatedUser);
         toast.success(`مرحباً ${updatedUser.fullName || updatedUser.name || updatedUser.email}`);
@@ -247,7 +330,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   // ============================================
-  // تسجيل دخول المرشدين
+  // تسجيل دخول المرشدين (محسّن أيضاً)
   // ============================================
   const guideLogin = async (licenseNumber, email, password) => {
     try {
@@ -259,36 +342,44 @@ export const AuthProvider = ({ children }) => {
       console.log('📥 Guide login response:', response);
       
       if (response.success) {
-        const { token, user } = response;
+        const { token, user: userData } = response;
         
-        // ✅ تعيين isGuide
-        const isGuide = true;
-        
-        const updatedUser = {
-          ...user,
+        let updatedUser = {
+          ...userData,
           isGuide: true,
-          guideVerified: user.guide_status === 'approved',
+          guideVerified: userData.guide_status === 'approved',
           type: 'guide'
         };
         
-        // ✅ حفظ الثيم قبل مسح البيانات
+        // ✅ جلب البيانات الطازجة من الخادم
+        const freshUser = await fetchFreshUserData(userData.id);
+        if (freshUser) {
+          console.log('🔄 Got fresh guide data from server:', freshUser);
+          updatedUser = {
+            ...updatedUser,
+            fullName: freshUser.full_name || freshUser.fullName || freshUser.name || updatedUser.name,
+            name: freshUser.name || updatedUser.name,
+            avatar_url: freshUser.avatar_url || updatedUser.avatar_url,
+            phone: freshUser.phone || updatedUser.phone,
+            username: freshUser.username || updatedUser.username,
+          };
+        }
+        
         const savedDarkMode = localStorage.getItem('darkMode');
         const savedAutoTheme = localStorage.getItem('autoTheme');
         
-        // تنظيف أي بيانات قديمة
         clearAllStorage();
         
-        // ✅ استعادة الثيم
         if (savedDarkMode !== null) localStorage.setItem('darkMode', savedDarkMode);
         if (savedAutoTheme !== null) localStorage.setItem('autoTheme', savedAutoTheme);
         
-        // حفظ بيانات المرشد
         localStorage.setItem('token', token);
         localStorage.setItem('user', JSON.stringify(updatedUser));
         localStorage.setItem('userType', 'guide');
         
         setToken(token);
         setUser(updatedUser);
+        lastUserNameRef.current = updatedUser.fullName || updatedUser.name || '';
         
         console.log('✅ Guide logged in:', updatedUser);
         toast.success(`مرحباً المرشد ${updatedUser.fullName || updatedUser.name}`);
@@ -309,83 +400,38 @@ export const AuthProvider = ({ children }) => {
   };
 
   // ============================================
-  // تسجيل الخروج المُحسَّن - مع الحفاظ على الثيم ومنع إعادة التحميل
+  // تسجيل الخروج
   // ============================================
   const logout = useCallback(() => {
     console.log('👋 Logging out user:', user?.email || 'unknown');
     
-    // ✅ تعيين علامة لمنع أي محاولة لإعادة تحميل المستخدم أثناء الخروج
     isLoggingOutRef.current = true;
     
-    // ✅ حفظ إعدادات الثيم
     const savedDarkMode = localStorage.getItem('darkMode');
     const savedAutoTheme = localStorage.getItem('autoTheme');
     
-    console.log('🎨 Saving theme before logout:', { savedDarkMode, savedAutoTheme });
-    
-    // 1. مسح جميع التخزينات المحلية (مع الحفاظ على الثيم)
     clearAllStorage();
     
-    // 2. استعادة إعدادات الثيم
-    if (savedDarkMode !== null) {
-      localStorage.setItem('darkMode', savedDarkMode);
-    }
-    if (savedAutoTheme !== null) {
-      localStorage.setItem('autoTheme', savedAutoTheme);
-    }
+    if (savedDarkMode !== null) localStorage.setItem('darkMode', savedDarkMode);
+    if (savedAutoTheme !== null) localStorage.setItem('autoTheme', savedAutoTheme);
     
-    // 3. إعادة تعيين حالة React
     setToken(null);
     setUser(null);
+    lastUserNameRef.current = '';
     
-    // 4. إغلاق أي اتصالات WebSocket نشطة
     if (window.socket && typeof window.socket.disconnect === 'function') {
       window.socket.disconnect();
       window.socket = null;
     }
     
-    // 5. عرض رسالة للمستخدم
     toast.success('تم تسجيل الخروج بنجاح');
     
-    console.log('🎨 Theme after logout:', {
-      darkMode: localStorage.getItem('darkMode'),
-      autoTheme: localStorage.getItem('autoTheme')
-    });
-    
-    // 6. بعد فترة قصيرة، نسمح بإعادة التحميل (في حال حدث أي شيء آخر)
     setTimeout(() => {
       isLoggingOutRef.current = false;
       console.log('🔓 Logout flag reset, re-initialization allowed');
     }, 500);
     
   }, [clearAllStorage, user]);
-
-  // ============================================
-  // تحديث بيانات المستخدم
-  // ============================================
-  const updateUser = useCallback((userData) => {
-    const updatedUser = { ...user, ...userData };
-    
-    // ✅ تحديث isGuide بناءً على role
-    if (updatedUser.role === 'guide' || updatedUser.type === 'guide') {
-      updatedUser.isGuide = true;
-      updatedUser.guideVerified = updatedUser.guide_status === 'approved';
-      localStorage.setItem('userType', 'guide');
-    } else {
-      updatedUser.isGuide = false;
-      localStorage.setItem('userType', 'user');
-    }
-    
-    setUser(updatedUser);
-    localStorage.setItem('user', JSON.stringify(updatedUser));
-    
-    console.log('🔄 User updated:', { 
-      id: updatedUser.id, 
-      role: updatedUser.role, 
-      type: updatedUser.type,
-      isGuide: updatedUser.isGuide 
-    });
-  }, [user]);
 
   const value = {
     user,
@@ -402,7 +448,6 @@ export const AuthProvider = ({ children }) => {
     isUser: user?.type === 'user' || user?.type === 'tourist' || (!user?.isGuide && user?.role !== 'guide'),
   };
 
-  // للتشخيص
   console.log('🔄 AuthContext State:', {
     isAuthenticated: !!user,
     user: user ? { 
@@ -425,3 +470,5 @@ export const AuthProvider = ({ children }) => {
     </AuthContext.Provider>
   );
 };
+
+export default AuthContext;
