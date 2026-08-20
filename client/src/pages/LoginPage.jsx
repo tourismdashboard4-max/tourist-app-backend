@@ -1,5 +1,6 @@
 // client/src/pages/LoginPage.jsx - نظام تسجيل الدخول بالبريد الإلكتروني فقط
 // نسخة معدلة - تم إصلاح مشكلة تعدد الرموز وإضافة purpose إلى verifyOTP
+// ✅ تم إصلاح عملية "نسيت كلمة المرور" لاستخدام sendOTP بنفس نظام OTP الموحد
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Mail, Lock, User, Key, ArrowRight, CheckCircle, AlertCircle } from 'lucide-react';
@@ -265,6 +266,7 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
     }
   };
 
+  // ✅ تم تعديل هذه الدالة لاستخدام sendOTP بدلاً من forgotPassword
   const handleForgotPassword = async () => {
     // هذه الدالة الآن مخصصة فقط لخطوة إدخال البريد الإلكتروني (step 1)
     if (step !== 1) return;
@@ -280,8 +282,9 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
 
     setLoading(true);
     try {
-      console.log('🔄 Sending forgot password request for:', email);
-      const response = await api.forgotPassword(email);
+      console.log('🔄 Sending forgot password OTP for:', email);
+      // ✅ استخدام sendOTP مع purpose reset-password بدلاً من forgotPassword
+      const response = await api.sendOTP(email, 'reset-password');
       
       if (response.success) {
         setStep(2);
@@ -314,7 +317,8 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
     try {
       if (mode === 'forgot') {
         console.log('🔄 Resending forgot password OTP for:', email);
-        const response = await api.forgotPassword(email);
+        // ✅ استخدام sendOTP مع purpose reset-password بدلاً من forgotPassword
+        const response = await api.sendOTP(email, 'reset-password');
         if (response.success) {
           setSuccess(lang === 'ar' ? 'تم إرسال رمز جديد' : 'New code sent');
           setTimer(60);
