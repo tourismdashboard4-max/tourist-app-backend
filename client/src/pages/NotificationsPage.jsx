@@ -1,10 +1,14 @@
 // client/src/pages/NotificationsPage.jsx
-// ✅ الإصدار النهائي - يعرض المحادثات ويستقبل الإشعارات (تم إصلاح 403 وتحسين الاتصال)
+// ✅ الإصدار النهائي - إصلاح جلب أسماء المستخدمين من المعرفات UUID
+// ✅ إضافة: تحديث اسم المستخدم الآخر عند تغيير ملفه الشخصي
+// ✅ إضافة: تحويل المعرفات من UUID إلى رقمي قبل جلب البيانات
+// ✅ إضافة: استخدم خريطة GUIDES_MAP للمعرفات المعروفة
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   FaBell, FaSpinner, FaTrash, FaHeadset,
-  FaChevronLeft, FaComments, FaSyncAlt, FaClock
+  FaChevronLeft, FaComments, FaSyncAlt, FaClock,
+  FaRegSquare, FaCheckSquare
 } from 'react-icons/fa';
 import { RiAlarmWarningFill } from 'react-icons/ri';
 import { useLanguage } from '../contexts/LanguageContext';
@@ -17,6 +21,19 @@ const API_BASE = 'https://tourist-app-api.onrender.com';
 const SOCKET_URL = 'https://tourist-app-api.onrender.com';
 const DELETED_TICKETS_KEY = 'guide_deleted_tickets';
 
+// ✅ خريطة ثابتة للمعرفات المعروفة (UUID -> numeric ID)
+const GUIDES_MAP = {
+  '64be64ff-ae41-4eb0-a41f-27de577b6246': 6,
+  'd93beb84-4e67-4f64-bfe9-d20cc25f8b44': 1,
+};
+
+// ✅ خريطة عكسية (numeric ID -> name)
+const GUIDE_NAMES_MAP = {
+  6: 'محمد نسيب ١',
+  1: 'Regular User6',
+  4: 'مرشد سياحي',
+};
+
 const NotificationsPage = ({ setPage, onNotificationClick }) => {
   const { language } = useLanguage();
   const { user, isAuthenticated, loading: authLoading } = useAuth();
@@ -26,9 +43,14 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
   const [deletingId, setDeletingId] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
+  const [selectedChats, setSelectedChats] = useState(new Set());
+  const [isDeletingSelected, setIsDeletingSelected] = useState(false);
+
   const socketRef = useRef(null);
   const pollingRef = useRef(null);
   const lastMessageIdsRef = useRef(new Map());
+  const userDetailsCache = useRef(new Map());
+  const numericIdCache = useRef(new Map());
 
   const getDeletedTickets = () => {
     const stored = localStorage.getItem(DELETED_TICKETS_KEY);
@@ -42,6 +64,122 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
     fetchDirectChats(false);
   };
 
+  const addDeletedTickets = (ticketIds) => {
+    const current = getDeletedTickets();
+    ticketIds.forEach(id => current.add(String(id)));
+    localStorage.setItem(DELETED_TICKETS_KEY, JSON.stringify([...current]));
+    fetchDirectChats(false);
+  };
+
+  // ✅ تحويل UUID إلى معرف رقمي باستخدام الخريطة الثابتة أو API
+  const convertToNumericId = useCallback(async (userId) => {
+    if (!userId) return null;
+    
+    const stringId = String(userId);
+    
+    // 1. التحقق من الكاش
+    if (numericIdCache.current.has(stringId)) {
+      return numericIdCache.current.get(stringId);
+    }
+    
+    // 2. إذا كان رقمياً بالفعل
+    if (!isNaN(Number(stringId))) {
+      const numId = Number(stringId);
+      numericIdCache.current.set(stringId, numId);
+      return numId;
+    }
+    
+    // 3. التحقق من الخريطة الثابتة
+    if (GUIDES_MAP[stringId]) {
+      const numId = GUIDES_MAP[stringId];
+      numericIdCache.current.set(stringId, numId);
+      return numId;
+    }
+    
+    // 4. محاولة جلب المستخدم باستخدام المعرف UUID
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE}/api/users/${stringId}`, {
+        headers: { Authorization: token ? `Bearer ${token}` : '' }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.user) {
+          // إذا كان المستخدم يحتوي على old_id (معرف رقمي)
+          let numId = null;
+          if (data.user.old_id && !isNaN(Number(data.user.old_id))) {
+            numId = Number(data.user.old_id);
+          } else if (data.user.id && !isNaN(Number(data.user.id))) {
+            numId = Number(data.user.id);
+          }
+          if (numId) {
+            numericIdCache.current.set(stringId, numId);
+            // أيضاً نخزن تحت المعرف الرقمي
+            numericIdCache.current.set(String(numId), numId);
+            return numId;
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to convert user ID:', error);
+    }
+    
+    return null;
+  }, []);
+
+  // ✅ جلب تفاصيل المستخدم (الاسم) من الخادم باستخدام المعرف الرقمي
+  const fetchUserDetails = useCallback(async (userId) => {
+    if (!userId) return null;
+    
+    const cacheKey = String(userId);
+    
+    // 1. التحقق من الكاش
+    if (userDetailsCache.current.has(cacheKey)) {
+      return userDetailsCache.current.get(cacheKey);
+    }
+    
+    // 2. التحقق من خريطة الأسماء الثابتة (للمعرفات الرقمية المعروفة)
+    if (!isNaN(Number(cacheKey)) && GUIDE_NAMES_MAP[Number(cacheKey)]) {
+      const name = GUIDE_NAMES_MAP[Number(cacheKey)];
+      userDetailsCache.current.set(cacheKey, name);
+      return name;
+    }
+    
+    try {
+      // 3. تحويل المعرف إلى رقمي
+      const numericId = await convertToNumericId(userId);
+      if (!numericId) {
+        console.warn(`⚠️ Could not convert userId ${userId} to numeric`);
+        return null;
+      }
+      
+      // 4. جلب بيانات المستخدم باستخدام المعرف الرقمي
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE}/api/users/${numericId}`, {
+        headers: { Authorization: token ? `Bearer ${token}` : '' }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.user) {
+          const name = data.user.fullName || data.user.name || null;
+          if (name) {
+            // تخزين تحت جميع المفاتيح المحتملة
+            userDetailsCache.current.set(cacheKey, name);
+            userDetailsCache.current.set(String(numericId), name);
+            if (data.user.uuid) {
+              userDetailsCache.current.set(String(data.user.uuid), name);
+            }
+          }
+          return name;
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to fetch user details:', error);
+    }
+    return null;
+  }, [convertToNumericId]);
+
   // ✅ تحسين جلب آخر رسالة مع معالجة 403
   const fetchRealLastMessage = async (ticketId) => {
     try {
@@ -52,7 +190,6 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
         headers: { Authorization: `Bearer ${token}` },
       });
       
-      // ✅ معالجة 403 بهدوء - عدم عرض خطأ للمستخدم
       if (res.status === 403) {
         console.warn(`⚠️ Access denied to ticket ${ticketId}`);
         return null;
@@ -72,7 +209,7 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
     return null;
   };
 
-  // ✅ تحسين جلب المحادثات
+  // ✅ تحسين جلب المحادثات مع تحديث اسم المستخدم الآخر
   const fetchDirectChats = useCallback(async (showLoading = true) => {
     if (!user?.id) return;
     if (showLoading) setLoading(true);
@@ -86,7 +223,6 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
         headers: { Authorization: `Bearer ${token}` },
       });
       
-      // ✅ معالجة 401/403
       if (response.status === 401 || response.status === 403) {
         console.error('Authentication failed');
         setError(language === 'ar' ? 'انتهت الجلسة، الرجاء تسجيل الدخول مرة أخرى' : 'Session expired');
@@ -116,6 +252,8 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
       });
 
       const defaultMsg = language === 'ar' ? 'ابدأ المحادثة' : 'Start conversation';
+
+      // ✅ معالجة كل محادثة مع جلب اسم المستخدم الآخر من الخادم دائماً (مع الكاش)
       const chatsWithRealMsg = await Promise.all(
         userTickets.map(async (chat) => {
           let otherPartyName = '';
@@ -139,10 +277,18 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
             return null;
           }
 
+          // ✅ جلب الاسم الحقيقي من الخادم (باستخدام الكاش)
+          if (otherPartyId) {
+            const realName = await fetchUserDetails(otherPartyId);
+            if (realName) {
+              otherPartyName = realName;
+            }
+          }
+
+          // جلب آخر رسالة إذا كانت فارغة أو افتراضية
           let lastMessage = chat.last_message;
           let lastMessageTime = chat.updated_at || chat.created_at;
 
-          // فقط إذا كانت last_message فارغة نحاول جلبها
           if (!lastMessage || lastMessage === defaultMsg || lastMessage === '') {
             const realMsg = await fetchRealLastMessage(chat.id);
             if (realMsg && realMsg.message !== defaultMsg && realMsg.message !== '') {
@@ -174,6 +320,7 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
       validChats.sort((a, b) => new Date(b.last_message_time) - new Date(a.last_message_time));
 
       setDirectChats(validChats);
+      setSelectedChats(new Set());
       console.log('✅ المحادثات المعروضة:', validChats.length);
     } catch (error) {
       console.error('Error fetching chats:', error);
@@ -184,21 +331,30 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
     } finally {
       if (showLoading) setLoading(false);
     }
-  }, [user?.id, language]);
+  }, [user?.id, language, fetchUserDetails]);
 
-  // ✅ تحديث المحادثة
-  const updateChatMessage = useCallback((ticketId, newMessage, newTimestamp, senderId = null, messageId = null) => {
+  // ✅ تحديث المحادثة (بما في ذلك اسم الطرف الآخر)
+  const updateChatMessage = useCallback((ticketId, newMessage, newTimestamp, senderId = null, messageId = null, senderName = null) => {
     setDirectChats((prev) => {
       const existingIndex = prev.findIndex(c => c.id === ticketId);
       
       if (existingIndex !== -1) {
         const updated = [...prev];
-        const isNewMessage = updated[existingIndex].last_message !== newMessage;
+        const chat = updated[existingIndex];
+        const isNewMessage = chat.last_message !== newMessage;
+        
+        if (senderName && senderId && senderId !== user?.id) {
+          if (String(senderId) === String(chat.other_party_id)) {
+            chat.other_party_name = senderName;
+            userDetailsCache.current.set(String(senderId), senderName);
+          }
+        }
+        
         updated[existingIndex] = {
-          ...updated[existingIndex],
+          ...chat,
           last_message: newMessage,
           last_message_time: newTimestamp,
-          unread_count: isNewMessage ? (updated[existingIndex].unread_count || 0) + 1 : updated[existingIndex].unread_count,
+          unread_count: isNewMessage ? (chat.unread_count || 0) + 1 : chat.unread_count,
         };
         updated.sort((a, b) => new Date(b.last_message_time) - new Date(a.last_message_time));
         return updated;
@@ -207,8 +363,9 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
         return prev;
       }
     });
-  }, [fetchDirectChats]);
+  }, [fetchDirectChats, user?.id]);
 
+  // ✅ حذف محادثة واحدة
   const deleteDirectChat = async (chat, event) => {
     if (event) event.stopPropagation();
     if (!window.confirm(language === 'ar' ? 'حذف المحادثة نهائياً؟' : 'Delete permanently?')) return;
@@ -230,6 +387,52 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
     }
   };
 
+  // ✅ حذف المحادثات المحددة
+  const deleteSelectedChats = async () => {
+    if (selectedChats.size === 0) return;
+    if (!window.confirm(language === 'ar' ? `حذف ${selectedChats.size} محادثة نهائياً؟` : `Delete ${selectedChats.size} chats permanently?`)) return;
+    setIsDeletingSelected(true);
+    try {
+      const token = localStorage.getItem('token');
+      const idsArray = Array.from(selectedChats);
+      for (const id of idsArray) {
+        try {
+          await fetch(`${API_BASE}/api/support/tickets/${id}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` },
+          }).catch(() => {});
+        } catch (e) {}
+      }
+      addDeletedTickets(idsArray);
+      setDirectChats((prev) => prev.filter((c) => !selectedChats.has(c.id)));
+      toast.success(language === 'ar' ? `تم حذف ${idsArray.length} محادثة` : `${idsArray.length} chats deleted`);
+    } catch (err) {
+      toast.error(language === 'ar' ? 'فشل حذف المحادثات المحددة' : 'Failed to delete selected chats');
+    } finally {
+      setIsDeletingSelected(false);
+      setSelectedChats(new Set());
+    }
+  };
+
+  // ✅ تبديل تحديد محادثة واحدة
+  const toggleSelectChat = (chatId) => {
+    setSelectedChats(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(chatId)) newSet.delete(chatId);
+      else newSet.add(chatId);
+      return newSet;
+    });
+  };
+
+  // ✅ تبديل تحديد الكل
+  const toggleSelectAll = () => {
+    if (selectedChats.size === directChats.length) {
+      setSelectedChats(new Set());
+    } else {
+      setSelectedChats(new Set(directChats.map(c => c.id)));
+    }
+  };
+
   const openChat = (chat) => {
     setDirectChats(prev => prev.map(c => 
       c.id === chat.id ? { ...c, unread_count: 0 } : c
@@ -248,6 +451,8 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
   const refreshAll = async () => {
     setRefreshing(true);
     lastMessageIdsRef.current.clear();
+    userDetailsCache.current.clear();
+    numericIdCache.current.clear();
     await fetchDirectChats(true);
     setRefreshing(false);
     toast.success(language === 'ar' ? 'تم التحديث' : 'Refreshed');
@@ -268,6 +473,27 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
   };
   
   const openEmergency = () => setPage('emergency');
+
+  // ✅ الاستماع لتحديث الملف الشخصي للمستخدم الآخر وتحديث الاسم في القائمة
+  useEffect(() => {
+    const handleProfileUpdate = (e) => {
+      const { userId, updatedData } = e.detail;
+      setDirectChats(prev => 
+        prev.map(chat => {
+          if (String(chat.other_party_id) === String(userId)) {
+            const newName = updatedData.fullName || updatedData.name || chat.other_party_name;
+            return { ...chat, other_party_name: newName };
+          }
+          return chat;
+        })
+      );
+      if (updatedData.fullName || updatedData.name) {
+        userDetailsCache.current.set(String(userId), updatedData.fullName || updatedData.name);
+      }
+    };
+    window.addEventListener('profileUpdated', handleProfileUpdate);
+    return () => window.removeEventListener('profileUpdated', handleProfileUpdate);
+  }, []);
 
   // ✅ تحسين اتصال Socket.IO
   useEffect(() => {
@@ -299,15 +525,16 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
       console.log('📩 New message via socket:', data);
       
       if (data.ticketId) {
+        const senderName = data.senderName || (language === 'ar' ? 'مستخدم' : 'User');
         updateChatMessage(
           data.ticketId, 
           data.message, 
           data.createdAt || new Date().toISOString(), 
           data.senderId,
-          data.messageId
+          data.messageId,
+          senderName
         );
         
-        const senderName = data.senderName || (language === 'ar' ? 'مستخدم' : 'User');
         const isOwnMessage = String(data.senderId) === String(user?.id);
         
         if (!isOwnMessage) {
@@ -377,9 +604,12 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
     );
   }
 
+  const isAllSelected = directChats.length > 0 && selectedChats.size === directChats.length;
+  const isSomeSelected = selectedChats.size > 0;
+
   return (
     <div className="h-full flex flex-col bg-gradient-to-br from-teal-900 via-cyan-900 to-emerald-900 overflow-hidden">
-      {/* الرأس - نفس الكود */}
+      {/* الرأس */}
       <div className="bg-gradient-to-r from-teal-600 to-cyan-600 shadow-lg flex-shrink-0">
         <div className="px-4 py-3">
           <div className="flex items-center justify-between">
@@ -429,6 +659,31 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
         </div>
       </div>
 
+      {/* شريط الأدوات: تحديد الكل وحذف المحدد */}
+      {directChats.length > 0 && (
+        <div className="px-4 py-2 bg-white/5 border-b border-white/10 flex items-center justify-between flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <button onClick={toggleSelectAll} className="flex items-center gap-1 text-white/80 hover:text-white">
+              {isAllSelected ? <FaCheckSquare size={16} /> : <FaRegSquare size={16} />}
+              <span className="text-sm">{language === 'ar' ? 'تحديد الكل' : 'Select All'}</span>
+            </button>
+            <span className="text-white/50 text-sm">
+              {selectedChats.size > 0 ? `${selectedChats.size} ${language === 'ar' ? 'محدد' : 'selected'}` : ''}
+            </span>
+          </div>
+          {isSomeSelected && (
+            <button
+              onClick={deleteSelectedChats}
+              disabled={isDeletingSelected}
+              className="px-3 py-1.5 bg-red-500/80 text-white rounded-lg text-sm flex items-center gap-1 hover:bg-red-600 transition disabled:opacity-50"
+            >
+              {isDeletingSelected ? <FaSpinner className="animate-spin" size={14} /> : <FaTrash size={14} />}
+              <span>{language === 'ar' ? 'حذف المحدد' : 'Delete Selected'}</span>
+            </button>
+          )}
+        </div>
+      )}
+
       {/* قائمة المحادثات */}
       <div className="flex-1 overflow-y-auto px-4 py-3">
         {error && (
@@ -455,16 +710,27 @@ const NotificationsPage = ({ setPage, onNotificationClick }) => {
             directChats.map((chat) => {
               const unread = chat.unread_count > 0;
               const isDeleting = deletingId === chat.id;
+              const isSelected = selectedChats.has(chat.id);
               
               return (
                 <div 
                   key={chat.id} 
                   className={`bg-white/10 backdrop-blur-sm rounded-xl p-3 border cursor-pointer hover:bg-white/20 ${
                     unread ? 'border-teal-400/50 bg-white/15' : 'border-white/20'
-                  }`}
+                  } ${isSelected ? 'ring-2 ring-teal-400' : ''}`}
                   onClick={() => openChat(chat)}
                 >
-                  <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    {/* Checkbox */}
+                    <div onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => toggleSelectChat(chat.id)}
+                        className="w-4 h-4 rounded border-white/30 bg-transparent text-teal-500 focus:ring-teal-400"
+                      />
+                    </div>
+
                     <div className="flex items-center gap-3 flex-1 min-w-0">
                       <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
                         chat.other_party_role === 'guide' 
