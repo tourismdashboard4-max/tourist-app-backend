@@ -1,9 +1,9 @@
 // client/src/pages/HomePage.jsx
-// ✅ النسخة النهائية – أزرار علوية متوازية مثل أزرار البطاقة (flex-1)
-// ✅ زر "تحديد" بدلاً من رمز التحديث، مع وظيفة تحديث الموقع وجلب البرامج القريبة
-// ✅ مزامنة وضع العرض (القريبة/الكل) مع ExplorePage عبر localStorage
-// ✅ إضافة مستمع لحدث profileUpdated لتحديث الاسم والصورة فوراً عند تغيير الملف الشخصي
-// ✅ استخدام useAuth مباشرة بدلاً من prop user
+// ✅ النسخة النهائية – مع إصلاح زر مشاركة الموقع
+// ✅ استخدام useAuth للتحقق من حالة المستخدم
+// ✅ مستمع لحدث profileUpdated مع جلب فوري من الخادم
+// ✅ مراقبة localStorage للتحديث من تبويبات أخرى
+// ✅ إضافة مراقبة locationEnabled لإيقاف/بدء التتبع
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { 
@@ -507,13 +507,140 @@ const ProgramCard = React.memo(({ program, lang, onBook, onView, onChat, isFavor
 });
 
 // ===== الصفحة الرئيسية =====
-function HomePage({ lang = 'ar', setPage, dark, setDark }) {
-  const { user } = useAuth(); // ✅ استخدام السياق مباشرة
+function HomePage({ lang = 'ar', setPage, dark, setDark, locationEnabled = true }) {
+  const { user } = useAuth();
   const t = (key) => LOCALES[lang]?.[key] || key;
 
-  // حالات محلية لعرض اسم المستخدم وصورته (للتحديث الفوري)
-  const [localDisplayName, setLocalDisplayName] = useState(user?.fullName || user?.name || '');
+  // حالة محلية لعرض الاسم والصورة (يتم تحديثها من localStorage أو الخادم)
+  const [localDisplayName, setLocalDisplayName] = useState('');
   const [localAvatar, setLocalAvatar] = useState(null);
+
+  // ===== دالة لقراءة اسم المستخدم من localStorage =====
+  const getLocalUserName = useCallback(() => {
+    try {
+      const stored = localStorage.getItem('user');
+      if (stored) {
+        const userData = JSON.parse(stored);
+        return userData.fullName || userData.name || '';
+      }
+    } catch (e) {}
+    return '';
+  }, []);
+
+  // ===== دالة لقراءة صورة المستخدم من localStorage =====
+  const getLocalUserAvatar = useCallback(() => {
+    try {
+      const stored = localStorage.getItem('user');
+      if (stored) {
+        const userData = JSON.parse(stored);
+        const avatar = userData.avatar_url || userData.avatar;
+        if (avatar) {
+          return avatar.startsWith('http') ? avatar : `${API_BASE}${avatar}`;
+        }
+      }
+    } catch (e) {}
+    return null;
+  }, []);
+
+  // ===== تحديث الاسم والصورة من localStorage عند التحميل =====
+  useEffect(() => {
+    const name = getLocalUserName();
+    const avatar = getLocalUserAvatar();
+    setLocalDisplayName(name || user?.fullName || user?.name || '');
+    setLocalAvatar(avatar || null);
+    console.log('🔄 [HomePage] Initial name from localStorage:', name);
+  }, [user, getLocalUserName, getLocalUserAvatar]);
+
+  // ===== دالة لجلب بيانات المستخدم من الخادم =====
+  const fetchUserData = useCallback(async () => {
+    if (!user?.id) return;
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE}/api/users/${user.id}`, {
+        headers: { Authorization: token ? `Bearer ${token}` : '' }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.user) {
+          const freshUser = data.user;
+          const fullName = freshUser.full_name || freshUser.fullName || freshUser.name || '';
+          setLocalDisplayName(fullName);
+          if (freshUser.avatar_url) {
+            const avatarUrl = freshUser.avatar_url.startsWith('http') 
+              ? freshUser.avatar_url 
+              : `${API_BASE}${freshUser.avatar_url}`;
+            setLocalAvatar(avatarUrl);
+          } else {
+            setLocalAvatar(null);
+          }
+          console.log('🔄 [HomePage] Fetched fresh user data, name:', fullName);
+          // تحديث localStorage للتأكد من التزامن
+          const stored = localStorage.getItem('user');
+          if (stored) {
+            const userObj = JSON.parse(stored);
+            userObj.fullName = fullName;
+            if (freshUser.avatar_url !== undefined) userObj.avatar_url = freshUser.avatar_url;
+            localStorage.setItem('user', JSON.stringify(userObj));
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch user data:', error);
+    }
+  }, [user?.id]);
+
+  // ===== مستمع لتحديث الملف الشخصي (profileUpdated) =====
+  useEffect(() => {
+    const handleProfileUpdate = (e) => {
+      const { userId } = e.detail;
+      if (userId === user?.id) {
+        console.log('📢 [HomePage] Profile update event received for user:', userId);
+        // جلب البيانات من الخادم مباشرة
+        fetchUserData();
+        toast.success(lang === 'ar' ? '✅ تم تحديث الملف الشخصي' : '✅ Profile updated');
+      }
+    };
+    window.addEventListener('profileUpdated', handleProfileUpdate);
+    return () => window.removeEventListener('profileUpdated', handleProfileUpdate);
+  }, [user?.id, lang, fetchUserData]);
+
+  // ===== مراقبة localStorage للتحديث من تبويبات أخرى =====
+  useEffect(() => {
+    const handleStorageChange = (e) => {
+      if (e.key === 'user') {
+        try {
+          const userData = JSON.parse(e.newValue);
+          if (userData && userData.id === user?.id) {
+            const newName = userData.fullName || userData.name || '';
+            setLocalDisplayName(newName);
+            if (userData.avatar_url) {
+              const avatarUrl = userData.avatar_url.startsWith('http') 
+                ? userData.avatar_url 
+                : `${API_BASE}${userData.avatar_url}`;
+              setLocalAvatar(avatarUrl);
+            }
+            console.log('🔄 [HomePage] Updated from localStorage to:', newName);
+          }
+        } catch (err) {}
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, [user?.id]);
+
+  // ===== التحقق الدوري من localStorage (كل 3 ثوان) =====
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const currentName = getLocalUserName();
+      if (currentName && currentName !== localDisplayName) {
+        setLocalDisplayName(currentName);
+        const avatar = getLocalUserAvatar();
+        setLocalAvatar(avatar);
+        console.log('🔄 [HomePage] Periodic sync from localStorage:', currentName);
+      }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [localDisplayName, getLocalUserName, getLocalUserAvatar]);
 
   const [allPrograms, setAllPrograms] = useState([]);
   const [userLocation, setUserLocation] = useState(null);
@@ -531,15 +658,10 @@ function HomePage({ lang = 'ar', setPage, dark, setDark }) {
     return [];
   });
 
-  // قراءة وضع العرض من localStorage
   const getInitialShowAllMode = () => {
     const stored = localStorage.getItem(SHOW_ALL_MODE_KEY);
-    if (stored !== null) {
-      return stored === 'true';
-    }
-    return false;
+    return stored !== null ? stored === 'true' : false;
   };
-
   const [showAllMode, setShowAllMode] = useState(getInitialShowAllMode);
 
   const getBookedProgramIds = useCallback(() => {
@@ -549,13 +671,8 @@ function HomePage({ lang = 'ar', setPage, dark, setDark }) {
     if (!stored) return [];
     try {
       const bookings = JSON.parse(stored);
-      return bookings
-        .filter(b => b.status !== 'cancelled')
-        .map(b => b.program_id)
-        .filter(Boolean);
-    } catch {
-      return [];
-    }
+      return bookings.filter(b => b.status !== 'cancelled').map(b => b.program_id).filter(Boolean);
+    } catch { return []; }
   }, [user?.id]);
 
   const [bookedProgramIds, setBookedProgramIds] = useState(() => getBookedProgramIds());
@@ -576,7 +693,7 @@ function HomePage({ lang = 'ar', setPage, dark, setDark }) {
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => {
       window.removeEventListener('focus', handleFocus);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [refreshBookedPrograms]);
 
@@ -601,6 +718,33 @@ function HomePage({ lang = 'ar', setPage, dark, setDark }) {
     return null;
   }, [user]);
 
+  // ===== مراقبة حالة تفعيل الموقع (الجديد) =====
+  useEffect(() => {
+    if (!locationEnabled) {
+      // إيقاف التتبع إذا كان نشطاً
+      if (watchIdRef.current) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+      if (locationTimeoutRef.current) {
+        clearTimeout(locationTimeoutRef.current);
+        locationTimeoutRef.current = null;
+      }
+      // إعادة تعيين الموقع
+      setUserLocation(null);
+      setLocationActive(false);
+      setLocationStatus('idle');
+      setManualMode(false);
+      localStorage.removeItem('manual_user_location');
+      console.log('📍 تم إيقاف تتبع الموقع بناءً على الإعدادات');
+    } else {
+      // إذا تم تفعيل الموقع ولم يكن هناك موقع، ابدأ التتبع
+      if (!userLocation && locationStatus !== 'locating' && !manualMode) {
+        startAutoTracking();
+      }
+    }
+  }, [locationEnabled]);
+
   // ===== دوال تحديد الموقع =====
   const updateUserLocationState = useCallback((lat, lng, accuracy, isManual = false) => {
     if (!isValidLocation(lat, lng)) return false;
@@ -616,6 +760,10 @@ function HomePage({ lang = 'ar', setPage, dark, setDark }) {
   }, []);
 
   const startAutoTracking = useCallback(() => {
+    if (!locationEnabled) {
+      console.log('⏸️ تتبع الموقع معطل في الإعدادات');
+      return;
+    }
     if (manualMode) return;
     if (!navigator.geolocation) {
       setLocationStatus('error');
@@ -679,9 +827,8 @@ function HomePage({ lang = 'ar', setPage, dark, setDark }) {
       },
       { enableHighAccuracy: true, maximumAge: 30000, timeout: 10000 }
     );
-  }, [lang, t, manualMode, updateUserLocationState]);
+  }, [lang, t, manualMode, updateUserLocationState, locationEnabled]);
 
-  // ===== دالة "تحديد" (تحديث الموقع وجلب البرامج) =====
   const handleLocate = useCallback(() => {
     if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
     if (locationTimeoutRef.current) clearTimeout(locationTimeoutRef.current);
@@ -858,7 +1005,6 @@ function HomePage({ lang = 'ar', setPage, dark, setDark }) {
     setPage('explore');
   }, [setPage]);
 
-  // ===== دالة تبديل وضع العرض مع المزامنة =====
   const toggleDisplayMode = useCallback(() => {
     const newMode = !showAllMode;
     setShowAllMode(newMode);
@@ -970,6 +1116,10 @@ function HomePage({ lang = 'ar', setPage, dark, setDark }) {
 
   // ===== تحديد الموقع التلقائي عند التحميل =====
   useEffect(() => {
+    if (!locationEnabled) {
+      setLocationStatus('idle');
+      return;
+    }
     const savedLocation = localStorage.getItem('manual_user_location');
     if (savedLocation) {
       try {
@@ -987,7 +1137,7 @@ function HomePage({ lang = 'ar', setPage, dark, setDark }) {
       } catch(e) { localStorage.removeItem('manual_user_location'); }
     }
     startAutoTracking();
-  }, []);
+  }, [locationEnabled]);
 
   // ===== تنظيف المؤقتات =====
   useEffect(() => {
@@ -996,38 +1146,6 @@ function HomePage({ lang = 'ar', setPage, dark, setDark }) {
       if (locationTimeoutRef.current) clearTimeout(locationTimeoutRef.current);
     };
   }, []);
-
-  // ===== 🎯 تحديث الاسم والصورة عند تغير user من السياق =====
-  useEffect(() => {
-    if (user) {
-      setLocalDisplayName(user.fullName || user.name || '');
-      setLocalAvatar(getUserAvatarUrl());
-    }
-  }, [user, getUserAvatarUrl]);
-
-  // ===== 🎯 مستمع لتحديث الملف الشخصي (profileUpdated) =====
-  useEffect(() => {
-    const handleProfileUpdate = (e) => {
-      const { userId, updatedData } = e.detail;
-      if (userId === user?.id) {
-        console.log('📢 [HomePage] Profile updated for user:', userId, updatedData);
-        if (updatedData.fullName || updatedData.name) {
-          setLocalDisplayName(updatedData.fullName || updatedData.name);
-        }
-        if (updatedData.avatar_url) {
-          const avatarUrl = updatedData.avatar_url.startsWith('http') 
-            ? updatedData.avatar_url 
-            : `${API_BASE}${updatedData.avatar_url}`;
-          setLocalAvatar(avatarUrl);
-        } else if (updatedData.avatar_url === null) {
-          setLocalAvatar(null);
-        }
-        toast.success(lang === 'ar' ? '✅ تم تحديث الملف الشخصي' : '✅ Profile updated');
-      }
-    };
-    window.addEventListener('profileUpdated', handleProfileUpdate);
-    return () => window.removeEventListener('profileUpdated', handleProfileUpdate);
-  }, [user?.id, lang]);
 
   const ScrollTopButton = useMemo(() => {
     if (!showScrollTop) return null;
@@ -1110,15 +1228,12 @@ function HomePage({ lang = 'ar', setPage, dark, setDark }) {
       </div>
 
       <div className="p-3">
-        {/* الأزرار العلوية المتوازية */}
         <div className="mb-4 flex gap-2">
           <button 
             onClick={() => setPage('guides')} 
-            className={`flex-1 py-2.5 rounded-xl font-medium transition text-sm flex items-center justify-center gap-2 ${
-              showAllMode 
-                ? 'bg-cyan-600 text-white' 
-                : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
-            }`}
+            className={`flex-1 py-2.5 rounded-xl font-medium transition text-sm flex items-center justify-center gap-2 ${(
+              showAllMode ? 'bg-cyan-600 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
+            )}`}
           >
             <Users size={18} />
             <span>{t('guides')}</span>
@@ -1126,9 +1241,7 @@ function HomePage({ lang = 'ar', setPage, dark, setDark }) {
           <button 
             onClick={toggleDisplayMode} 
             className={`flex-1 py-2.5 rounded-xl font-medium transition text-sm flex items-center justify-center ${
-              showAllMode 
-                ? 'bg-cyan-600 text-white' 
-                : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
+              showAllMode ? 'bg-cyan-600 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
             }`}
           >
             {showAllMode ? t('showNearby') : t('showAll')}
@@ -1137,9 +1250,7 @@ function HomePage({ lang = 'ar', setPage, dark, setDark }) {
             onClick={handleLocate} 
             disabled={isLocating} 
             className={`flex-1 py-2.5 rounded-xl font-medium transition text-sm flex items-center justify-center gap-1 ${
-              isLocating 
-                ? 'bg-gray-400 dark:bg-gray-600 text-gray-500 cursor-not-allowed' 
-                : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
+              isLocating ? 'bg-gray-400 dark:bg-gray-600 text-gray-500 cursor-not-allowed' : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
             }`}
           >
             <Crosshair size={16} />
