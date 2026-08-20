@@ -1,8 +1,9 @@
 // client/src/pages/ProfileDataPage.jsx
-// ✅ تحسين كامل: حفظ التعديل وعرض رسالة نجاح فورية
-// ✅ Apple Pay + Samsung Wallet + بطاقة التاجر
-// ✅ إضافة حسابات بنكية لجميع المستخدمين للسحب
-// ✅ دعم كامل للمستخدم العادي والمرشد
+// ✅ إصدار معدل – تغيير الاسم بدون OTP، تغيير البريد والجوال يتطلب OTP
+// ✅ بعد التحقق من OTP، يتم تحديث البيانات محلياً باستخدام استجابة الخادم مباشرة
+// ✅ إضافة useEffect لمزامنة userData مع authUser و propUser
+// ✅ إطلاق حدث window.profileUpdated عند نجاح التحديث لإعلام المكونات الأخرى
+// ✅ إزالة fetchFreshUserData بعد تحديث الاسم لمنع إعادة الكتابة بالبيانات القديمة
 
 import React, { useState, useEffect } from 'react';
 import {
@@ -11,14 +12,15 @@ import {
   X, CheckCircle, Shield, Clock, TrendingUp, TrendingDown, Ticket, Smartphone, CreditCard,
   Plus, Trash2, Banknote, AtSign
 } from 'lucide-react';
+import { FaSpinner } from 'react-icons/fa';
 import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
-import api from '../services/apiService';
+import { useWallet } from '../contexts/WalletContext';
+import api from '../services/api';
 
 const API_BASE_URL = 'https://tourist-app-api.onrender.com';
 
 const isApplePayAvailable = () => window.ApplePaySession && ApplePaySession.canMakePayments();
-
 const isSamsungWalletAvailable = () => {
   return typeof window !== 'undefined' && 
     (window.SamsungPay !== undefined || 
@@ -29,7 +31,7 @@ const isSamsungWalletAvailable = () => {
 const DEPOSIT_CARD = {
   id: 'merchant_visa',
   number: '408859005066386',
-  holder: 'HALA MERCHANT ',
+  holder: 'HALA MERCHANT 7111',
   type: 'visa',
   isMerchant: true,
   label: { ar: 'بطاقة التاجر (فيزا)', en: 'Merchant Visa Card' }
@@ -38,7 +40,7 @@ const DEPOSIT_CARD = {
 const WITHDRAW_CARD = {
   id: 'merchant_mada',
   number: '9682120052427996',
-  holder: 'HALA MERCHANT ',
+  holder: 'HALA MERCHANT 3339',
   type: 'mada',
   isMerchant: true,
   label: { ar: 'حساب التاجر (مدى)', en: 'Merchant Mada Account' }
@@ -46,18 +48,39 @@ const WITHDRAW_CARD = {
 
 function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
   const { user: authUser, updateUser } = useAuth();
+  const { 
+    balance, 
+    getBalance, 
+    loadWallet, 
+    deposit, 
+    withdraw, 
+    hold,           
+    release, 
+    loading: walletLoading  
+  } = useWallet();
+  
   const [userData, setUserData] = useState(propUser || authUser || null);
   const [isEditing, setIsEditing] = useState(false);
-  const [editData, setEditData] = useState({ fullName: '', phone: '' });
+  const [editData, setEditData] = useState({ 
+    fullName: '', 
+    phone: '', 
+    email: ''
+  });
   const [loading, setLoading] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
   const [avatarPreview, setAvatarPreview] = useState(null);
-  const [verificationCode, setVerificationCode] = useState('');
-  const [showVerificationInput, setShowVerificationInput] = useState(false);
-  const [phoneVerificationStep, setPhoneVerificationStep] = useState('idle');
-  const [tempPhone, setTempPhone] = useState('');
-  const [countdown, setCountdown] = useState(0);
-  const [balance, setBalance] = useState(propUser?.balance || authUser?.balance || 0);
+  const [updateSuccess, setUpdateSuccess] = useState(false);
+
+  // حالة OTP
+  const [otpStep, setOtpStep] = useState('idle'); // idle | sending | sent | verifying | verified
+  const [otpCode, setOtpCode] = useState('');
+  const [otpCountdown, setOtpCountdown] = useState(0);
+  const [pendingUpdates, setPendingUpdates] = useState(null);
+  const [showOtpInput, setShowOtpInput] = useState(false);
+  const [isSavingAfterOtp, setIsSavingAfterOtp] = useState(false);
+  const [otpSentTo, setOtpSentTo] = useState(''); // 'email' (دائماً بريد)
+
+  // States for modals (wallet, bank accounts, etc.)
   const [showAddBalance, setShowAddBalance] = useState(false);
   const [addAmount, setAddAmount] = useState('');
   const [addBalanceLoading, setAddBalanceLoading] = useState(false);
@@ -76,7 +99,6 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
   const [newBankAccount, setNewBankAccount] = useState({ accountName: '', accountNumber: '', bankName: '' });
   const [addingBankAccount, setAddingBankAccount] = useState(false);
   const [selectedWithdrawAccount, setSelectedWithdrawAccount] = useState(null);
-  const [updateSuccess, setUpdateSuccess] = useState(false);
 
   const currentLoggedInUser = authUser || (() => {
     const stored = localStorage.getItem('user');
@@ -85,7 +107,25 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
   const isOwnProfile = currentLoggedInUser?.id === userData?.id;
   const isGuide = userData?.type === 'guide' || userData?.role === 'guide' || userData?.isGuide === true;
 
-  // تحميل الحسابات البنكية
+  // ====================== Effects ======================
+  
+  // 🔥 مزامنة userData مع authUser و propUser عند تغيرهما
+  useEffect(() => {
+    const sourceUser = propUser || authUser;
+    if (sourceUser && (!userData || sourceUser.id === userData.id)) {
+      setUserData(prev => {
+        if (!prev || prev.id === sourceUser.id) {
+          return { ...prev, ...sourceUser };
+        }
+        return prev;
+      });
+    }
+  }, [authUser, propUser]);
+
+  useEffect(() => {
+    if (isOwnProfile && userData?.id) loadWallet();
+  }, [isOwnProfile, userData?.id]);
+
   useEffect(() => {
     const fetchBankAccounts = async () => {
       if (!userData?.id || !isOwnProfile) return;
@@ -118,13 +158,14 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
     }
   }, [bankAccounts, userData?.id, isOwnProfile]);
 
-  // جلب أحدث بيانات المستخدم
-  const fetchFreshUserData = async () => {
+  // 🔥 دالة جلب بيانات محدثة – لن يتم استدعاؤها بعد تغيير الاسم مباشرة
+  const fetchFreshUserData = async (skipUpdate = false) => {
     if (!userData?.id) return;
     try {
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_BASE_URL}/api/users/${userData.id}`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
+        cache: 'no-cache'
       });
       if (response.ok) {
         const data = await response.json();
@@ -132,7 +173,12 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
           const freshUser = data.user;
           const updatedUser = { ...userData, ...freshUser };
           setUserData(updatedUser);
-          if (updateUser && isOwnProfile) updateUser(updatedUser);
+          if (!skipUpdate && updateUser && isOwnProfile) {
+            // فقط نحدث إذا كان هناك تغيير فعلي في الاسم
+            if (updatedUser.fullName !== userData.fullName) {
+              updateUser(updatedUser);
+            }
+          }
           if (isOwnProfile) {
             const storedUser = localStorage.getItem('user');
             if (storedUser) {
@@ -140,6 +186,7 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
               userObj.fullName = updatedUser.fullName;
               userObj.avatar_url = updatedUser.avatar_url;
               userObj.username = updatedUser.username;
+              userObj.email = updatedUser.email;
               localStorage.setItem('user', JSON.stringify(userObj));
             }
           }
@@ -150,11 +197,11 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
     }
   };
 
-  useEffect(() => {
-    if (userData?.id) fetchFreshUserData();
-  }, [userData?.id]);
+  // ⚠️ تم تعطيل جلب البيانات التلقائي عند تحميل المكون لتجنب التضارب
+  // useEffect(() => {
+  //   if (userData?.id) fetchFreshUserData();
+  // }, [userData?.id]);
 
-  // تحميل الصورة الشخصية
   useEffect(() => {
     if (userData?.avatar_url) {
       const avatarUrl = userData.avatar_url.startsWith('http') 
@@ -166,113 +213,502 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
     }
   }, [userData?.avatar_url]);
 
-  // دوال الملف الشخصي
+  // ====================== Handlers ======================
   const handleEditToggle = () => { 
     if (!isOwnProfile) return;
     setIsEditing(!isEditing); 
-    setShowVerificationInput(false); 
-    setPhoneVerificationStep('idle');
     setUpdateSuccess(false);
+    setShowOtpInput(false);
+    setOtpStep('idle');
+    setOtpCode('');
+    setPendingUpdates(null);
+    setOtpSentTo('');
+    if (!isEditing && userData) {
+      setEditData({
+        fullName: userData.fullName || '',
+        phone: userData.phone || '',
+        email: userData.email || ''
+      });
+    }
   };
   
   useEffect(() => { 
-    if (!isEditing && userData && isOwnProfile) 
+    if (!isEditing && userData && isOwnProfile) {
       setEditData({ 
         fullName: userData.fullName || '', 
-        phone: userData.phone || ''
-      }); 
+        phone: userData.phone || '',
+        email: userData.email || ''
+      });
+    }
   }, [isEditing, userData, isOwnProfile]);
   
   const handleInputChange = (e) => { 
     const { name, value } = e.target; 
     setEditData(prev => ({ ...prev, [name]: value })); 
   };
-  
-  const handleVerifyPhone = async () => {
+
+  // ============================================================
+  // ✅ MAIN SAVE PROFILE - تغيير الاسم بدون OTP، البريد والجوال يحتاجان OTP
+  // ============================================================
+  const handleSaveProfile = async () => {
     if (!isOwnProfile) return;
-    const phoneNumber = editData.phone;
-    if (!phoneNumber || phoneNumber === 'غير مضاف') { toast.error(lang === 'ar' ? 'الرجاء إدخال رقم الجوال أولاً' : 'Please enter your phone number first'); return; }
-    const saudiPhoneRegex = /^(05|5)[0-9]{8}$|^\+9665[0-9]{8}$/;
-    if (!saudiPhoneRegex.test(phoneNumber.replace(/\s/g, ''))) { toast.error(lang === 'ar' ? 'رقم الجوال غير صحيح' : 'Invalid phone number'); return; }
-    setPhoneVerificationStep('sending'); setTempPhone(phoneNumber);
+    if (saveLoading || isSavingAfterOtp) {
+      console.log('⏳ Save already in progress, ignoring...');
+      return;
+    }
+
+    console.log('🔍 [handleSaveProfile] Starting...');
+    console.log('🔍 Current userData:', userData);
+    console.log('🔍 editData:', editData);
+
+    const profileUpdates = {};
+    let hasProfileChanges = false;
+    let isEmailChange = false;
+    let isPhoneChange = false;
+    let isNameChange = false;
+
+    // الاسم
+    const newFullName = editData.fullName?.trim() || '';
+    const currentFullName = userData.fullName?.trim() || '';
+    if (newFullName !== currentFullName) {
+      profileUpdates.full_name = newFullName;
+      hasProfileChanges = true;
+      isNameChange = true;
+      console.log('✅ Name changed from:', currentFullName, 'to:', newFullName);
+    }
+
+    // البريد الإلكتروني
+    const newEmail = editData.email?.trim() || '';
+    const oldEmail = userData.email?.trim() || '';
+    if (newEmail.toLowerCase() !== oldEmail.toLowerCase()) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(newEmail)) {
+        toast.error(lang === 'ar' ? 'البريد الإلكتروني غير صحيح' : 'Invalid email format');
+        return;
+      }
+      profileUpdates.email = newEmail;
+      hasProfileChanges = true;
+      isEmailChange = true;
+      console.log('✅ Email changed from:', oldEmail, 'to:', newEmail);
+    }
+
+    // رقم الجوال
+    const rawPhone = editData.phone || '';
+    const cleanPhone = rawPhone.replace(/[^\d+]/g, '').trim();
+    const currentPhone = userData.phone || '';
+    if (cleanPhone !== currentPhone) {
+      if (cleanPhone !== '' || currentPhone !== '') {
+        const saudiPhoneRegex = /^(05|5)[0-9]{8}$|^\+9665[0-9]{8}$/;
+        if (!saudiPhoneRegex.test(cleanPhone)) {
+          toast.error(lang === 'ar' ? 'رقم الجوال غير صحيح' : 'Invalid phone number');
+          return;
+        }
+        profileUpdates.phone = cleanPhone;
+        hasProfileChanges = true;
+        isPhoneChange = true;
+        console.log('✅ Phone changed from:', userData.phone, 'to:', cleanPhone);
+      }
+    }
+
+    if (!hasProfileChanges) {
+      toast(lang === 'ar' ? 'لا توجد تغييرات لحفظها' : 'No changes to save', { icon: 'ℹ️' });
+      setIsEditing(false);
+      return;
+    }
+
+    console.log('📦 Profile updates:', profileUpdates);
+    console.log('📦 isNameChange:', isNameChange, 'isEmailChange:', isEmailChange, 'isPhoneChange:', isPhoneChange);
+
+    // ✅ إذا كان التغيير فقط في الاسم (بدون تغيير البريد أو الجوال)
+    if (isNameChange && !isEmailChange && !isPhoneChange) {
+      console.log('🔄 تغيير الاسم فقط - سيتم التحديث بدون OTP');
+      setSaveLoading(true);
+      try {
+        const profileResult = await api.updateUserProfile(userData.id, profileUpdates);
+        console.log('📥 Server response (name only):', JSON.stringify(profileResult, null, 2));
+        if (!profileResult.success) {
+          throw new Error(profileResult.message || 'فشل تحديث الملف الشخصي');
+        }
+        // تحديث البيانات من استجابة الخادم
+        let updatedUser = { ...userData };
+        if (profileResult.user) {
+          const serverUser = profileResult.user;
+          updatedUser = {
+            ...userData,
+            fullName: serverUser.full_name || userData.fullName,
+            email: serverUser.email || userData.email,
+            phone: serverUser.phone || userData.phone,
+            avatar_url: serverUser.avatar_url || userData.avatar_url,
+          };
+        } else {
+          if (profileUpdates.full_name !== undefined) {
+            updatedUser.fullName = profileUpdates.full_name;
+          }
+        }
+        console.log('✅ Updated user data from server:', updatedUser);
+        
+        // تحديث الحالة المحلية
+        setUserData(updatedUser);
+        setUpdateSuccess(true);
+        setIsEditing(false);
+        setShowOtpInput(false);
+        setOtpStep('verified');
+        setOtpCode('');
+        setPendingUpdates(null);
+        setOtpSentTo('');
+        
+        // تحديث السياق و localStorage
+        if (updateUser) updateUser(updatedUser);
+        if (onUpdateUser) onUpdateUser(updatedUser);
+        
+        // تحديث localStorage يدوياً (ضمان)
+        const storedUser = localStorage.getItem('user');
+        if (storedUser) {
+          const userObj = JSON.parse(storedUser);
+          userObj.fullName = updatedUser.fullName;
+          localStorage.setItem('user', JSON.stringify(userObj));
+        }
+        
+        toast.success(lang === 'ar' ? '✅ تم تحديث البيانات بنجاح' : '✅ Profile updated successfully');
+        
+        // 🔥 إطلاق حدث لتحديث المكونات الأخرى
+        window.dispatchEvent(new CustomEvent('profileUpdated', {
+          detail: { 
+            userId: userData.id, 
+            updatedData: updatedUser 
+          }
+        }));
+
+        // 🔥 لا نقوم بجلب البيانات من الخادم مرة أخرى لتجنب إعادة الكتابة بالبيانات القديمة
+        // fetchFreshUserData(true); // تم إلغاء استدعاء هذه الدالة
+        
+        setSaveLoading(false);
+        return;
+      } catch (error) {
+        console.error('❌ Error updating name:', error);
+        toast.error(error.message || (lang === 'ar' ? 'فشل تحديث الاسم' : 'Failed to update name'));
+        setSaveLoading(false);
+        return;
+      }
+    }
+
+    // ✅ إذا كان هناك تغيير في البريد أو الجوال (يتطلب OTP)
+    // نتبع التدفق الأصلي
+    setPendingUpdates(profileUpdates);
+    setShowOtpInput(true);
+    setSaveLoading(true);
+
     try {
-      const response = await api.sendPhoneVerification(userData.id, phoneNumber);
-      if (response.success) { setPhoneVerificationStep('sent'); setShowVerificationInput(true); setCountdown(60); toast.success(lang === 'ar' ? `تم إرسال رمز التحقق إلى ${phoneNumber}` : `Verification code sent to ${phoneNumber}`); }
-      else { setPhoneVerificationStep('idle'); toast.error(lang === 'ar' ? 'فشل إرسال الرمز' : 'Failed to send code'); }
-    } catch (error) { console.error(error); setPhoneVerificationStep('idle'); toast.error(lang === 'ar' ? 'خطأ في الاتصال' : 'Connection error'); }
+      if (isEmailChange && oldEmail) {
+        console.log(`📤 Step 1: Sending OTP to old email: ${oldEmail}`);
+        setOtpStep('sending_old');
+        setOtpSentTo('email_old');
+        const response = await api.sendOTP(oldEmail, 'verify_old_email');
+        if (response && response.success) {
+          setOtpStep('sent_old');
+          setOtpCountdown(60);
+          toast.success(
+            lang === 'ar'
+              ? `✅ تم إرسال رمز التحقق إلى بريدك الحالي ${oldEmail} لتأكيد الهوية`
+              : `✅ Verification code sent to your current email ${oldEmail} to confirm identity`,
+            { duration: 6000 }
+          );
+        } else {
+          throw new Error(response?.message || 'فشل إرسال رمز التحقق إلى البريد الحالي');
+        }
+      } else if (oldEmail) {
+        console.log(`📤 Sending OTP to current email: ${oldEmail} for identity verification`);
+        setOtpStep('sending');
+        setOtpSentTo('email');
+        const response = await api.sendOTP(oldEmail, 'profile_update');
+        if (response && response.success) {
+          setOtpStep('sent');
+          setOtpCountdown(60);
+          toast.success(
+            lang === 'ar'
+              ? `✅ تم إرسال رمز التحقق إلى بريدك ${oldEmail} لتأكيد التغييرات`
+              : `✅ Verification code sent to your email ${oldEmail} to confirm changes`,
+            { duration: 6000 }
+          );
+        } else {
+          throw new Error(response?.message || 'فشل إرسال رمز التحقق إلى البريد');
+        }
+      } else {
+        throw new Error(lang === 'ar' ? 'لا يوجد بريد إلكتروني مسجل لإرسال رمز التحقق' : 'No registered email to send verification code');
+      }
+    } catch (error) {
+      console.error('❌ OTP send error:', error);
+      setOtpStep('idle');
+      setShowOtpInput(false);
+      toast.error(
+        lang === 'ar'
+          ? '❌ ' + (error.message || 'حدث خطأ أثناء إرسال رمز التحقق')
+          : '❌ ' + (error.message || 'Error sending verification code')
+      );
+    } finally {
+      setSaveLoading(false);
+    }
   };
-  
-  const handleVerifyCode = async () => {
-    if (!isOwnProfile) return;
-    if (!verificationCode || verificationCode.length < 4) { toast.error(lang === 'ar' ? 'الرجاء إدخال الرمز' : 'Please enter code'); return; }
-    setPhoneVerificationStep('verifying');
+
+  // ============================================================
+  // ✅ التحقق من OTP وتطبيق التغييرات (مع دعم الخطوتين للبريد)
+  // ============================================================
+  const handleVerifyOtp = async () => {
+    if (!otpCode || otpCode.length < 4) {
+      toast.error(lang === 'ar' ? 'الرجاء إدخال الرمز' : 'Please enter the code');
+      return;
+    }
+    if (!pendingUpdates) {
+      toast.error(lang === 'ar' ? 'لا توجد تغييرات معلقة' : 'No pending changes');
+      return;
+    }
+
+    const isOldStep = otpStep === 'sent_old' || otpStep === 'verifying_old';
+    const isNewStep = otpStep === 'sent_new' || otpStep === 'verifying_new';
+    const isSingleStep = otpStep === 'sent' || otpStep === 'verifying';
+
+    setOtpStep(prev => {
+      if (prev === 'sent_old' || prev === 'verifying_old') return 'verifying_old';
+      if (prev === 'sent_new' || prev === 'verifying_new') return 'verifying_new';
+      if (prev === 'sent' || prev === 'verifying') return 'verifying';
+      return prev;
+    });
+
+    setIsSavingAfterOtp(true);
+
     try {
-      const response = await api.verifyPhoneCode(userData.id, tempPhone, verificationCode);
-      if (response.success) {
-        const updatedUser = { ...userData, phone: tempPhone, phoneVerified: true };
+      let verifyResult = null;
+      const profileUpdates = { ...pendingUpdates };
+      const oldEmail = userData.email?.trim() || '';
+      const newEmail = profileUpdates.email || oldEmail;
+
+      // الخطوة 1: التحقق من البريد القديم (إذا كنا في وضع تغيير البريد)
+      if (isOldStep && oldEmail) {
+        console.log(`🔐 Verifying old email OTP for: ${oldEmail}`);
+        verifyResult = await api.verifyOTP(oldEmail, otpCode, 'verify_old_email');
+        if (!verifyResult || !verifyResult.success) {
+          throw new Error(verifyResult?.message || 'رمز التحقق من البريد الحالي غير صحيح');
+        }
+        console.log(`✅ Old email verified. Now sending OTP to new email: ${newEmail}`);
+        setOtpStep('sending_new');
+        setOtpSentTo('email_new');
+        setOtpCode('');
+        const response = await api.sendOTP(newEmail, 'verify_new_email');
+        if (response && response.success) {
+          setOtpStep('sent_new');
+          setOtpCountdown(60);
+          toast.success(
+            lang === 'ar'
+              ? `✅ تم إرسال رمز التحقق إلى بريدك الجديد ${newEmail} لتأكيد الملكية`
+              : `✅ Verification code sent to your new email ${newEmail} to confirm ownership`,
+            { duration: 6000 }
+          );
+        } else {
+          throw new Error(response?.message || 'فشل إرسال رمز التحقق إلى البريد الجديد');
+        }
+        setIsSavingAfterOtp(false);
+        return;
+      }
+
+      // الخطوة 2: التحقق من البريد الجديد (في حالة تغيير البريد)
+      if (isNewStep && newEmail) {
+        console.log(`🔐 Verifying new email OTP for: ${newEmail}`);
+        verifyResult = await api.verifyOTP(newEmail, otpCode, 'verify_new_email');
+        if (!verifyResult || !verifyResult.success) {
+          throw new Error(verifyResult?.message || 'رمز التحقق من البريد الجديد غير صحيح');
+        }
+        console.log(`✅ New email verified. Applying updates...`);
+        console.log('📤 Sending data to server:', JSON.stringify(profileUpdates));
+        const profileResult = await api.updateUserProfile(userData.id, profileUpdates);
+        console.log('📥 Server response:', JSON.stringify(profileResult, null, 2));
+        if (!profileResult.success) {
+          throw new Error(profileResult.message || 'فشل تحديث الملف الشخصي');
+        }
+        // تحديث البيانات من استجابة الخادم
+        let updatedUser = { ...userData };
+        if (profileResult.user) {
+          const serverUser = profileResult.user;
+          updatedUser = {
+            ...userData,
+            fullName: serverUser.full_name || userData.fullName,
+            email: serverUser.email || userData.email,
+            phone: serverUser.phone || userData.phone,
+            avatar_url: serverUser.avatar_url || userData.avatar_url,
+          };
+        } else {
+          if (profileUpdates.full_name !== undefined) {
+            updatedUser.fullName = profileUpdates.full_name;
+          }
+          if (profileUpdates.email) updatedUser.email = profileUpdates.email;
+          if (profileUpdates.phone) updatedUser.phone = profileUpdates.phone;
+        }
+        console.log('✅ Updated user data from server:', updatedUser);
         setUserData(updatedUser);
         if (updateUser) updateUser(updatedUser);
         if (onUpdateUser) onUpdateUser(updatedUser);
-        setEditData(prev => ({ ...prev, phone: tempPhone }));
-        setPhoneVerificationStep('verified'); setShowVerificationInput(false);
-        toast.success(lang === 'ar' ? 'تم التحقق بنجاح' : 'Verified successfully');
-      } else { setPhoneVerificationStep('sent'); toast.error(lang === 'ar' ? 'رمز غير صحيح' : 'Invalid code'); }
-    } catch (error) { console.error(error); setPhoneVerificationStep('sent'); toast.error(lang === 'ar' ? 'خطأ في التحقق' : 'Verification error'); }
-  };
-  
-  const handleResendCode = () => { if (countdown > 0) return; handleVerifyPhone(); };
-  
-  // ✅ دالة حفظ الملف الشخصي المحسنة مع رسالة نجاح فورية
-  const handleSaveProfile = async () => {
-    if (!isOwnProfile) return;
-    setSaveLoading(true);
-    setUpdateSuccess(false);
-    try {
-      const response = await api.updateUserProfile(userData.id, { 
-        fullName: editData.fullName
-      });
-      if (response.success) {
-        const updatedUser = { ...userData, fullName: editData.fullName };
+        // تحديث localStorage
+        const storedUser = localStorage.getItem('user');
+        if (storedUser) {
+          const userObj = JSON.parse(storedUser);
+          userObj.fullName = updatedUser.fullName;
+          if (updatedUser.email) userObj.email = updatedUser.email;
+          if (updatedUser.phone) userObj.phone = updatedUser.phone;
+          localStorage.setItem('user', JSON.stringify(userObj));
+        }
+        toast.success(lang === 'ar' ? '✅ تم تحديث البيانات بنجاح' : '✅ Profile updated successfully');
+        setUpdateSuccess(true);
+        setIsEditing(false);
+        setShowOtpInput(false);
+        setOtpStep('verified');
+        setOtpCode('');
+        setPendingUpdates(null);
+        setOtpSentTo('');
+        // لا نستدعي fetchFreshUserData هنا لتجنب إعادة الكتابة
+        window.dispatchEvent(new CustomEvent('profileUpdated', {
+          detail: { 
+            userId: userData.id, 
+            updatedData: updatedUser 
+          }
+        }));
+        setIsSavingAfterOtp(false);
+        return;
+      }
+
+      // الخطوة الفردية (تغيير الجوال فقط أو الاسم+الجوال معاً): تحقق من البريد الحالي
+      if (isSingleStep && oldEmail) {
+        console.log(`🔐 Verifying OTP for: ${oldEmail}`);
+        verifyResult = await api.verifyOTP(oldEmail, otpCode, 'profile_update');
+        if (!verifyResult || !verifyResult.success) {
+          throw new Error(verifyResult?.message || 'رمز التحقق غير صحيح');
+        }
+        console.log(`✅ OTP verified. Applying updates...`);
+        console.log('📤 Sending data to server:', JSON.stringify(profileUpdates));
+        const profileResult = await api.updateUserProfile(userData.id, profileUpdates);
+        console.log('📥 Server response:', JSON.stringify(profileResult, null, 2));
+        if (!profileResult.success) {
+          throw new Error(profileResult.message || 'فشل تحديث الملف الشخصي');
+        }
+        let updatedUser = { ...userData };
+        if (profileResult.user) {
+          const serverUser = profileResult.user;
+          updatedUser = {
+            ...userData,
+            fullName: serverUser.full_name || userData.fullName,
+            email: serverUser.email || userData.email,
+            phone: serverUser.phone || userData.phone,
+            avatar_url: serverUser.avatar_url || userData.avatar_url,
+          };
+        } else {
+          if (profileUpdates.full_name !== undefined) {
+            updatedUser.fullName = profileUpdates.full_name;
+          }
+          if (profileUpdates.email) updatedUser.email = profileUpdates.email;
+          if (profileUpdates.phone) updatedUser.phone = profileUpdates.phone;
+        }
+        console.log('✅ Updated user data from server:', updatedUser);
         setUserData(updatedUser);
         if (updateUser) updateUser(updatedUser);
         if (onUpdateUser) onUpdateUser(updatedUser);
         const storedUser = localStorage.getItem('user');
         if (storedUser) {
           const userObj = JSON.parse(storedUser);
-          userObj.fullName = editData.fullName;
+          userObj.fullName = updatedUser.fullName;
+          if (updatedUser.email) userObj.email = updatedUser.email;
+          if (updatedUser.phone) userObj.phone = updatedUser.phone;
           localStorage.setItem('user', JSON.stringify(userObj));
         }
-        if (isGuide) {
-          window.dispatchEvent(new CustomEvent('guideProfileUpdated', {
-            detail: { 
-              guideId: userData.id, 
-              updatedData: { 
-                fullName: editData.fullName,
-                avatar_url: userData.avatar_url 
-              } 
-            }
-          }));
-        }
-        // ✅ إظهار رسالة نجاح فورية مع اسم المستخدم الجديد
+        toast.success(lang === 'ar' ? '✅ تم تحديث البيانات بنجاح' : '✅ Profile updated successfully');
         setUpdateSuccess(true);
-        toast.success(
-          lang === 'ar' 
-            ? `✅ تم تحديث الاسم بنجاح إلى "${editData.fullName}"` 
-            : `✅ Name updated successfully to "${editData.fullName}"`,
-          { duration: 4000 }
-        );
         setIsEditing(false);
-      } else {
-        toast.error(response.message || (lang === 'ar' ? 'فشل تحديث البيانات' : 'Failed to update data'));
+        setShowOtpInput(false);
+        setOtpStep('verified');
+        setOtpCode('');
+        setPendingUpdates(null);
+        setOtpSentTo('');
+        // لا نستدعي fetchFreshUserData هنا
+        window.dispatchEvent(new CustomEvent('profileUpdated', {
+          detail: { 
+            userId: userData.id, 
+            updatedData: updatedUser 
+          }
+        }));
+        setIsSavingAfterOtp(false);
+        return;
       }
-    } catch (error) { 
-      console.error(error); 
-      toast.error(lang === 'ar' ? 'فشل التحديث' : 'Update failed'); 
-    } finally { 
-      setSaveLoading(false); 
+
+      throw new Error('خطأ في تدفق التحقق');
+    } catch (error) {
+      console.error('❌ OTP verification error:', error);
+      if (otpStep === 'verifying_old') setOtpStep('sent_old');
+      else if (otpStep === 'verifying_new') setOtpStep('sent_new');
+      else if (otpStep === 'verifying') setOtpStep('sent');
+      const errorMsg = error.message || (lang === 'ar' ? 'فشل التحقق من الرمز' : 'Verification failed');
+      toast.error(errorMsg);
+      setIsSavingAfterOtp(false);
     }
   };
 
+  // ============================================================
+  // ✅ إعادة إرسال الرمز (حسب الخطوة الحالية)
+  // ============================================================
+  const handleResendOtp = async () => {
+    if (otpCountdown > 0) return;
+
+    const oldEmail = userData.email?.trim() || '';
+    const newEmail = pendingUpdates?.email || oldEmail;
+
+    setOtpStep(prev => {
+      if (prev === 'sent_old' || prev === 'verifying_old') return 'sending_old';
+      if (prev === 'sent_new' || prev === 'verifying_new') return 'sending_new';
+      if (prev === 'sent' || prev === 'verifying') return 'sending';
+      return prev;
+    });
+
+    try {
+      let response = null;
+      if (otpStep === 'sent_old' || otpStep === 'verifying_old') {
+        response = await api.sendOTP(oldEmail, 'verify_old_email');
+        if (response && response.success) {
+          setOtpStep('sent_old');
+          setOtpCountdown(60);
+          toast.success(lang === 'ar' ? '✅ تم إعادة إرسال رمز التحقق إلى بريدك الحالي' : '✅ Resent code to your current email');
+        } else {
+          throw new Error(response?.message || 'فشل إعادة الإرسال');
+        }
+      } else if (otpStep === 'sent_new' || otpStep === 'verifying_new') {
+        response = await api.sendOTP(newEmail, 'verify_new_email');
+        if (response && response.success) {
+          setOtpStep('sent_new');
+          setOtpCountdown(60);
+          toast.success(lang === 'ar' ? '✅ تم إعادة إرسال رمز التحقق إلى بريدك الجديد' : '✅ Resent code to your new email');
+        } else {
+          throw new Error(response?.message || 'فشل إعادة الإرسال');
+        }
+      } else if (otpStep === 'sent' || otpStep === 'verifying') {
+        response = await api.sendOTP(oldEmail, 'profile_update');
+        if (response && response.success) {
+          setOtpStep('sent');
+          setOtpCountdown(60);
+          toast.success(lang === 'ar' ? '✅ تم إعادة إرسال رمز التحقق إلى بريدك' : '✅ Resent code to your email');
+        } else {
+          throw new Error(response?.message || 'فشل إعادة الإرسال');
+        }
+      } else {
+        toast.error(lang === 'ar' ? 'لا توجد وجهة لإعادة الإرسال' : 'No destination to resend');
+        return;
+      }
+    } catch (error) {
+      console.error('Resend error:', error);
+      if (otpStep === 'sending_old') setOtpStep('sent_old');
+      else if (otpStep === 'sending_new') setOtpStep('sent_new');
+      else if (otpStep === 'sending') setOtpStep('sent');
+      toast.error(error.message || (lang === 'ar' ? 'فشل إعادة الإرسال' : 'Resend failed'));
+    }
+  };
+
+  // ============================================================
+  // AVATAR
+  // ============================================================
   const handleAvatarChange = async (e) => {
     if (!isOwnProfile) return;
     const file = e.target.files[0];
@@ -378,28 +814,29 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
     }
   };
 
-  // دوال الإيداع والسحب (كما هي)
+  // ============================================================
+  // WALLET / DEPOSIT / WITHDRAW (نفسها دون تغيير)
+  // ============================================================
   const handleMerchantDeposit = async (amount) => {
     if (!isOwnProfile) return;
     setAddBalanceLoading(true);
     try {
-      const response = await api.depositWithCard(userData.id, amount, DEPOSIT_CARD.number, DEPOSIT_CARD.holder);
-      if (response.success) {
-        const newBalance = response.newBalance;
-        setBalance(newBalance);
-        const updatedUser = { ...userData, balance: newBalance };
-        setUserData(updatedUser);
-        if (updateUser) updateUser(updatedUser);
-        if (onUpdateUser) onUpdateUser(updatedUser);
-        toast.success(lang === 'ar' ? `✅ تم إضافة ${amount} ريال بنجاح. الرصيد الحالي: ${newBalance}` : `✅ Added ${amount} SAR. New balance: ${newBalance}`);
-        setShowAddBalance(false);
-        setAddAmount('');
-      } else {
-        toast.error(response.message || (lang === 'ar' ? 'فشل الإضافة' : 'Failed to add funds'));
-      }
+      await deposit(amount, {
+        method: 'merchant_card',
+        cardNumber: DEPOSIT_CARD.number,
+        cardHolder: DEPOSIT_CARD.holder
+      });
+      toast.success(
+        lang === 'ar' 
+          ? `✅ تم إضافة ${amount} ريال بنجاح. الرصيد الحالي: ${getBalance()}` 
+          : `✅ Added ${amount} SAR successfully. New balance: ${getBalance()}`
+      );
+      setShowAddBalance(false);
+      setAddAmount('');
+      await loadWallet();
     } catch (error) {
       console.error(error);
-      toast.error(lang === 'ar' ? 'خطأ في الاتصال' : 'Connection error');
+      toast.error(error.message || (lang === 'ar' ? 'فشل الإضافة' : 'Failed to add funds'));
     } finally {
       setAddBalanceLoading(false);
     }
@@ -456,16 +893,11 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
           });
           const result = await confirmRes.json();
           if (result.success) {
-            const newBalance = result.newBalance;
-            setBalance(newBalance);
-            const updatedUser = { ...userData, balance: newBalance };
-            setUserData(updatedUser);
-            if (updateUser) updateUser(updatedUser);
-            if (onUpdateUser) onUpdateUser(updatedUser);
-            session.completePayment(ApplePaySession.STATUS_SUCCESS);
-            toast.success(lang === 'ar' ? `✅ تم إضافة ${amount} ريال عبر Apple Pay. الرصيد الحالي: ${newBalance}` : `✅ Added ${amount} SAR via Apple Pay. New balance: ${newBalance}`);
+            await loadWallet();
+            toast.success(lang === 'ar' ? `✅ تم إضافة ${amount} ريال عبر Apple Pay. الرصيد الحالي: ${getBalance()}` : `✅ Added ${amount} SAR via Apple Pay. New balance: ${getBalance()}`);
             setShowAddBalance(false);
             setAddAmount('');
+            session.completePayment(ApplePaySession.STATUS_SUCCESS);
           } else {
             session.completePayment(ApplePaySession.STATUS_FAILURE);
             toast.error(lang === 'ar' ? 'فشلت عملية الدفع' : 'Payment failed');
@@ -500,13 +932,8 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
       });
       const data = await response.json();
       if (response.ok && data.success) {
-        const newBalance = data.newBalance;
-        setBalance(newBalance);
-        const updatedUser = { ...userData, balance: newBalance };
-        setUserData(updatedUser);
-        if (updateUser) updateUser(updatedUser);
-        if (onUpdateUser) onUpdateUser(updatedUser);
-        toast.success(lang === 'ar' ? `✅ تم إضافة ${amount} ريال عبر Samsung Wallet. الرصيد الحالي: ${newBalance}` : `✅ Added ${amount} SAR via Samsung Wallet. New balance: ${newBalance}`);
+        await loadWallet();
+        toast.success(lang === 'ar' ? `✅ تم إضافة ${amount} ريال عبر Samsung Wallet. الرصيد الحالي: ${getBalance()}` : `✅ Added ${amount} SAR via Samsung Wallet. New balance: ${getBalance()}`);
         setShowAddBalance(false);
         setAddAmount('');
       } else {
@@ -524,23 +951,22 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
     if (!isOwnProfile) return;
     setWithdrawLoading(true);
     try {
-      const response = await api.withdrawToCard(userData.id, amount, WITHDRAW_CARD.number, WITHDRAW_CARD.holder);
-      if (response.success) {
-        const newBalance = response.newBalance;
-        setBalance(newBalance);
-        const updatedUser = { ...userData, balance: newBalance };
-        setUserData(updatedUser);
-        if (updateUser) updateUser(updatedUser);
-        if (onUpdateUser) onUpdateUser(updatedUser);
-        toast.success(lang === 'ar' ? `✅ تم سحب ${amount} ريال بنجاح. الرصيد المتبقي: ${newBalance}` : `✅ Withdrew ${amount} SAR. Remaining: ${newBalance}`);
-        setShowWithdraw(false);
-        setWithdrawAmount('');
-      } else {
-        toast.error(response.message || (lang === 'ar' ? 'فشل السحب' : 'Withdrawal failed'));
-      }
+      await withdraw(amount, {
+        method: 'merchant_account',
+        cardNumber: WITHDRAW_CARD.number,
+        cardHolder: WITHDRAW_CARD.holder
+      });
+      toast.success(
+        lang === 'ar' 
+          ? `✅ تم سحب ${amount} ريال بنجاح. الرصيد المتبقي: ${getBalance()}` 
+          : `✅ Withdrew ${amount} SAR successfully. Remaining: ${getBalance()}`
+      );
+      setShowWithdraw(false);
+      setWithdrawAmount('');
+      await loadWallet();
     } catch (error) {
       console.error(error);
-      toast.error(lang === 'ar' ? 'خطأ في الاتصال' : 'Connection error');
+      toast.error(error.message || (lang === 'ar' ? 'فشل السحب' : 'Withdrawal failed'));
     } finally {
       setWithdrawLoading(false);
     }
@@ -554,23 +980,21 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
     }
     setWithdrawLoading(true);
     try {
-      const response = await api.withdrawToAccount(userData.id, amount, account);
-      if (response.success) {
-        const newBalance = response.newBalance;
-        setBalance(newBalance);
-        const updatedUser = { ...userData, balance: newBalance };
-        setUserData(updatedUser);
-        if (updateUser) updateUser(updatedUser);
-        if (onUpdateUser) onUpdateUser(updatedUser);
-        toast.success(lang === 'ar' ? `✅ تم سحب ${amount} ريال إلى حسابك البنكي بنجاح. الرصيد المتبقي: ${newBalance}` : `✅ Withdrew ${amount} SAR to your bank account. Remaining: ${newBalance}`);
-        setShowWithdraw(false);
-        setWithdrawAmount('');
-      } else {
-        toast.error(response.message || (lang === 'ar' ? 'فشل السحب' : 'Withdrawal failed'));
-      }
+      await withdraw(amount, {
+        method: 'bank_account',
+        accountDetails: account
+      });
+      toast.success(
+        lang === 'ar' 
+          ? `✅ تم سحب ${amount} ريال إلى حسابك البنكي بنجاح. الرصيد المتبقي: ${getBalance()}` 
+          : `✅ Withdrew ${amount} SAR to your bank account. Remaining: ${getBalance()}`
+      );
+      setShowWithdraw(false);
+      setWithdrawAmount('');
+      await loadWallet();
     } catch (error) {
       console.error(error);
-      toast.error(lang === 'ar' ? 'خطأ في الاتصال' : 'Connection error');
+      toast.error(error.message || (lang === 'ar' ? 'فشل السحب' : 'Withdrawal failed'));
     } finally {
       setWithdrawLoading(false);
     }
@@ -642,19 +1066,22 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
     }
   };
 
-  const openConfirmModal = (action, amount, method = null) => {
+  const openConfirmModal = (action, amount, method = null, account = null) => {
     if (amount <= 0 || isNaN(amount)) {
       toast.error(lang === 'ar' ? 'المبلغ يجب أن يكون أكبر من صفر' : 'Amount must be greater than zero');
       return;
     }
-    if (action === 'withdraw' && amount > balance) {
-      toast.error(lang === 'ar' ? `الرصيد غير كافٍ. الرصيد الحالي: ${balance} ريال` : `Insufficient balance. Current: ${balance} SAR`);
+    if (action === 'withdraw' && amount > getBalance()) {
+      toast.error(lang === 'ar' ? `الرصيد غير كافٍ. الرصيد الحالي: ${getBalance()} ريال` : `Insufficient balance. Current: ${getBalance()} SAR`);
       return;
     }
     setConfirmAction(action);
     setConfirmAmount(amount);
     if (action === 'deposit') window.tempDepositMethod = method;
-    if (action === 'withdraw') window.tempWithdrawMethod = method;
+    if (action === 'withdraw') {
+      window.tempWithdrawMethod = method;
+      window.tempWithdrawAccount = account;
+    }
     setShowConfirmModal(true);
   };
 
@@ -686,6 +1113,15 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
     setConfirmAmount(0);
   };
 
+  // ====================== Countdown timer ======================
+  useEffect(() => {
+    if (otpCountdown > 0) {
+      const timer = setTimeout(() => setOtpCountdown(otpCountdown - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [otpCountdown]);
+
+  // ====================== Render ======================
   if (!userData) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -699,6 +1135,25 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
 
   const displayName = userData?.fullName?.trim() || (lang === 'ar' ? 'مستخدم' : 'User');
   const displayUsername = userData?.username?.trim() || null;
+
+  const getOtpMessage = () => {
+    if (otpStep === 'sent_old' || otpStep === 'verifying_old') {
+      return lang === 'ar' 
+        ? `✅ تم إرسال رمز التحقق إلى بريدك الحالي (${userData.email}) لتأكيد الهوية`
+        : `✅ Verification code sent to your current email (${userData.email}) to confirm identity`;
+    }
+    if (otpStep === 'sent_new' || otpStep === 'verifying_new') {
+      return lang === 'ar'
+        ? `✅ تم إرسال رمز التحقق إلى بريدك الجديد (${pendingUpdates?.email || ''}) لتأكيد الملكية`
+        : `✅ Verification code sent to your new email (${pendingUpdates?.email || ''}) to confirm ownership`;
+    }
+    if (otpStep === 'sent' || otpStep === 'verifying') {
+      return lang === 'ar'
+        ? `✅ تم إرسال رمز التحقق إلى بريدك (${userData.email}) لتأكيد التغييرات`
+        : `✅ Verification code sent to your email (${userData.email}) to confirm changes`;
+    }
+    return '';
+  };
 
   return (
     <div className="h-full overflow-y-auto bg-gradient-to-br from-green-50 to-emerald-50 dark:from-gray-900 dark:to-gray-800 pb-20">
@@ -753,19 +1208,15 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
                   <span>{displayUsername}</span>
                 </div>
               )}
-              {isOwnProfile && userData.email && (
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{userData.email}</p>
-              )}
               <p className="text-xs text-gray-400 mt-1 flex items-center justify-center gap-1">
                 <Shield size={12} className="text-green-600" />
                 {lang === 'ar' ? 'عضو موثق' : 'Verified Member'} • {lang === 'ar' ? 'انضم في ' : 'Joined '}{new Date(userData.createdAt).toLocaleDateString(lang === 'ar' ? 'ar-SA' : 'en-US')}
               </p>
-              {/* ✅ عرض رسالة نجاح التعديل */}
               {updateSuccess && (
                 <div className="mt-2 p-2 bg-green-100 dark:bg-green-900/30 border border-green-300 dark:border-green-700 rounded-lg flex items-center justify-center gap-2 animate-pulse">
                   <CheckCircle size={16} className="text-green-600" />
                   <span className="text-sm font-medium text-green-700 dark:text-green-300">
-                    {lang === 'ar' ? `✅ تم تحديث الاسم إلى "${editData.fullName}"` : `✅ Name updated to "${editData.fullName}"`}
+                    {lang === 'ar' ? `✅ تم تحديث البيانات بنجاح` : `✅ Profile updated`}
                   </span>
                 </div>
               )}
@@ -778,6 +1229,7 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
                   </button>
                   {isEditing && (
                     <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-700/50 rounded-xl space-y-3">
+                      {/* Name */}
                       <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                           {lang === 'ar' ? 'الاسم الكامل' : 'Full Name'}
@@ -791,48 +1243,93 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
                           className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-green-500 outline-none dark:bg-gray-800" 
                         />
                       </div>
-                      <div className="relative">
+                      {/* Email */}
+                      <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                           {lang === 'ar' ? 'البريد الإلكتروني' : 'Email'}
                         </label>
-                        <input type="email" value={userData.email || ''} disabled className="w-full p-3 border rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed" />
+                        <input 
+                          type="email" 
+                          name="email" 
+                          value={editData.email} 
+                          onChange={handleInputChange} 
+                          placeholder={lang === 'ar' ? 'البريد الإلكتروني' : 'Email'} 
+                          className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-green-500 outline-none dark:bg-gray-800" 
+                        />
                       </div>
-                      <div className="space-y-2">
+                      {/* Phone */}
+                      <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                           {lang === 'ar' ? 'رقم الجوال' : 'Phone'}
                         </label>
-                        <div className="flex gap-2">
-                          <input type="tel" name="phone" value={editData.phone} onChange={handleInputChange} placeholder={lang === 'ar' ? 'رقم الجوال' : 'Phone'} className="flex-1 p-3 border rounded-lg focus:ring-2 focus:ring-green-500 outline-none dark:bg-gray-800" />
-                          {editData.phone && editData.phone !== userData.phone && (
-                            <button onClick={handleVerifyPhone} disabled={phoneVerificationStep === 'sending' || phoneVerificationStep === 'verifying'} className="px-4 py-2 bg-blue-600 text-white rounded-lg whitespace-nowrap">
-                              {phoneVerificationStep === 'sending' ? (lang === 'ar' ? 'جاري...' : 'Sending...') : (lang === 'ar' ? 'تحقق' : 'Verify')}
-                            </button>
-                          )}
-                        </div>
-                        {showVerificationInput && (
-                          <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-                            <p className="text-sm mb-2">{lang === 'ar' ? `تم إرسال الرمز إلى ${tempPhone}` : `Code sent to ${tempPhone}`}</p>
-                            <div className="flex gap-2">
-                              <input type="text" value={verificationCode} onChange={(e) => setVerificationCode(e.target.value)} placeholder={lang === 'ar' ? 'أدخل الرمز' : 'Enter code'} className="flex-1 p-2 border rounded-lg text-center" maxLength="6" />
-                              <button onClick={handleVerifyCode} disabled={phoneVerificationStep === 'verifying'} className="px-4 py-2 bg-green-600 text-white rounded-lg">
-                                {phoneVerificationStep === 'verifying' ? '...' : (lang === 'ar' ? 'تأكيد' : 'Confirm')}
-                              </button>
-                            </div>
-                            <div className="mt-2 text-center">
-                              <button onClick={handleResendCode} disabled={countdown > 0} className="text-sm text-blue-600">
-                                {countdown > 0 ? (lang === 'ar' ? `إعادة الإرسال بعد ${countdown} ث` : `Resend in ${countdown}s`) : (lang === 'ar' ? 'إعادة إرسال الرمز' : 'Resend code')}
-                              </button>
-                            </div>
-                          </div>
-                        )}
+                        <input 
+                          type="tel" 
+                          name="phone" 
+                          value={editData.phone} 
+                          onChange={handleInputChange} 
+                          placeholder={lang === 'ar' ? 'رقم الجوال' : 'Phone'} 
+                          className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-green-500 outline-none dark:bg-gray-800" 
+                        />
                       </div>
-                      <button onClick={handleSaveProfile} disabled={saveLoading} className="w-full py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition flex items-center justify-center gap-2">
-                        {saveLoading ? (
-                          <><div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div> {lang === 'ar' ? 'جاري الحفظ...' : 'Saving...'}</>
+
+                      {/* Save button */}
+                      <button 
+                        onClick={handleSaveProfile} 
+                        disabled={saveLoading || isSavingAfterOtp} 
+                        className="w-full py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition flex items-center justify-center gap-2"
+                      >
+                        {saveLoading || isSavingAfterOtp ? (
+                          <><div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div> {lang === 'ar' ? 'جاري...' : 'Processing...'}</>
                         ) : (
                           <><Save size={18} /> {lang === 'ar' ? 'حفظ التغييرات' : 'Save Changes'}</>
                         )}
                       </button>
+
+                      {/* OTP verification section - يظهر فقط عند الحاجة */}
+                      {showOtpInput && (
+                        <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg mt-2 border border-blue-200 dark:border-blue-800">
+                          <p className="text-sm mb-2 font-medium">{getOtpMessage()}</p>
+                          <p className="text-xs text-blue-600 dark:text-blue-400 mb-2">
+                            {lang === 'ar'
+                              ? '📧 أدخل الرمز لتأكيد التغييرات.'
+                              : '📧 Enter the code to confirm changes.'}
+                          </p>
+                          <div className="flex gap-2">
+                            <input 
+                              type="text" 
+                              value={otpCode} 
+                              onChange={(e) => setOtpCode(e.target.value)} 
+                              placeholder={lang === 'ar' ? 'أدخل الرمز' : 'Enter code'} 
+                              className="flex-1 p-2 border rounded-lg text-center dark:bg-gray-800" 
+                              maxLength="6" 
+                              disabled={isSavingAfterOtp}
+                            />
+                            <button 
+                              onClick={handleVerifyOtp} 
+                              disabled={
+                                (otpStep === 'verifying_old' || otpStep === 'verifying_new' || otpStep === 'verifying') || 
+                                isSavingAfterOtp
+                              } 
+                              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
+                            >
+                              {(otpStep === 'verifying_old' || otpStep === 'verifying_new' || otpStep === 'verifying') || isSavingAfterOtp ? (
+                                <FaSpinner className="animate-spin" />
+                              ) : (lang === 'ar' ? 'تأكيد' : 'Confirm')}
+                            </button>
+                          </div>
+                          <div className="mt-2 text-center">
+                            <button 
+                              onClick={handleResendOtp} 
+                              disabled={otpCountdown > 0 || isSavingAfterOtp} 
+                              className="text-sm text-blue-600 hover:underline"
+                            >
+                              {otpCountdown > 0 
+                                ? (lang === 'ar' ? `إعادة الإرسال بعد ${otpCountdown} ث` : `Resend in ${otpCountdown}s`) 
+                                : (lang === 'ar' ? 'إعادة إرسال الرمز' : 'Resend code')}
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -875,10 +1372,16 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
                       <Wallet size={22} className="text-green-600" />
                       <span className="font-bold text-gray-700 dark:text-gray-300">{lang === 'ar' ? 'محفظتي' : 'My Wallet'}</span>
                     </div>
+                    {walletLoading && <FaSpinner className="animate-spin text-green-600" />}
                   </div>
                   <div className="text-center mb-4">
-                    <p className="text-sm text-gray-500">{lang === 'ar' ? 'الرصيد الحالي' : 'Current Balance'}</p>
-                    <p className="text-4xl font-bold text-green-600">{balance} <span className="text-lg">ريال</span></p>
+                    <p className="text-sm text-gray-500">{lang === 'ar' ? 'الرصيد المتاح' : 'Available Balance'}</p>
+                    <p className="text-4xl font-bold text-green-600">{getBalance()} <span className="text-lg">ريال</span></p>
+                    {hold > 0 && (
+                      <p className="text-xs text-yellow-600 mt-1">
+                        {lang === 'ar' ? `رصيد مجمد: ${hold} ريال` : `Held balance: ${hold} SAR`}
+                      </p>
+                    )}
                   </div>
                   <div className="flex gap-3">
                     <button onClick={() => setShowAddBalance(true)} className="flex-1 py-2.5 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-xl font-medium hover:bg-gray-200 dark:hover:bg-gray-600 transition transform hover:scale-[1.02] active:scale-98 flex items-center justify-center gap-2 shadow-sm">
@@ -953,7 +1456,7 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
               </div>
             </div>
 
-            {/* Add Bank Account Popup */}
+            {/* Popups (نفسها دون تغيير) */}
             {showAddBankAccount && (
               <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowAddBankAccount(false)}>
                 <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-sm w-full p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
@@ -971,7 +1474,6 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
               </div>
             )}
 
-            {/* Deposit Popup */}
             {showAddBalance && (
               <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowAddBalance(false)}>
                 <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-sm w-full p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
@@ -1026,7 +1528,6 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
               </div>
             )}
 
-            {/* Withdraw Popup */}
             {showWithdraw && (
               <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowWithdraw(false)}>
                 <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-sm w-full p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
@@ -1034,8 +1535,8 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
                     <h3 className="text-xl font-bold flex items-center gap-2"><ArrowUpCircle className="text-red-600" /> {lang === 'ar' ? 'سحب رصيد' : 'Withdraw Funds'}</h3>
                     <button onClick={() => setShowWithdraw(false)} className="p-1 rounded-full hover:bg-gray-100"><X size={20} /></button>
                   </div>
-                  <input type="number" placeholder={lang === 'ar' ? 'المبلغ (ريال)' : 'Amount (SAR)'} value={withdrawAmount} onChange={(e) => setWithdrawAmount(e.target.value)} className="w-full p-3 border rounded-xl mb-2 focus:ring-2 focus:ring-red-500 outline-none" min="1" step="1" max={balance} />
-                  <p className="text-xs text-gray-500 mb-4 flex items-center gap-1"><AlertCircle size={12} /> {lang === 'ar' ? `الرصيد المتاح: ${balance} ريال` : `Available: ${balance} SAR`}</p>
+                  <input type="number" placeholder={lang === 'ar' ? 'المبلغ (ريال)' : 'Amount (SAR)'} value={withdrawAmount} onChange={(e) => setWithdrawAmount(e.target.value)} className="w-full p-3 border rounded-xl mb-2 focus:ring-2 focus:ring-red-500 outline-none" min="1" step="1" max={getBalance()} />
+                  <p className="text-xs text-gray-500 mb-4 flex items-center gap-1"><AlertCircle size={12} /> {lang === 'ar' ? `الرصيد المتاح: ${getBalance()} ريال` : `Available: ${getBalance()} SAR`}</p>
                   <div className="space-y-3">
                     <div className="border rounded-xl p-3 hover:bg-gray-50 dark:hover:bg-gray-700 transition">
                       <button onClick={() => { const amount = parseFloat(withdrawAmount); if (!isNaN(amount) && amount > 0) openConfirmModal('withdraw', amount, 'merchant'); else toast.error(lang === 'ar' ? 'المبلغ غير صالح' : 'Invalid amount'); }} disabled={withdrawLoading} className="w-full flex items-center justify-between">
@@ -1054,7 +1555,7 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
                         <p className="text-sm font-medium mb-2">{lang === 'ar' ? 'اختر حسابك البنكي للسحب' : 'Select your bank account'}</p>
                         <div className="space-y-2">
                           {bankAccounts.map(acc => (
-                            <button key={acc.id} onClick={() => { window.tempWithdrawAccount = acc; const amount = parseFloat(withdrawAmount); if (!isNaN(amount) && amount > 0) openConfirmModal('withdraw', amount, 'bank_specific'); else toast.error(lang === 'ar' ? 'المبلغ غير صالح' : 'Invalid amount'); }} className="w-full text-right p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition flex justify-between items-center">
+                            <button key={acc.id} onClick={() => { const amount = parseFloat(withdrawAmount); if (!isNaN(amount) && amount > 0) openConfirmModal('withdraw', amount, 'bank_specific', acc); else toast.error(lang === 'ar' ? 'المبلغ غير صالح' : 'Invalid amount'); }} className="w-full text-right p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition flex justify-between items-center">
                               <span>{acc.accountName} - {acc.bankName}</span>
                               <span className="text-xs text-gray-400">→</span>
                             </button>
@@ -1067,7 +1568,6 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
               </div>
             )}
 
-            {/* Confirmation Modal */}
             {showConfirmModal && (
               <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
                 <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-sm w-full p-6 shadow-xl">
@@ -1101,7 +1601,6 @@ function ProfileDataPage({ lang, user: propUser, setPage, onUpdateUser }) {
               </div>
             )}
 
-            {/* Invoices Modal */}
             {showInvoices && (
               <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowInvoices(false)}>
                 <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-lg w-full max-h-[80vh] overflow-hidden shadow-xl" onClick={e => e.stopPropagation()}>
