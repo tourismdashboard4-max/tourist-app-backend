@@ -1,7 +1,11 @@
 // client/src/pages/MyTripsPage.jsx
-// ✅ النسخة النهائية – إلغاء فوري دون إعادة تحميل، مع تمرير صور يعمل
+// ✅ النسخة النهائية – مع صورة SVG مدمجة كصورة افتراضية (لا حاجة لملف خارجي)
+// ✅ إلغاء فوري دون إعادة تحميل، مع تمرير صور يعمل
 // ✅ عرض الحجوزات كبطاقات مستطيلة كاملة العرض
 // ✅ إزالة المكررات (نفس البرنامج يظهر مرة واحدة فقط)
+// ✅ إصلاح ظهور طلبات الحجز للمرشد السياحي
+// ✅ دعم التذاكر من نوع booking وتلك التي تحتوي على program_id/guide_id في metadata
+// ✅ استبعاد الحجوزات التجريبية المحلية (user_id=9999) من "طلبات واردة"
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
@@ -16,7 +20,10 @@ const API_BASE = 'https://tourist-app-api.onrender.com';
 const LOCAL_BOOKINGS_KEY = (userId) => `local_bookings_${userId}`;
 const CANCELLED_TICKETS_KEY = (userId) => `cancelled_tickets_${userId}`;
 
-// ===== دوال الصور والكاش =====
+// ===== صورة افتراضية مدمجة (SVG) – لا تحتاج لملف خارجي =====
+const DEFAULT_IMAGE = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"%3E%3Crect width="400" height="300" fill="%2310b981"/%3E%3Ctext x="50%25" y="50%25" font-family="Arial" font-size="28" fill="white" text-anchor="middle" dy=".3em"%3ENo Image%3C/text%3E%3C/svg%3E';
+
+// ===== دوال الصور المعدلة (مع الصورة المدمجة) =====
 const IMAGE_CACHE_KEY = 'guide_programs_images_cache';
 const LEGACY_IMAGE_KEY = (programId) => `program_images_${programId}`;
 
@@ -29,42 +36,23 @@ const buildImageUrl = (url) => {
   return `${API_BASE}/${url}`;
 };
 
-const validateImage = async (url) => {
-  if (!url) return false;
-  try {
-    const response = await fetch(url, { method: 'HEAD' });
-    return response.ok;
-  } catch { return false; }
-};
+// تجاهل التحقق المسبق (نقبل جميع الصور)
+const validateImage = async () => true;
 
 const filterValidImages = async (images) => {
   if (!images || images.length === 0) return [];
-  const valid = [];
-  for (const img of images) {
-    const url = buildImageUrl(img);
-    if (!url) continue;
-    const isValid = await validateImage(url);
-    if (isValid) valid.push(url);
-    else console.warn(`⚠️ صورة غير صالحة: ${url}`);
-  }
-  return valid;
+  return images.map(img => buildImageUrl(img)).filter(Boolean);
 };
 
 const saveImagesToCache = (programId, images) => {
   try {
     const cache = JSON.parse(localStorage.getItem(IMAGE_CACHE_KEY) || '{}');
-    if (images && images.length > 0) {
-      const imagesWithId = images.map(url => ({
-        url: typeof url === 'string' ? url : (url.url || url.image_url || null),
-        is_primary: url.is_primary !== undefined ? url.is_primary : false,
-        id: url.id || null
-      }));
-      cache[programId] = { images: imagesWithId, timestamp: Date.now() };
-      localStorage.setItem(IMAGE_CACHE_KEY, JSON.stringify(cache));
-    } else {
-      delete cache[programId];
-      localStorage.setItem(IMAGE_CACHE_KEY, JSON.stringify(cache));
-    }
+    const urls = (images || []).map(url => ({ url: typeof url === 'string' ? url : url.url, is_primary: false }));
+    cache[programId] = {
+      images: urls.length ? urls : [{ url: DEFAULT_IMAGE, is_primary: false }],
+      timestamp: Date.now()
+    };
+    localStorage.setItem(IMAGE_CACHE_KEY, JSON.stringify(cache));
   } catch (e) { console.warn('Failed to save images to cache:', e); }
 };
 
@@ -97,22 +85,16 @@ const getLegacyImages = (programId) => {
 const saveProgramImages = async (programId, images) => {
   try {
     if (!programId) return;
-    const validImages = await filterValidImages(images);
-    if (validImages.length === 0) {
-      saveImagesToCache(programId, []);
-      const key = LEGACY_IMAGE_KEY(programId);
-      localStorage.removeItem(key);
-      return;
-    }
-    saveImagesToCache(programId, validImages);
-    const key = LEGACY_IMAGE_KEY(programId);
-    localStorage.setItem(key, JSON.stringify(validImages));
+    const urls = images.map(img => buildImageUrl(img)).filter(Boolean);
+    if (urls.length === 0) urls.push(DEFAULT_IMAGE);
+    saveImagesToCache(programId, urls);
+    localStorage.setItem(LEGACY_IMAGE_KEY(programId), JSON.stringify(urls));
   } catch (error) { console.error('Error saving program images:', error); }
 };
 
 const getProgramImages = (programId) => {
   try {
-    if (!programId) return null;
+    if (!programId) return [DEFAULT_IMAGE];
     const cached = getImagesFromCache(programId);
     if (cached && cached.length > 0) return cached;
     const legacy = getLegacyImages(programId);
@@ -120,8 +102,19 @@ const getProgramImages = (programId) => {
       saveImagesToCache(programId, legacy);
       return legacy;
     }
-    return null;
-  } catch (error) { return null; }
+    return [DEFAULT_IMAGE];
+  } catch (error) {
+    console.error('Error retrieving program images:', error);
+    return [DEFAULT_IMAGE];
+  }
+};
+
+const clearProgramImages = (programId) => {
+  try {
+    if (!programId) return;
+    saveImagesToCache(programId, [DEFAULT_IMAGE]);
+    localStorage.removeItem(LEGACY_IMAGE_KEY(programId));
+  } catch (error) { console.error('Error clearing program images:', error); }
 };
 
 // ===== دوال المسافات والأنشطة =====
@@ -193,7 +186,7 @@ const deduplicateByProgramId = (list) => {
 };
 
 function MyTripsPage({ lang, user, setPage }) {
-  const [activeTab, setActiveTab] = useState('pending');
+  const [activeTab, setActiveTab] = useState('guidePending');
   const [pendingBookings, setPendingBookings] = useState([]);
   const [completedTrips, setCompletedTrips] = useState([]);
   const [guidePendingBookings, setGuidePendingBookings] = useState([]);
@@ -219,12 +212,14 @@ function MyTripsPage({ lang, user, setPage }) {
     return bookings;
   };
 
+  // زر إضافة حجز تجريبي (يستخدم برنامج حقيقي id=30)
   const addDemoBooking = () => {
     if (!isGuide) return;
     const key = LOCAL_BOOKINGS_KEY(user.id);
     const existing = localStorage.getItem(key);
     let bookings = existing ? JSON.parse(existing) : [];
-    const hasPending = bookings.some(b => b.program_id === 999 && b.status !== 'cancelled');
+    const DEMO_PROGRAM_ID = 30;
+    const hasPending = bookings.some(b => b.program_id === DEMO_PROGRAM_ID && b.status !== 'cancelled');
     if (hasPending) {
       toast.error(lang === 'ar' ? 'يوجد حجز معلق لهذا البرنامج التجريبي بالفعل' : 'There is already a pending booking for this demo program');
       return;
@@ -236,21 +231,21 @@ function MyTripsPage({ lang, user, setPage }) {
     const demoBooking = {
       id: Date.now(),
       user_id: 9999,
-      user_name: "مسافر تجريبي",
-      program_name: "رحلة تجريبية",
+      user_name: "مسافر تجريبي (آخر)",
+      program_name: "New Program",
       program_price: 150,
       user_balance: 500,
       created_at: new Date().toISOString(),
       status: 'pending',
       guide_id: user.id,
-      program_id: 999,
+      program_id: DEMO_PROGRAM_ID,
       participants: 2,
-      notes: 'حجز تجريبي',
+      notes: 'حجز تجريبي من مستخدم آخر',
       updated_at: null
     };
     bookings.push(demoBooking);
     localStorage.setItem(key, JSON.stringify(bookings));
-    toast.success(lang === 'ar' ? '✅ تم إضافة حجز تجريبي (للاختبار)' : '✅ Demo booking added (for testing)');
+    toast.success(lang === 'ar' ? '✅ تم إضافة حجز تجريبي من مستخدم آخر' : '✅ Demo booking from another user added');
     fetchAllTickets();
   };
 
@@ -295,6 +290,7 @@ function MyTripsPage({ lang, user, setPage }) {
     return false;
   };
 
+  // ✅ الدالة الرئيسية لجلب التذاكر وتصنيفها
   const fetchAllTickets = async () => {
     if (!user?.id) return;
     setLoading(true);
@@ -343,20 +339,19 @@ function MyTripsPage({ lang, user, setPage }) {
         if (pid) serverTicketMap.set(pid, t);
       });
 
-      // تصفية المحلية: نحتفظ فقط بالحجوزات التي ليس لها مقابل على الخادم (نفس program_id)
-      const uniqueLocalTickets = localAsTickets.filter(local => {
-        const pid = local.metadata?.program_id;
-        return pid && !serverTicketMap.has(pid);
+      // جلب تفاصيل البرامج للصور (يُبنى programMap)
+      const allProgramIds = new Set();
+      allTickets.forEach(t => {
+        const pid = t.metadata?.program_id;
+        if (pid) allProgramIds.add(pid);
+      });
+      localAsTickets.forEach(t => {
+        const pid = t.metadata?.program_id;
+        if (pid) allProgramIds.add(pid);
       });
 
-      // دمج القوائم
-      const mergedTickets = [...allTickets, ...uniqueLocalTickets];
-      console.log(`🔄 إجمالي التذاكر بعد الدمج (بدون تكرار): ${mergedTickets.length}`);
-
-      // جلب تفاصيل البرامج للصور
-      const programIds = new Set(mergedTickets.map(t => t.metadata?.program_id).filter(Boolean));
       const programMap = {};
-      for (const pid of programIds) {
+      for (const pid of allProgramIds) {
         try {
           const res = await fetch(`${API_BASE}/api/programs/${pid}`);
           if (res.ok) {
@@ -373,24 +368,47 @@ function MyTripsPage({ lang, user, setPage }) {
               if (images.length) await saveProgramImages(pid, images);
               programMap[pid] = {
                 ...prog,
-                images: images.length ? images : [],
-                cachedImages: getProgramImages(pid) || []
+                images: images.length ? images : [DEFAULT_IMAGE],
+                cachedImages: getProgramImages(pid) || [DEFAULT_IMAGE]
               };
             }
           }
         } catch (e) { console.warn(`Failed to fetch program ${pid}:`, e); }
       }
 
-      // إضافة البرامج إلى التذاكر
+      // ✅ تصفية الحجوزات المحلية: استبعاد البرامج غير الموجودة أو المستخدم التجريبي (9999)
+      const validLocalTickets = localAsTickets.filter(local => {
+        const pid = local.metadata?.program_id;
+        return pid && programMap[pid] && local.user_id !== 9999;
+      });
+
+      // تصفية المحلية: نحتفظ فقط بالحجوزات التي ليس لها مقابل على الخادم (نفس program_id)
+      const uniqueLocalTickets = validLocalTickets.filter(local => {
+        const pid = local.metadata?.program_id;
+        return pid && !serverTicketMap.has(pid);
+      });
+
+      // دمج القوائم (جميع التذاكر من الخادم + المحلية الفريدة الصالحة)
+      const mergedTickets = [...allTickets, ...uniqueLocalTickets];
+      console.log(`🔄 إجمالي التذاكر بعد الدمج (بدون تكرار): ${mergedTickets.length}`);
+
+      // ✅ إضافة البرامج إلى التذاكر
       const enrichedTickets = mergedTickets.map(t => {
         const pid = t.metadata?.program_id;
         if (pid && programMap[pid]) {
           return { ...t, program: programMap[pid] };
         }
+        // إذا لم يتم تحميل البرنامج، نحاول جلب الصور من الكاش
+        if (pid) {
+          const cachedImages = getProgramImages(pid);
+          if (cachedImages && cachedImages.length > 0) {
+            return { ...t, program: { images: cachedImages, cachedImages } };
+          }
+        }
         return t;
       });
 
-      // تصنيف حسب الدور
+      // تصنيف حسب الدور (مرشد أم مستخدم عادي)
       let pendingGuide = [];
       let completedGuide = [];
       let ratingsGuide = [];
@@ -403,18 +421,62 @@ function MyTripsPage({ lang, user, setPage }) {
         if (userUuid) guideIds.push(userUuid);
         if (userNumericId) guideIds.push(String(userNumericId));
 
+        // ✅ دالة محسنة لتصفية تذاكر المرشد
         const isGuideTicket = (ticket) => {
+          // 🚫 استبعاد التذاكر التي أرسلها المرشد نفسه
+          if (String(ticket.user_id) === String(user.id)) {
+            return false;
+          }
           const metadata = ticket.metadata || {};
-          const ticketGuideId = metadata.guide_id || ticket.guide_id;
-          if (ticketGuideId && guideIds.some(id => String(ticketGuideId) === id)) return true;
-          if (ticket.type === 'general' && String(ticket.user_id) !== String(user.id) && isBookingTicket(ticket)) {
+          
+          // 1. التحقق من وجود guide_id مباشر في metadata أو في حقل ticket
+          let ticketGuideId = metadata.guide_id || ticket.guide_id;
+          if (ticketGuideId && guideIds.some(id => String(ticketGuideId) === id)) {
             return true;
           }
+          
+          // 2. إذا كان هناك program_id، نبحث عن guide_id من البرنامج
+          if (metadata.program_id && ticket.program) {
+            const progGuideId = ticket.program.guide_id;
+            if (progGuideId && guideIds.some(id => String(progGuideId) === id)) {
+              return true;
+            }
+          }
+          
+          // 3. إذا كانت التذكرة من نوع booking وتحتوي على guide_id في metadata
+          if (ticket.type === 'booking' && metadata.guide_id) {
+            return guideIds.some(id => String(metadata.guide_id) === id);
+          }
+          
+          // 4. حالة عامة: التذاكر العامة التي تحتوي على كلمات حجز ونعتبرها للمرشد
+          //    (بشرط أن يكون البرنامج المطابق يخص هذا المرشد)
+          if (ticket.type === 'general' && isBookingTicket(ticket)) {
+            // نحاول ربطها بالبرنامج عن طريق مطابقة النص مع أسماء البرامج
+            const subject = ticket.subject || '';
+            const message = ticket.message || '';
+            for (const [pid, prog] of Object.entries(programMap)) {
+              const progName = prog.name?.trim().toLowerCase();
+              if (!progName) continue;
+              if (subject.toLowerCase().includes(progName) || message.toLowerCase().includes(progName)) {
+                // إذا كان البرنامج يخص المرشد، نعتبر التذكرة له
+                if (prog.guide_id && guideIds.some(id => String(prog.guide_id) === id)) {
+                  // نضيف program_id إلى metadata (لتجنب التكرار)
+                  ticket.metadata.program_id = parseInt(pid);
+                  ticket.metadata.program_name = prog.name;
+                  ticket.metadata.guide_id = prog.guide_id;
+                  return true;
+                }
+              }
+            }
+            // إذا لم نجد تطابقاً، نرفض التذكرة (لا نعرضها)
+            return false;
+          }
+          
           return false;
         };
 
         const guideRelatedTickets = enrichedTickets.filter(t => isGuideTicket(t));
-        console.log(`👨‍🏫 تذاكر متعلقة بالمرشد: ${guideRelatedTickets.length}`);
+        console.log(`👨‍🏫 تذاكر متعلقة بالمرشد (باستبعاد تذاكره): ${guideRelatedTickets.length}`);
 
         pendingGuide = guideRelatedTickets.filter(t =>
           isBookingTicket(t) &&
@@ -426,6 +488,7 @@ function MyTripsPage({ lang, user, setPage }) {
         );
         ratingsGuide = completedGuide.filter(t => t.type === 'trip' || t.status === 'completed');
 
+        // تذاكر المستخدم كمسافر (حجوزاته الخاصة)
         const userAsTouristTickets = enrichedTickets.filter(t => String(t.user_id) === String(user.id));
         myPending = userAsTouristTickets.filter(t =>
           isBookingTicket(t) &&
@@ -436,6 +499,7 @@ function MyTripsPage({ lang, user, setPage }) {
           ['accepted', 'completed'].includes(t.status?.toLowerCase())
         );
       } else {
+        // المستخدم العادي: فقط تذاكره
         const userTickets = enrichedTickets.filter(t => String(t.user_id) === String(user.id));
         myPending = userTickets.filter(t =>
           isBookingTicket(t) &&
@@ -533,16 +597,13 @@ function MyTripsPage({ lang, user, setPage }) {
     }
   };
 
-  // ✅ دالة إلغاء الحجز: حذف فوري من جميع القوائم وتحديث الخادم في الخلفية
   const handleCancelBooking = async (booking) => {
     if (cancellingId === booking.id) return;
     if (!window.confirm(lang === 'ar' ? 'في حال موافقتك سيتم الغاء هذا الحجز نهائياً' : 'If you agree, this booking will be permanently cancelled')) return;
     setCancellingId(booking.id);
 
-    // 1. إضافة التذكرة إلى القائمة السوداء فوراً
     addCancelledTicket(user.id, booking.id);
 
-    // 2. حذف من localStorage إذا كان محلياً
     const key = LOCAL_BOOKINGS_KEY(user.id);
     const stored = localStorage.getItem(key);
     if (stored) {
@@ -555,7 +616,6 @@ function MyTripsPage({ lang, user, setPage }) {
       }
     }
 
-    // 3. حذف من جميع القوائم المحلية فوراً (تحديث الواجهة)
     setPendingBookings(prev => prev.filter(b => b.id !== booking.id));
     setCompletedTrips(prev => prev.filter(b => b.id !== booking.id));
     setGuidePendingBookings(prev => prev.filter(b => b.id !== booking.id));
@@ -564,7 +624,6 @@ function MyTripsPage({ lang, user, setPage }) {
 
     toast.success(lang === 'ar' ? 'تم إلغاء الحجز بنجاح' : 'Booking cancelled successfully');
 
-    // 4. محاولة إلغاء التذكرة على الخادم في الخلفية (لا ننتظر النتيجة، ولا نعيد تحميل القوائم)
     try {
       const token = localStorage.getItem('token');
       await fetch(`${API_BASE}/api/support/tickets/${booking.id}/status`, {
@@ -572,7 +631,6 @@ function MyTripsPage({ lang, user, setPage }) {
         headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
         body: JSON.stringify({ status: 'cancelled' })
       });
-      // تجاهل النتيجة - تم الإلغاء محلياً بالفعل
     } catch (err) {
       console.warn('⚠️ خطأ في الاتصال بالخادم أثناء الإلغاء، ولكن تم الإلغاء محلياً');
     }
@@ -603,7 +661,7 @@ function MyTripsPage({ lang, user, setPage }) {
           localStorage.setItem(key, JSON.stringify(bookings));
           toast.success(lang === 'ar' ? 'تم تحديث الحجز بنجاح' : 'Booking updated successfully');
           setEditModal({ open: false, booking: null, participants: 1, notes: '' });
-          await fetchAllTickets(); // نحدث القوائم لتحديث البيانات
+          await fetchAllTickets();
           setSavingEdit(false);
           return;
         }
@@ -618,7 +676,6 @@ function MyTripsPage({ lang, user, setPage }) {
     }
   };
 
-  // ✅ التنقل بين الصور
   const nextImage = (e, bookingId, total) => {
     e.stopPropagation();
     e.preventDefault();
@@ -644,7 +701,7 @@ function MyTripsPage({ lang, user, setPage }) {
     });
   };
 
-  // عرض بطاقة الحجز
+  // ✅ دالة renderTripCard المعدلة مع صورة افتراضية
   const renderTripCard = (trip, type = 'tourist', showCancel = true) => {
     const metadata = trip.metadata || {};
     const isPending = (trip.status === 'pending' || trip.status === 'open');
@@ -667,54 +724,47 @@ function MyTripsPage({ lang, user, setPage }) {
       statusClass = 'bg-gray-100 text-gray-700';
     }
 
-    const programName = metadata.program_name || trip.subject?.replace('طلب حجز برنامج:', '') || (lang === 'ar' ? 'برنامج سياحي' : 'Tour Program');
+    const programName = metadata.program_name || 
+                        trip.subject?.replace('طلب حجز برنامج:', '').replace('Booking request:', '').trim() || 
+                        (lang === 'ar' ? 'برنامج سياحي' : 'Tour Program');
+    
     const touristName = metadata.tourist_name || trip.user_name || (lang === 'ar' ? 'مسافر' : 'Tourist');
-    const guideName = metadata.guide_name || trip.guide_name || (lang === 'ar' ? 'مرشد' : 'Guide');
-    const price = metadata.program_price || '';
+    const price = metadata.program_price || metadata.price || '';
     const participants = metadata.participants || 1;
     const notes = metadata.notes || '';
     const updatedAt = metadata.updated_at || null;
 
     const program = trip.program || {};
-    const images = program.images || [];
+    let images = program.images || [];
+    if ((!images || images.length === 0) && metadata.program_id) {
+      const cached = getProgramImages(metadata.program_id);
+      if (cached && cached.length > 0) images = cached;
+    }
+    // إذا لم توجد صور، نستخدم الصورة الافتراضية
+    if (!images || images.length === 0) {
+      images = [DEFAULT_IMAGE];
+    }
     const currentIndex = imageIndices[trip.id] || 0;
     const totalImages = images.length;
-    const imageUrl = totalImages > 0 ? images[currentIndex] : null;
+    const imageUrl = totalImages > 0 ? images[currentIndex] : DEFAULT_IMAGE;
     const activity = getActivityType(program, lang);
 
     return (
       <div key={trip.id} className="bg-white dark:bg-gray-800 rounded-xl overflow-hidden shadow-md border border-gray-200 dark:border-gray-700 hover:shadow-lg transition">
-        {/* حاوية الصورة */}
         <div className="relative w-full h-52 md:h-64 bg-gray-200 dark:bg-gray-700">
-          {imageUrl ? (
-            <img
-              src={imageUrl}
-              alt={programName}
-              className="w-full h-full object-cover"
-              crossOrigin="anonymous"
-              loading="lazy"
-              onError={(e) => {
-                const newImages = images.filter((_, i) => i !== currentIndex);
-                if (newImages.length === 0) {
-                  e.target.style.display = 'none';
-                  e.target.parentElement.innerHTML = `
-                    <div class="w-full h-full flex items-center justify-center text-gray-400 bg-gray-100 dark:bg-gray-700">
-                      <span class="text-sm">${lang === 'ar' ? 'لا توجد صورة' : 'No image'}</span>
-                    </div>
-                  `;
-                } else {
-                  saveProgramImages(program.id, newImages);
-                  setImageIndices(prev => ({ ...prev, [trip.id]: 0 }));
-                }
-              }}
-            />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center text-gray-400 bg-gray-100 dark:bg-gray-700">
-              <span className="text-sm">{lang === 'ar' ? 'لا توجد صورة' : 'No image'}</span>
-            </div>
-          )}
+          <img
+            src={imageUrl}
+            alt={programName}
+            className="w-full h-full object-cover"
+            crossOrigin="anonymous"
+            loading="lazy"
+            onError={(e) => {
+              // ✅ عند فشل التحميل، نعرض الصورة الافتراضية فقط (لا نمسح الكاش)
+              e.target.src = DEFAULT_IMAGE;
+              // لا نقوم بتعديل images أو مسح الكاش
+            }}
+          />
 
-          {/* أزرار التنقل بين الصور */}
           {totalImages > 1 && (
             <>
               <button
@@ -737,7 +787,6 @@ function MyTripsPage({ lang, user, setPage }) {
             </>
           )}
 
-          {/* أيقونة النشاط والحالة */}
           <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-sm text-white text-[10px] px-2 py-0.5 rounded-full z-10 flex items-center gap-1">
             <span>{activity.icon}</span>
             <span className="hidden sm:inline">{activity[lang]}</span>
@@ -753,7 +802,6 @@ function MyTripsPage({ lang, user, setPage }) {
           </div>
         </div>
 
-        {/* منطقة المعلومات والأزرار */}
         <div className="p-3">
           <div className="flex flex-wrap justify-between items-center gap-1 text-xs text-gray-600 dark:text-gray-400 mb-2">
             <span className="flex items-center gap-1"><Clock size={12} /> {formatDate(trip.created_at)}</span>
@@ -810,7 +858,6 @@ function MyTripsPage({ lang, user, setPage }) {
     );
   };
 
-  // مودال تعديل الحجز
   const EditModal = () => {
     if (!editModal.open) return null;
     return (
@@ -928,13 +975,13 @@ function MyTripsPage({ lang, user, setPage }) {
       </div>
       <div className="border-b border-gray-200 dark:border-gray-700 flex mt-2 overflow-x-auto">
         <button onClick={() => setActiveTab('guidePending')} className={`px-4 py-2 font-medium whitespace-nowrap ${activeTab === 'guidePending' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-500'}`}>
-          {lang === 'ar' ? 'طلبات حجز واردة' : 'Incoming Bookings'} ({guidePendingBookings.length})
+          {lang === 'ar' ? 'طلبات واردة' : 'Incoming Bookings'} ({guidePendingBookings.length})
         </button>
         <button onClick={() => setActiveTab('guideCompleted')} className={`px-4 py-2 font-medium whitespace-nowrap ${activeTab === 'guideCompleted' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-500'}`}>
-          {lang === 'ar' ? 'رحلات منتهية (كمرشد)' : 'Completed Trips (as Guide)'} ({guideCompletedTrips.length})
+          {lang === 'ar' ? 'رحلة مكتمله' : 'Completed Trips'} ({guideCompletedTrips.length})
         </button>
         <button onClick={() => setActiveTab('guideRatings')} className={`px-4 py-2 font-medium whitespace-nowrap ${activeTab === 'guideRatings' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-500'}`}>
-          {lang === 'ar' ? 'رحلاتي للتقييم' : 'Trips for Rating'} ({guideRatingsTrips.length})
+          {lang === 'ar' ? 'رحلاتي' : 'My Trips'} ({guideRatingsTrips.length})
         </button>
         <button onClick={() => setActiveTab('myOwnBookings')} className={`px-4 py-2 font-medium whitespace-nowrap ${activeTab === 'myOwnBookings' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-500'}`}>
           {lang === 'ar' ? 'حجوزاتي (كمسافر)' : 'My Bookings (as Tourist)'} ({pendingBookings.length + completedTrips.length})
@@ -968,7 +1015,7 @@ function MyTripsPage({ lang, user, setPage }) {
         ) : activeTab === 'guideCompleted' && guideCompletedTrips.length === 0 ? (
           <div className="bg-white dark:bg-gray-800 rounded-2xl p-12 text-center border-2 border-dashed">
             <CheckCircle size={48} className="mx-auto text-gray-400" />
-            <p className="mt-4 text-gray-500">{lang === 'ar' ? 'لا توجد رحلات منتهية (كمرشد)' : 'No completed trips as guide'}</p>
+            <p className="mt-4 text-gray-500">{lang === 'ar' ? 'لا توجد رحلات مكتملة' : 'No completed trips'}</p>
           </div>
         ) : activeTab === 'guideCompleted' ? (
           <div className="space-y-4">
@@ -977,7 +1024,7 @@ function MyTripsPage({ lang, user, setPage }) {
         ) : activeTab === 'guideRatings' && guideRatingsTrips.length === 0 ? (
           <div className="bg-white dark:bg-gray-800 rounded-2xl p-12 text-center border-2 border-dashed">
             <Star size={48} className="mx-auto text-gray-400" />
-            <p className="mt-4 text-gray-500">{lang === 'ar' ? 'لا توجد رحلات قابلة للتقييم حالياً' : 'No trips available for rating'}</p>
+            <p className="mt-4 text-gray-500">{lang === 'ar' ? 'لا توجد رحلات للتقييم' : 'No trips for rating'}</p>
           </div>
         ) : activeTab === 'guideRatings' ? (
           <div className="space-y-4">
