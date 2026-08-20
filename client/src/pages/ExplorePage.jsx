@@ -1,15 +1,16 @@
 // client/src/pages/ExplorePage.jsx
-// ✅ النسخة النهائية – عرض كامل للبيانات والصور للمستخدمين والمرشدين
-// ✅ دعم إلغاء الحجز (عند إلغاء الحجز، يمكن إعادة الحجز مرة أخرى)
-// ✅ تحديث فوري للحجوزات عبر focus و visibilitychange
+// ✅ النسخة النهائية – تحسين منطق المسار والأزرار
+// ✅ زر "المسار" يظهر دائماً، وعند الضغط عليه يتم تفعيل المسار أو تحديثه
+// ✅ زر "إلغاء المسار" يظهر فقط للمسار النشط الحالي
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Popup, useMap, Polyline } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { 
   Home, Bell, User, MapPin, Search, MessageCircle, 
-  CalendarCheck, Heart, X, Star, Navigation, Crosshair, MousePointer
+  CalendarCheck, Heart, X, Star, Navigation, Route, Info, Activity,
+  Layers
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { FaBoxOpen, FaSpinner } from 'react-icons/fa';
@@ -43,8 +44,10 @@ document.head.appendChild(style);
 const API_BASE = "https://tourist-app-api.onrender.com";
 const NEARBY_RADIUS = 245;
 const LOCAL_BOOKINGS_KEY = (userId) => `local_bookings_${userId}`;
+const SHOW_ALL_MODE_KEY = 'show_all_programs_mode';
+const MAP_TYPE_KEY = 'explore_map_type';
 
-// دوال الصور والكاش (نفس ما في HomePage)
+// دوال الصور والكاش (نفس السابق)
 const IMAGE_CACHE_KEY = 'guide_programs_images_cache';
 const LEGACY_IMAGE_KEY = (programId) => `program_images_${programId}`;
 const LOCATION_TIMEOUT = 15000;
@@ -53,11 +56,12 @@ const MAX_RETRY_ATTEMPTS = 3;
 
 const buildImageUrl = (url) => {
   if (!url || typeof url !== 'string') return null;
-  if (url.startsWith('blob:') || url.startsWith('data:')) return url;
   if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  if (url.startsWith('blob:') || url.startsWith('data:')) return url;
   if (url.startsWith('/')) return `${API_BASE}${url}`;
   return `${API_BASE}/${url}`;
 };
+
 const validateImage = async (url) => {
   if (!url) return false;
   try {
@@ -65,6 +69,7 @@ const validateImage = async (url) => {
     return response.ok;
   } catch { return false; }
 };
+
 const filterValidImages = async (images) => {
   if (!images || images.length === 0) return [];
   const valid = [];
@@ -77,6 +82,7 @@ const filterValidImages = async (images) => {
   }
   return valid;
 };
+
 const saveImagesToCache = (programId, images) => {
   try {
     const cache = JSON.parse(localStorage.getItem(IMAGE_CACHE_KEY) || '{}');
@@ -94,6 +100,7 @@ const saveImagesToCache = (programId, images) => {
     }
   } catch (e) { console.warn('Failed to save images to cache:', e); }
 };
+
 const getImagesFromCache = (programId) => {
   try {
     const cache = JSON.parse(localStorage.getItem(IMAGE_CACHE_KEY) || '{}');
@@ -107,6 +114,7 @@ const getImagesFromCache = (programId) => {
     return entry.images.map(img => img.url).filter(Boolean);
   } catch (e) { return null; }
 };
+
 const getLegacyImages = (programId) => {
   try {
     const key = LEGACY_IMAGE_KEY(programId);
@@ -118,6 +126,7 @@ const getLegacyImages = (programId) => {
     return null;
   } catch (e) { return null; }
 };
+
 const saveProgramImages = async (programId, images) => {
   try {
     if (!programId) return;
@@ -133,6 +142,7 @@ const saveProgramImages = async (programId, images) => {
     localStorage.setItem(key, JSON.stringify(validImages));
   } catch (error) { console.error('Error saving program images:', error); }
 };
+
 const getProgramImages = (programId) => {
   try {
     if (!programId) return null;
@@ -146,6 +156,7 @@ const getProgramImages = (programId) => {
     return null;
   } catch (error) { return null; }
 };
+
 const clearProgramImages = (programId) => {
   try {
     if (!programId) return;
@@ -154,6 +165,7 @@ const clearProgramImages = (programId) => {
     localStorage.removeItem(key);
   } catch (error) { console.error('Error clearing program images:', error); }
 };
+
 const fetchProgramImagesFromAPI = async (programId) => {
   try {
     const response = await fetch(`${API_BASE}/api/programs/${programId}`);
@@ -174,7 +186,7 @@ const fetchProgramImagesFromAPI = async (programId) => {
   } catch (error) { console.error(`Error fetching images for program ${programId}:`, error); return null; }
 };
 
-// دوال المسافات والأنشطة والترجمة (نفس السابق)
+// دوال المسافات والأنشطة والترجمة
 const getDistance = (lat1, lon1, lat2, lon2) => {
   if (!lat1 || !lon1 || !lat2 || !lon2) return Infinity;
   const R = 6371;
@@ -184,7 +196,9 @@ const getDistance = (lat1, lon1, lat2, lon2) => {
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
   return R * c;
 };
+
 const isValidLocation = (lat, lng) => lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+
 const getActivityType = (program, lang) => {
   const text = ((program.name || '') + ' ' + (program.description || '')).toLowerCase();
   if (text.includes('بحر') || text.includes('بحري')) return { ar: 'رحلات بحرية', en: 'Marine trips', icon: '🌊' };
@@ -245,6 +259,18 @@ const LOCALES = {
     zoomOut: "تصغير",
     loadingImages: "جاري تحميل الصور...",
     bookingExists: "لديك طلب حجز معلق لهذا البرنامج",
+    showNearby: "القريبة فقط",
+    showAll: "جميع البرامج",
+    route: "المسار",
+    clearRoute: "إلغاء المسار",
+    distance: "المسافة",
+    duration: "الوقت المقدر",
+    noRoute: "لا يمكن حساب المسار",
+    routeError: "فشل حساب المسار",
+    routeTracking: "تتبع المسار المباشر",
+    stopTracking: "إيقاف التتبع",
+    map: "خريطة",
+    satellite: "أقمار صناعية",
   },
   en: {
     search: "Search...",
@@ -296,6 +322,18 @@ const LOCALES = {
     zoomOut: "Zoom out",
     loadingImages: "Loading images...",
     bookingExists: "You have a pending booking for this program",
+    showNearby: "Nearby only",
+    showAll: "All programs",
+    route: "Route",
+    clearRoute: "Clear route",
+    distance: "Distance",
+    duration: "Estimated time",
+    noRoute: "No route available",
+    routeError: "Failed to calculate route",
+    routeTracking: "Live route tracking",
+    stopTracking: "Stop tracking",
+    map: "Map",
+    satellite: "Satellite",
   },
 };
 
@@ -306,6 +344,70 @@ const MapController = ({ center, zoom }) => {
       map.flyTo(center, zoom, { duration: 1 });
     }
   }, [center, zoom, map]);
+  return null;
+};
+
+// ✅ مخصص لإدارة طبقة الخريطة مع منع التكرار
+const MapTileManager = ({ mapType, dark }) => {
+  const map = useMap();
+  const tileLayerRef = useRef(null);
+
+  const getTileUrl = (type, isDark) => {
+    switch (type) {
+      case 'satellite':
+        return 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+      case 'map':
+      default:
+        return isDark
+          ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+          : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
+    }
+  };
+
+  const getSubdomains = (type) => {
+    if (type === 'map') {
+      return 'abcd';
+    }
+    return null;
+  };
+
+  useEffect(() => {
+    const url = getTileUrl(mapType, dark);
+    const subdomains = getSubdomains(mapType);
+
+    if (tileLayerRef.current) {
+      map.removeLayer(tileLayerRef.current);
+      tileLayerRef.current = null;
+    }
+
+    const options = {
+      maxZoom: 18,
+      minZoom: 4,
+      attribution: '',
+      updateWhenIdle: true,
+      keepBuffer: 4,
+      updateInterval: 200,
+      unloadInvisibleTiles: true,
+      noWrap: true,
+      bounds: L.latLngBounds([-90, -180], [90, 180]),
+    };
+
+    if (subdomains) {
+      options.subdomains = subdomains;
+    }
+
+    const newLayer = L.tileLayer(url, options);
+    newLayer.addTo(map);
+    tileLayerRef.current = newLayer;
+
+    return () => {
+      if (tileLayerRef.current) {
+        map.removeLayer(tileLayerRef.current);
+        tileLayerRef.current = null;
+      }
+    };
+  }, [map, mapType, dark]);
+
   return null;
 };
 
@@ -326,13 +428,39 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
   const [loadingImages, setLoadingImages] = useState(false);
   const [bookingLoading, setBookingLoading] = useState(false);
   const [favoriteIds, setFavoriteIds] = useState([]);
-  const [showOnlyNearby, setShowOnlyNearby] = useState(true);
   const [nearbyRadius] = useState(NEARBY_RADIUS);
   const [isLocating, setIsLocating] = useState(false);
   const [manualMode, setManualMode] = useState(false);
   const [mapCenter, setMapCenter] = useState([0, 0]);
   const [mapZoom, setMapZoom] = useState(5);
   const [locationStatus, setLocationStatus] = useState('idle');
+  
+  // حالة نوع الخريطة
+  const getInitialMapType = () => {
+    const stored = localStorage.getItem(MAP_TYPE_KEY);
+    if (stored && ['map', 'satellite'].includes(stored)) return stored;
+    return 'map';
+  };
+  const [mapType, setMapType] = useState(getInitialMapType);
+  
+  // حالات التوجيه (المسار)
+  const [routeCoordinates, setRouteCoordinates] = useState(null);
+  const [routeInfo, setRouteInfo] = useState(null);
+  const [loadingRoute, setLoadingRoute] = useState(false);
+  const [showRoute, setShowRoute] = useState(false);
+  const [routeTracking, setRouteTracking] = useState(false);
+  const [routeProgramId, setRouteProgramId] = useState(null);
+  const [routeEndLat, setRouteEndLat] = useState(null);
+  const [routeEndLng, setRouteEndLng] = useState(null);
+
+  const getInitialShowAllMode = () => {
+    const stored = localStorage.getItem(SHOW_ALL_MODE_KEY);
+    if (stored !== null) return stored === 'true';
+    return false;
+  };
+
+  const [showAllMode, setShowAllMode] = useState(getInitialShowAllMode);
+  const showOnlyNearby = !showAllMode;
 
   const watchIdRef = useRef(null);
   const retryCountRef = useRef(0);
@@ -341,8 +469,9 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
   const [guidesMap, setGuidesMap] = useState({});
   const locationTimeoutRef = useRef(null);
   const isMobile = useRef(window.innerWidth < 768);
+  const routeFetchingRef = useRef(false);
 
-  // ✅ دوال الحجوزات
+  // دوال الحجوزات
   const getBookedProgramIds = useCallback(() => {
     if (!user?.id) return [];
     const key = LOCAL_BOOKINGS_KEY(user.id);
@@ -372,11 +501,11 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => {
       window.removeEventListener('focus', handleFocus);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [refreshBookedPrograms]);
 
-  // باقي الدوال (جلب البرامج، الصور، المرشدين، المفضلة، الموقع، إلخ)
+  // جلب المرشدين
   useEffect(() => {
     const fetchGuidesMap = async () => {
       try {
@@ -422,16 +551,23 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     toast.success(isFav ? t('removedFromFavorites') : t('addedToFavorites'));
   };
 
+  // جلب البرامج
   const fetchProgramsFromAPI = useCallback(async () => {
     try {
       const response = await fetch(`${API_BASE}/api/programs`);
       const data = await response.json();
       if (response.ok && data.success && Array.isArray(data.programs)) {
         const activePrograms = data.programs.filter(p => (p.status || '').toLowerCase() === 'active');
+        console.log(`📦 عدد البرامج النشطة: ${activePrograms.length}`);
+
         const progs = await Promise.all(activePrograms.map(async (p) => {
           let guide_avatar = null;
           if (p.guide_id && guidesMap[p.guide_id]) guide_avatar = guidesMap[p.guide_id].avatar;
           else if (p.guide_name && guidesMap[p.guide_name]) guide_avatar = guidesMap[p.guide_name].avatar;
+
+          const lat = p.location_lat ?? p.latitude ?? p.lat ?? null;
+          const lng = p.location_lng ?? p.longitude ?? p.lng ?? null;
+
           let images = [];
           try {
             const imgRes = await fetch(`${API_BASE}/api/programs/${p.id}`);
@@ -449,34 +585,71 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
               }
             }
           } catch (err) { console.warn(`Failed to fetch images for program ${p.id}:`, err); }
+
           if (images.length === 0) {
             const cached = getProgramImages(p.id);
             if (cached && cached.length > 0) images = cached;
           }
+
           return {
-            id: p.id, name: p.name, guide_name: p.guide_name, guide_id: p.guide_id,
-            lat: p.location_lat, lng: p.location_lng, price: p.price, duration: p.duration,
-            rating: p.rating || 4.5, location_name: p.location, description: p.description,
-            image: buildImageUrl(p.image), images: images || [], safetyGuidelines: p.safetyGuidelines || "",
-            status: p.status, guide_avatar, hasCachedImages: images && images.length > 0,
+            id: p.id,
+            name: p.name,
+            guide_name: p.guide_name,
+            guide_id: p.guide_id,
+            lat: lat,
+            lng: lng,
+            price: p.price,
+            duration: p.duration,
+            rating: p.rating || 4.5,
+            location_name: p.location_name || p.location || 'موقع البرنامج',
+            description: p.description,
+            image: buildImageUrl(p.image),
+            images: images || [],
+            safetyGuidelines: p.safetyGuidelines || "",
+            status: p.status,
+            guide_avatar,
+            hasCachedImages: images && images.length > 0,
           };
         }));
-        setPrograms(progs.filter(p => p.lat && p.lng && !isNaN(p.lat) && !isNaN(p.lng)));
-      } else setPrograms([]);
-    } catch (err) { console.error('Failed to fetch programs', err); setPrograms([]); }
-  }, [guidesMap]);
+
+        const validPrograms = progs.filter(p => {
+          const hasValidCoords = p.lat !== null && p.lng !== null && !isNaN(p.lat) && !isNaN(p.lng);
+          if (!hasValidCoords) {
+            console.warn(`⚠️ البرنامج "${p.name}" (ID: ${p.id}) ليس له إحداثيات صالحة، سيتم استبعاده من الخريطة.`);
+          }
+          return hasValidCoords;
+        });
+
+        console.log(`✅ تم تحميل ${validPrograms.length} برنامج صالح للعرض على الخريطة من أصل ${progs.length}`);
+        setPrograms(validPrograms);
+
+        if (validPrograms.length > 0 && !userLocation && !initialZoomDone.current) {
+          const firstProgram = validPrograms[0];
+          setMapCenter([firstProgram.lat, firstProgram.lng]);
+          setMapZoom(isMobile.current ? 10 : 12);
+          initialZoomDone.current = true;
+        }
+      } else {
+        console.warn('⚠️ استجابة غير متوقعة من الخادم:', data);
+        setPrograms([]);
+      }
+    } catch (err) {
+      console.error('❌ فشل جلب البرامج:', err);
+      setPrograms([]);
+    }
+  }, [guidesMap, userLocation]);
 
   const fetchProgramImages = useCallback(async (program) => {
     if (!program) return;
-    const cachedImages = getProgramImages(program.id);
-    if (cachedImages && cachedImages.length > 0) {
-      setProgramImages(cachedImages);
-      setCurrentImageIndex(0);
-      setPrograms(prev => prev.map(p => p.id === program.id ? { ...p, images: cachedImages, hasCachedImages: true } : p));
-      return;
-    }
     setLoadingImages(true);
     try {
+      const cachedImages = getProgramImages(program.id);
+      if (cachedImages && cachedImages.length > 0) {
+        setProgramImages(cachedImages);
+        setCurrentImageIndex(0);
+        setPrograms(prev => prev.map(p => p.id === program.id ? { ...p, images: cachedImages, hasCachedImages: true } : p));
+        return;
+      }
       const images = await fetchProgramImagesFromAPI(program.id);
       if (images && images.length > 0) {
         setProgramImages(images);
@@ -486,8 +659,12 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
         setProgramImages([]);
         clearProgramImages(program.id);
       }
-    } catch (err) { console.error('Error fetching program images:', err); setProgramImages([]); }
-    finally { setLoadingImages(false); }
+    } catch (err) { 
+      console.error('Error fetching program images:', err); 
+      setProgramImages([]); 
+    } finally { 
+      setLoadingImages(false); 
+    }
   }, []);
 
   const getUserGuideUuid = useCallback(async () => {
@@ -534,7 +711,14 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     return filtered;
   }, [programsWithDistance, showMyProgramsOnly, user, userUuid, showOnlyNearby, nearbyRadius, userLocation]);
 
-  // دوال الموقع (نفس السابق)
+  const toggleShowMode = useCallback(() => {
+    const newMode = !showAllMode;
+    setShowAllMode(newMode);
+    localStorage.setItem(SHOW_ALL_MODE_KEY, String(newMode));
+    window.dispatchEvent(new CustomEvent('showAllModeChanged', { detail: { showAllMode: newMode } }));
+  }, [showAllMode]);
+
+  // دوال الموقع
   const updateUserLocationState = (lat, lng, accuracy, isManual = false) => {
     if (!isValidLocation(lat, lng)) return false;
     setUserLocation([lat, lng]);
@@ -577,8 +761,10 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
         const { latitude, longitude, accuracy } = position.coords;
         if (!isValidLocation(latitude, longitude)) {
           retryCountRef.current += 1;
-          if (retryCountRef.current <= MAX_RETRY_ATTEMPTS) return;
-          else {
+          if (retryCountRef.current <= MAX_RETRY_ATTEMPTS) {
+            console.warn(`⚠️ موقع غير صالح، محاولة ${retryCountRef.current}/${MAX_RETRY_ATTEMPTS}`);
+            return;
+          } else {
             setIsLocating(false);
             setLocationStatus('error');
             toast.dismiss(loadingToast);
@@ -598,6 +784,8 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
           toast.dismiss(loadingToast);
           if (accuracy <= MIN_ACCURACY_THRESHOLD) {
             toast.success(lang === 'ar' ? `📍 دقة ${Math.round(accuracy)}م` : `📍 ${Math.round(accuracy)}m accuracy`, { duration: 2000 });
+          } else {
+            toast(lang === 'ar' ? `⚠️ دقة منخفضة (${Math.round(accuracy)}م)` : `⚠️ Low accuracy (${Math.round(accuracy)}m)`, { duration: 3000 });
           }
         }
       },
@@ -631,13 +819,16 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     setLocationStatus('idle');
     toast(t('manualModeActive'), { duration: 2000 });
   };
+
   const disableManualMode = () => {
     setManualMode(false);
     setLocationStatus('idle');
     startAutoTracking();
     toast(t('manualModeOff'), { duration: 1500 });
   };
+
   const handleManualLocationToggle = () => { if (manualMode) disableManualMode(); else enableManualMode(); };
+
   const handleMapClick = (e) => {
     if (!manualMode) return;
     const { lat, lng } = e.latlng;
@@ -650,9 +841,11 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
       toast.error(lang === 'ar' ? 'الموقع غير صالح' : 'Invalid location');
     }
   };
+
   const handleRetryAutoLocation = () => {
-    if (manualMode) disableManualMode();
-    else {
+    if (manualMode) {
+      disableManualMode();
+    } else {
       retryCountRef.current = 0;
       if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
       if (locationTimeoutRef.current) clearTimeout(locationTimeoutRef.current);
@@ -660,7 +853,108 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     }
   };
 
-  // دوال التفاعل (دردشة، حجز، عرض على الخريطة)
+  // ============================================
+  // ✅ دوال التوجيه (المسار) – تحسين منطق الأزرار
+  // ============================================
+  const fetchRoute = useCallback(async (startLat, startLng, endLat, endLng) => {
+    if (!startLat || !startLng || !endLat || !endLng) return null;
+    setLoadingRoute(true);
+    try {
+      const url = `https://router.project-osrm.org/route/v1/driving/${startLng},${startLat};${endLng},${endLat}?overview=full&geometries=geojson`;
+      const response = await fetch(url);
+      if (!response.ok) throw new Error('Failed to fetch route');
+      const data = await response.json();
+      if (data.code !== 'Ok' || !data.routes || data.routes.length === 0) {
+        throw new Error('No route found');
+      }
+      const route = data.routes[0];
+      const coordinates = route.geometry.coordinates.map(coord => [coord[1], coord[0]]);
+      const distance = (route.distance / 1000).toFixed(1);
+      const duration = Math.round(route.duration / 60);
+      return { coordinates, distance, duration };
+    } catch (error) {
+      console.error('Route fetch error:', error);
+      toast.error(t('routeError'));
+      return null;
+    } finally {
+      setLoadingRoute(false);
+    }
+  }, [t]);
+
+  const updateRoute = useCallback(async () => {
+    if (!userLocation || routeFetchingRef.current) return;
+    if (routeEndLat === null || routeEndLng === null) return;
+    routeFetchingRef.current = true;
+    try {
+      const result = await fetchRoute(
+        userLocation[0], userLocation[1],
+        routeEndLat, routeEndLng
+      );
+      if (result) {
+        setRouteCoordinates(result.coordinates);
+        setRouteInfo({ distance: result.distance, duration: result.duration });
+        if (leafletMapRef.current && !routeTracking) {
+          const bounds = L.latLngBounds([
+            [userLocation[0], userLocation[1]],
+            [routeEndLat, routeEndLng]
+          ]);
+          leafletMapRef.current.fitBounds(bounds, { padding: [50, 50], maxZoom: 13 });
+        }
+      } else {
+        console.warn('Route fetch failed');
+      }
+    } catch (err) {
+      console.error('Route update error:', err);
+    } finally {
+      routeFetchingRef.current = false;
+    }
+  }, [userLocation, routeEndLat, routeEndLng, fetchRoute, routeTracking]);
+
+  // ✅ دالة تفعيل المسار (تُستدعى عند الضغط على زر المسار)
+  const activateRouteForProgram = useCallback(async (program) => {
+    if (!program || !userLocation) {
+      toast.error(lang === 'ar' ? 'حدد موقعك وبرنامجاً أولاً' : 'Set your location and select a program');
+      return;
+    }
+    if (!program.lat || !program.lng) {
+      toast.error(lang === 'ar' ? 'البرنامج المحدد ليس له موقع' : 'Selected program has no location');
+      return;
+    }
+    
+    // تحديث بيانات المسار للبرنامج الجديد
+    setRouteProgramId(program.id);
+    setRouteEndLat(program.lat);
+    setRouteEndLng(program.lng);
+    setShowRoute(true);
+    setRouteTracking(true);
+    await updateRoute();
+    toast.success(lang === 'ar' ? '✅ تفعيل تتبع المسار المباشر' : '✅ Live route tracking activated');
+  }, [userLocation, updateRoute, lang]);
+
+  // ❌ لا يوجد تأثير تلقائي لتغيير المسار عند اختيار برنامج جديد (كما طلب المستخدم)
+
+  // تأثير لتحديث المسار عند تغير موقع المستخدم (إذا كان التتبع نشطاً)
+  useEffect(() => {
+    if (routeTracking && userLocation && routeEndLat !== null && routeEndLng !== null) {
+      updateRoute();
+    }
+  }, [userLocation, routeTracking, routeEndLat, routeEndLng, updateRoute]);
+
+  const clearRoute = () => {
+    setRouteCoordinates(null);
+    setRouteInfo(null);
+    setShowRoute(false);
+    setRouteTracking(false);
+    setRouteProgramId(null);
+    setRouteEndLat(null);
+    setRouteEndLng(null);
+    routeFetchingRef.current = false;
+    toast(lang === 'ar' ? 'تم إلغاء المسار' : 'Route cleared');
+  };
+
+  // ============================================
+  // ✅ دوال التفاعل
+  // ============================================
   const handleChatWithGuide = (guideId, guideName) => {
     if (!user) { toast.error(t('loginRequired')); setPage('profile'); return; }
     if (String(guideId) === String(user.id)) { toast.error(t('cannotChatOwn')); return; }
@@ -673,7 +967,10 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
   const handleBooking = async (program) => {
     if (!user) { toast.error(t('loginRequired')); setPage('profile'); return; }
     if (isOwnProgram(program)) { toast.error(t('cannotBookOwn')); return; }
-    if (bookedProgramIds.includes(program.id)) { toast.info(t('bookingExists')); return; }
+    if (bookedProgramIds.includes(program.id)) {
+      toast(t('bookingExists'), { duration: 3000 });
+      return;
+    }
     setBookingLoading(true);
     try {
       const token = localStorage.getItem('token');
@@ -720,17 +1017,55 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
     } finally { setBookingLoading(false); }
   };
 
-  const handleViewOnMap = (programId) => {
-    localStorage.setItem('selectedProgramId', programId);
-    setPage('explore');
-  };
+  // حفظ نوع الخريطة في localStorage عند التغيير
+  useEffect(() => {
+    localStorage.setItem(MAP_TYPE_KEY, mapType);
+  }, [mapType]);
 
-  // تأثيرات التحميل
+  // ============================================
+  // ✅ تفعيل الوضع الليلي مع خريطة الأقمار الصناعية عبر فلتر CSS
+  // ============================================
+  useEffect(() => {
+    if (leafletMapRef.current) {
+      const container = leafletMapRef.current.getContainer();
+      if (dark && mapType === 'satellite') {
+        container.style.filter = 'brightness(0.7) saturate(0.8) contrast(1.1)';
+      } else {
+        container.style.filter = 'none';
+      }
+    }
+  }, [dark, mapType]);
+
+  // ============================================
+  // ✅ إعادة ضبط حجم الخريطة عند تغيير النوع
+  // ============================================
+  useEffect(() => {
+    if (leafletMapRef.current) {
+      setTimeout(() => {
+        leafletMapRef.current.invalidateSize();
+      }, 100);
+    }
+  }, [mapType]);
+
+  // ============================================
+  // ✅ تأثيرات التحميل
+  // ============================================
   useEffect(() => {
     fetchProgramsFromAPI();
     const interval = setInterval(fetchProgramsFromAPI, 60000);
     return () => clearInterval(interval);
   }, [fetchProgramsFromAPI]);
+
+  useEffect(() => {
+    if (programs.length > 0 && !userLocation && !initialZoomDone.current) {
+      const firstProgram = programs[0];
+      if (firstProgram.lat && firstProgram.lng) {
+        setMapCenter([firstProgram.lat, firstProgram.lng]);
+        setMapZoom(isMobile.current ? 10 : 12);
+        initialZoomDone.current = true;
+      }
+    }
+  }, [programs, userLocation]);
 
   useEffect(() => {
     const savedLocation = localStorage.getItem('manual_user_location');
@@ -770,6 +1105,26 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
   }, [programs, fetchProgramImages]);
 
   useEffect(() => {
+    const handleStorageChange = (e) => {
+      if (e.key === SHOW_ALL_MODE_KEY) {
+        const newValue = e.newValue === 'true';
+        setShowAllMode(newValue);
+      }
+    };
+    const handleCustomEvent = (e) => {
+      if (e.detail && typeof e.detail.showAllMode === 'boolean') {
+        setShowAllMode(e.detail.showAllMode);
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('showAllModeChanged', handleCustomEvent);
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('showAllModeChanged', handleCustomEvent);
+    };
+  }, []);
+
+  useEffect(() => {
     const handleResize = () => { isMobile.current = window.innerWidth < 768; };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
@@ -789,7 +1144,6 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
 
   const isBooked = (programId) => bookedProgramIds.includes(programId);
 
-  // JSX للصفحة (نفس السابق)
   return (
     <div className="h-full flex flex-col pb-16">
       {/* الهيدر */}
@@ -809,46 +1163,51 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
             </div>
             <div>
               <h1 className="font-bold text-sm">{user.name || user.fullName}</h1>
-              <p className="text-[10px] flex items-center gap-1 opacity-90">
-                <MapPin size={10} className="inline" />
-                {locationActive && userAccuracy && !manualMode ? (
-                  <span>{t('usingGps')} ±{Math.round(userAccuracy)}{t('accuracyMeters')}</span>
-                ) : manualMode ? (
-                  <span>{t('usingManual')}</span>
-                ) : locationStatus === 'locating' ? (
-                  <span className="animate-pulse">⏳ {t('locating')}</span>
-                ) : (
-                  <span>⚠️ {t('locationError')}</span>
-                )}
-              </p>
             </div>
           </div>
           <div className="flex gap-1">
-            <button onClick={handleManualLocationToggle} className="p-1.5 bg-white/20 rounded-full hover:bg-white/30 transition" title={manualMode ? t('useAutoLocation') : t('setManualLocation')}>
-              <MousePointer size={16} />
-            </button>
-            <button onClick={handleRetryAutoLocation} className="p-1.5 bg-white/20 rounded-full hover:bg-white/30 transition disabled:opacity-50" disabled={isLocating} title={t('retryLocation')}>
-              <Crosshair size={16} className={isLocating ? "animate-pulse" : ""} />
-            </button>
             <button onClick={() => setPage('home')} className="p-1.5 bg-white/20 rounded-full"><Home size={16} /></button>
             <button onClick={() => setPage('notifications')} className="relative p-1.5 bg-white/20 rounded-full"><Bell size={16} />{unreadCount > 0 && <span className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-[8px] rounded-full w-4 h-4 flex items-center justify-center">{unreadCount}</span>}</button>
           </div>
         </div>
-        <div className="flex gap-2">
-          <div className="relative flex-1">
+        <div className="flex flex-wrap gap-2">
+          <div className="relative flex-1 min-w-[120px]">
             <Search className="absolute right-2 top-1.5 text-white/70" size={12} />
             <input type="text" placeholder={t('search')} className="w-full p-1.5 pr-7 rounded-lg bg-white/20 text-white placeholder-white/60 focus:outline-none focus:bg-white/30 transition text-xs" />
           </div>
-          <div className="flex gap-1">
+          <div className="flex gap-1 flex-wrap">
             {isGuide && (
               <button onClick={() => setShowMyProgramsOnly(!showMyProgramsOnly)} className={`px-2 py-1 rounded-lg text-[10px] ${showMyProgramsOnly ? 'bg-yellow-500' : 'bg-white/20'}`}>
                 {showMyProgramsOnly ? '📌' : '🌍'}
               </button>
             )}
-            <button onClick={() => setShowOnlyNearby(!showOnlyNearby)} className={`px-2 py-1 rounded-lg text-[10px] ${showOnlyNearby ? 'bg-blue-500' : 'bg-white/20'}`}>
-              {showOnlyNearby ? `📍 ${nearbyRadius}كم` : '🗺️'}
+            <button 
+              onClick={toggleShowMode} 
+              className={`px-2 py-1 rounded-lg text-[10px] ${showAllMode ? 'bg-blue-500' : 'bg-white/20'}`}
+            >
+              {showAllMode ? '📍 ' + t('showNearby') : '🗺️ ' + t('showAll')}
             </button>
           </div>
+        </div>
+        <div className="flex gap-1 mt-1 flex-wrap">
+          <button
+            onClick={() => setMapType('map')}
+            className={`px-2 py-0.5 rounded text-[10px] transition ${
+              mapType === 'map' ? 'bg-white/40 text-white' : 'bg-white/20 text-white/70 hover:bg-white/30'
+            }`}
+            title={t('map')}
+          >
+            🗺️ {t('map')}
+          </button>
+          <button
+            onClick={() => setMapType('satellite')}
+            className={`px-2 py-0.5 rounded text-[10px] transition ${
+              mapType === 'satellite' ? 'bg-white/40 text-white' : 'bg-white/20 text-white/70 hover:bg-white/30'
+            }`}
+            title={t('satellite')}
+          >
+            🛰️ {t('satellite')}
+          </button>
         </div>
         <div className="text-[10px] text-white/80 mt-1 text-center">
           {displayedPrograms.length} {t('programsNearby')}
@@ -856,11 +1215,13 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
       </div>
 
       {/* الخريطة */}
-      <div ref={mapContainerRef} className="flex-1 w-full relative z-0" style={{ height: 'calc(100vh - 180px)' }}>
+      <div ref={mapContainerRef} className="flex-1 w-full relative z-0" style={{ height: 'calc(100vh - 200px)' }}>
         <MapContainer 
-          key={mapCenter ? `map-${mapCenter[0]}-${mapCenter[1]}` : 'map-default'} 
+          key="unique-map-container"
           center={mapCenter || [0, 0]} 
           zoom={mapZoom || 5} 
+          minZoom={4} 
+          maxZoom={18}
           style={{ height: "100%", width: "100%" }} 
           zoomSnap={0.5} 
           zoomDelta={0.5} 
@@ -874,18 +1235,14 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
             map.on('click', handleMapClick);
             if (map.attributionControl) map.attributionControl.remove();
             if (map.zoomControl) map.zoomControl.remove();
-            map.setMinZoom(3);
+            map.setMinZoom(4);
             map.setMaxZoom(18);
             if (userLocation && map) {
               setTimeout(() => map.flyTo(userLocation, isMobile.current ? 9 : 11, { duration: 1 }), 500);
             }
           }}
         >
-          {dark ? (
-            <TileLayer attribution="" url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" subdomains="abcd" maxZoom={19} />
-          ) : (
-            <TileLayer attribution="" url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png" subdomains="abcd" maxZoom={19} />
-          )}
+          <MapTileManager mapType={mapType} dark={dark} />
           {mapCenter && <MapController center={mapCenter} zoom={mapZoom} />}
           {displayedPrograms.map(program => {
             const color = isOwnProgram(program) ? "#9b59b6" : "#10b981";
@@ -902,30 +1259,17 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
                 key={program.id} 
                 position={[program.lat, program.lng]} 
                 icon={markerIcon} 
-                eventHandlers={{ 
-                  click: () => { 
-                    setSelectedProgram(program); 
-                    fetchProgramImages(program); 
+                eventHandlers={{
+                  click: () => {
+                    console.log(`📍 تم النقر على البرنامج: ${program.name} (ID: ${program.id})`);
+                    setSelectedProgram(program);
+                    fetchProgramImages(program);
                     if (leafletMapRef.current) {
                       leafletMapRef.current.flyTo([program.lat, program.lng], isMobile.current ? 12 : 14, { duration: 0.8 });
                     }
-                  } 
+                  }
                 }}
-              >
-                <Popup closeButton={false} className="custom-popup">
-                  <div className="text-center p-1 max-w-[150px]">
-                    <div className="font-bold text-sm truncate">{program.name}</div>
-                    <div className="text-xs text-gray-600 truncate">{program.guide_name}</div>
-                    <div className="text-xs text-green-600 font-bold">{program.price} {t('price')}</div>
-                    {program.distance && program.distance !== Infinity && (
-                      <div className="text-[10px] text-gray-500">{program.distance.toFixed(1)} {t('kmAway')}</div>
-                    )}
-                    {isBooked(program.id) && (
-                      <div className="text-xs text-blue-600 font-bold mt-1">✅ {t('bookingExists')}</div>
-                    )}
-                  </div>
-                </Popup>
-              </Marker>
+              />
             );
           })}
           {userLocation && (
@@ -942,12 +1286,23 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
               </Popup>
             </Marker>
           )}
+          {/* عرض المسار - يظهر بشكل مستقل عن البرنامج المحدد */}
+          {showRoute && routeCoordinates && routeCoordinates.length > 0 && (
+            <Polyline 
+              positions={routeCoordinates} 
+              color={routeTracking ? "#2563eb" : "#8b5cf6"} 
+              weight={routeTracking ? 5 : 4} 
+              opacity={0.8}
+              dashArray={routeTracking ? null : "8 6"}
+              smoothFactor={1}
+            />
+          )}
         </MapContainer>
       </div>
 
-      {/* بطاقة البرنامج المحدد */}
+      {/* ✅ بطاقة البرنامج المحدد – fixed لضمان الظهور */}
       {selectedProgram && (
-        <div className="absolute bottom-24 left-0 right-0 z-30 px-1 transition-all duration-300">
+        <div className="fixed bottom-24 left-0 right-0 z-50 px-1 transition-all duration-300">
           <div className={`${dark ? 'bg-gray-800' : 'bg-white'} rounded-xl shadow-2xl overflow-hidden border ${dark ? 'border-gray-700' : 'border-gray-200'}`}>
             <div className="relative w-full" style={{ minHeight: '220px', maxHeight: '340px' }}>
               {loadingImages ? (
@@ -1016,11 +1371,57 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
                   <MapPin size={10} />
                   <span className="truncate">{selectedProgram.location_name || selectedProgram.location || 'موقع البرنامج'}</span>
                 </div>
+                {/* عرض معلومات المسار إذا كان نشطاً */}
+                {showRoute && routeInfo && (
+                  <div className="mt-1 flex items-center gap-2 text-[10px] bg-black/50 backdrop-blur-sm px-2 py-0.5 rounded-full w-fit">
+                    {routeTracking ? <Activity size={10} className="animate-pulse" /> : <Route size={10} />}
+                    <span>{routeInfo.distance} كم</span>
+                    <span>•</span>
+                    <span>{routeInfo.duration} دقيقة</span>
+                    {routeTracking && <span className="text-green-400 text-[8px]">● تتبع مباشر</span>}
+                  </div>
+                )}
               </div>
-              <button onClick={() => { setSelectedProgram(null); setProgramImages([]); }} className="absolute top-1 right-1 z-20 bg-black/50 backdrop-blur-sm p-1 rounded-full text-white hover:bg-black/70 transition"><X size={14} /></button>
+              <button onClick={() => setSelectedProgram(null)} className="absolute top-1 right-1 z-20 bg-black/50 backdrop-blur-sm p-1 rounded-full text-white hover:bg-black/70 transition"><X size={14} /></button>
               <div className="absolute bottom-1 left-1 right-1 z-20 flex justify-between items-center pointer-events-auto gap-1">
-                <button onClick={() => toggleFavorite(selectedProgram.id)} className="p-1.5 rounded-full transition hover:scale-105"><Heart size={16} className={favoriteIds.includes(selectedProgram.id) ? 'fill-red-500 text-red-500' : 'text-white'} /></button>
-                <div className="flex gap-1">
+                <div className="flex items-center gap-1 flex-wrap">
+                  <button onClick={() => toggleFavorite(selectedProgram.id)} className="p-1.5 rounded-full transition hover:scale-105"><Heart size={16} className={favoriteIds.includes(selectedProgram.id) ? 'fill-red-500 text-red-500' : 'text-white'} /></button>
+                  
+                  {/* منطق عرض زر المسار / إلغاء المسار */}
+                  {!showRoute ? (
+                    // لا يوجد مسار نشط: عرض زر "المسار"
+                    <button 
+                      onClick={() => activateRouteForProgram(selectedProgram)} 
+                      disabled={loadingRoute || !userLocation}
+                      className="bg-blue-600/80 hover:bg-blue-700 backdrop-blur-sm text-white px-2 py-1 rounded-lg text-[10px] font-medium flex items-center gap-1 transition disabled:opacity-50"
+                    >
+                      {loadingRoute ? <FaSpinner className="animate-spin" size={10} /> : <Route size={10} />} 
+                      {t('route')}
+                    </button>
+                  ) : (
+                    // يوجد مسار نشط
+                    routeProgramId === selectedProgram.id ? (
+                      // المسار الحالي لنفس البرنامج: عرض زر "إلغاء المسار"
+                      <button 
+                        onClick={clearRoute} 
+                        className="bg-red-600/80 hover:bg-red-700 backdrop-blur-sm text-white px-2 py-1 rounded-lg text-[10px] font-medium flex items-center gap-1 transition"
+                      >
+                        <X size={10} /> {routeTracking ? t('stopTracking') : t('clearRoute')}
+                      </button>
+                    ) : (
+                      // مسار نشط لبرنامج آخر: عرض زر "المسار" (سيقوم باستبدال المسار)
+                      <button 
+                        onClick={() => activateRouteForProgram(selectedProgram)} 
+                        disabled={loadingRoute || !userLocation}
+                        className="bg-blue-600/80 hover:bg-blue-700 backdrop-blur-sm text-white px-2 py-1 rounded-lg text-[10px] font-medium flex items-center gap-1 transition disabled:opacity-50"
+                      >
+                        {loadingRoute ? <FaSpinner className="animate-spin" size={10} /> : <Route size={10} />} 
+                        {t('route')}
+                      </button>
+                    )
+                  )}
+                </div>
+                <div className="flex gap-1 flex-wrap">
                   <button onClick={() => handleChatWithGuide(selectedProgram.guide_id, selectedProgram.guide_name)} disabled={isOwnProgram(selectedProgram)} className={`${isOwnProgram(selectedProgram) ? 'bg-gray-500 cursor-not-allowed' : 'bg-blue-600/90 hover:bg-blue-700'} backdrop-blur-sm text-white px-2 py-1 rounded-lg text-[10px] font-medium flex items-center gap-1 transition`}><MessageCircle size={10} /> {t('chatWithGuide')}</button>
                   <button onClick={() => handleBooking(selectedProgram)} disabled={bookingLoading || isOwnProgram(selectedProgram) || isBooked(selectedProgram.id)} className={`${(bookingLoading || isOwnProgram(selectedProgram) || isBooked(selectedProgram.id)) ? 'bg-gray-500 cursor-not-allowed' : 'bg-purple-600/90 hover:bg-purple-700'} backdrop-blur-sm text-white px-2 py-1 rounded-lg text-[10px] font-medium flex items-center gap-1 transition`}>
                     <CalendarCheck size={10} /> {isBooked(selectedProgram.id) ? t('bookingExists') : t('bookNow')}
