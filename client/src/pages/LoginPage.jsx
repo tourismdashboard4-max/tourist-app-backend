@@ -1,6 +1,7 @@
-// client/src/pages/LoginPage.jsx - نظام تسجيل الدخول بالبريد الإلكتروني فقط
-// نسخة معدلة - تم إصلاح مشكلة تعدد الرموز وإضافة purpose إلى verifyOTP
-// ✅ تم إصلاح عملية "نسيت كلمة المرور" لاستخدام sendOTP بنفس نظام OTP الموحد
+// client/src/pages/LoginPage.jsx — النسخة النهائية المُصلحة
+// ✅ handleForgotPassword يستخدم api.forgotPassword مباشرة
+// ✅ عرض تنبيه عند فشل البريد (emailSent: false)
+// ✅ رسائل خطأ محسّنة
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Mail, Lock, User, Key, ArrowRight, CheckCircle, AlertCircle } from 'lucide-react';
@@ -10,8 +11,8 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
   // ============================================
   // States
   // ============================================
-  const [mode, setMode] = useState('login'); // login, register, forgot
-  const [step, setStep] = useState(1); // 1: email, 2: otp, 3: userInfo (للتسجيل فقط)
+  const [mode, setMode] = useState('login');
+  const [step, setStep] = useState(1);
   const [email, setEmail] = useState('');
   const [otp, setOtp] = useState('');
   const [otpSent, setOtpSent] = useState(false);
@@ -26,20 +27,17 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState('');
-  // متغير لتتبع الرمز الحالي الصالح (اختياري)
-  const [currentValidOTP, setCurrentValidOTP] = useState('');
+  const [warning, setWarning] = useState('');
 
   // ============================================
-  // Validation Functions
+  // Validation
   // ============================================
   const validateEmail = (email) => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return emailRegex.test(email);
   };
 
-  const validateOTP = (code) => {
-    return /^\d{6}$/.test(code);
-  };
+  const validateOTP = (code) => /^\d{6}$/.test(code);
 
   const validatePassword = (password) => {
     if (password.length < 6) return 'كلمة المرور يجب أن تكون 6 أحرف على الأقل';
@@ -54,42 +52,52 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
   };
 
   // ============================================
+  // Timer Helper
+  // ============================================
+  const startTimer = () => {
+    setTimer(60);
+    const interval = setInterval(() => {
+      setTimer((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  };
+
+  // ============================================
   // Handlers
   // ============================================
   const handleSendOTP = async () => {
     setErrors({});
+    setWarning('');
     
     if (!email) {
-      setErrors({ email: lang === 'ar' ? 'البريد الإلكتروني مطلوب' : 'Email is required' });
+      setErrors({ email: 'البريد الإلكتروني مطلوب' });
       return;
     }
-
     if (!validateEmail(email)) {
-      setErrors({ email: lang === 'ar' ? 'البريد الإلكتروني غير صحيح' : 'Invalid email address' });
+      setErrors({ email: 'البريد الإلكتروني غير صحيح' });
       return;
     }
 
     setLoading(true);
     try {
-      console.log('📧 Sending OTP to email:', email);
-      const response = await api.sendOTP(email);
+      console.log('📧 [REGISTER] Sending OTP to:', email);
+      const response = await api.sendOTP(email, 'register');
       
       setOtpSent(true);
       setStep(2);
       
-      setSuccess(lang === 'ar' ? 'تم إرسال رمز التحقق إلى بريدك' : 'Verification code sent to your email');
+      if (response.emailSent === false) {
+        setWarning('⚠️ تعذر إرسال البريد. اطلب الرمز من الدعم (Render Logs)');
+      } else {
+        setSuccess('تم إرسال رمز التحقق إلى بريدك');
+      }
       
-      // Timer 60 seconds
-      setTimer(60);
-      const interval = setInterval(() => {
-        setTimer((prev) => {
-          if (prev <= 1) {
-            clearInterval(interval);
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
+      startTimer();
     } catch (error) {
       console.error('❌ Send OTP error:', error);
       setErrors({ general: error.message });
@@ -100,45 +108,36 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
 
   const handleVerifyOTP = async () => {
     setErrors({});
+    setWarning('');
 
     if (!validateOTP(otp)) {
-      setErrors({ otp: lang === 'ar' ? 'رمز التحقق يجب أن يكون 6 أرقام' : 'OTP must be 6 digits' });
+      setErrors({ otp: 'رمز التحقق يجب أن يكون 6 أرقام' });
       return;
     }
 
     setLoading(true);
     try {
-      console.log('📤 Verifying OTP with data:', { email, otp, mode, step });
+      // ✅ تحديد purpose بدقة
+      const purpose = mode === 'forgot' ? 'reset-password' : 'register';
+      console.log('📤 [VERIFY] purpose:', purpose, '| code:', otp);
       
-      // ✅ تحديد الغرض بناءً على الوضع الحالي والخطوة
-      let purpose = 'register';
-      if (mode === 'forgot') {
-        purpose = 'reset-password';
-      } else if (mode === 'register') {
-        purpose = 'register';
-      }
-      
-      console.log('🎯 Sending with purpose:', purpose);
-      
-      // ✅ إرسال الغرض مع الطلب
       const response = await api.verifyOTP(email, otp, purpose);
-      
-      console.log('📥 Verify response:', response);
+      console.log('📥 [VERIFY] response:', response);
       
       if (response.success) {
         if (mode === 'forgot') {
-          // ✅ في وضع نسيت كلمة المرور، ننتقل مباشرة لخطوة تغيير كلمة المرور
+          // ✅ نسيت كلمة المرور → انتقل لإدخال كلمة المرور الجديدة
           setStep(3);
-          setSuccess(lang === 'ar' ? 'تم التحقق، أدخل كلمة المرور الجديدة' : 'Verified, enter new password');
+          setSuccess('تم التحقق، أدخل كلمة المرور الجديدة');
         } else if (response.isNewUser) {
-          // ✅ مستخدم جديد في وضع التسجيل - انتقل لخطوة إدخال البيانات
+          // ✅ مستخدم جديد → أكمل البيانات
           setStep(3);
-          setSuccess(lang === 'ar' ? 'تم التحقق، أكمل بياناتك' : 'Verified, complete your info');
+          setSuccess('تم التحقق، أكمل بياناتك');
         } else {
-          // ✅ مستخدم موجود - سجل دخوله مباشرة
+          // ✅ مستخدم موجود → سجّل الدخول مباشرة
           if (response.token) {
             localStorage.setItem('token', response.token);
-            localStorage.setItem('user', JSON.stringify(response.user)); // حفظ بيانات المستخدم
+            localStorage.setItem('user', JSON.stringify(response.user));
           }
           onLoginSuccess(response);
         }
@@ -163,7 +162,7 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
     if (passwordError) newErrors.password = passwordError;
 
     if (userData.password !== userData.confirmPassword) {
-      newErrors.confirmPassword = lang === 'ar' ? 'كلمة المرور غير متطابقة' : 'Passwords do not match';
+      newErrors.confirmPassword = 'كلمة المرور غير متطابقة';
     }
 
     if (Object.keys(newErrors).length > 0) {
@@ -173,14 +172,11 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
 
     setLoading(true);
     try {
-      console.log('📤 Registering with data:', { email, fullName: userData.fullName });
-      
       const response = await api.register(email, userData.fullName, userData.password);
-      
       if (response.success) {
         if (response.token) {
           localStorage.setItem('token', response.token);
-          localStorage.setItem('user', JSON.stringify(response.user)); // حفظ بيانات المستخدم
+          localStorage.setItem('user', JSON.stringify(response.user));
         }
         onLoginSuccess(response);
       }
@@ -200,29 +196,24 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
     }
     
     if (userData.password !== userData.confirmPassword) {
-      setErrors({ confirmPassword: lang === 'ar' ? 'كلمة المرور غير متطابقة' : 'Passwords do not match' });
+      setErrors({ confirmPassword: 'كلمة المرور غير متطابقة' });
       return;
     }
 
     setLoading(true);
     try {
-      console.log('📤 Resetting password for:', email);
-      console.log('🔑 Using OTP:', otp);
-      
+      console.log('📤 [RESET] Resetting password for:', email);
       const response = await api.resetPassword(email, otp, userData.password);
       
-      console.log('📥 Reset password response:', response);
-      
       if (response.success) {
-        setSuccess(lang === 'ar' ? '✅ تم تغيير كلمة المرور بنجاح' : 'Password changed successfully');
-        
-        // العودة إلى صفحة تسجيل الدخول بعد ثانيتين
+        setSuccess('✅ تم تغيير كلمة المرور بنجاح');
         setTimeout(() => {
           setMode('login');
           setStep(1);
           setEmail('');
           setOtp('');
           setUserData({ fullName: '', password: '', confirmPassword: '' });
+          setSuccess('');
         }, 2000);
       }
     } catch (error) {
@@ -238,14 +229,14 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
 
     if (!loginEmail || !loginPassword) {
       setErrors({ 
-        loginEmail: !loginEmail ? (lang === 'ar' ? 'البريد الإلكتروني مطلوب' : 'Email required') : '',
-        loginPassword: !loginPassword ? (lang === 'ar' ? 'كلمة المرور مطلوبة' : 'Password required') : ''
+        loginEmail: !loginEmail ? 'البريد الإلكتروني مطلوب' : '',
+        loginPassword: !loginPassword ? 'كلمة المرور مطلوبة' : ''
       });
       return;
     }
 
     if (!validateEmail(loginEmail)) {
-      setErrors({ loginEmail: lang === 'ar' ? 'البريد الإلكتروني غير صحيح' : 'Invalid email address' });
+      setErrors({ loginEmail: 'البريد الإلكتروني غير صحيح' });
       return;
     }
 
@@ -255,51 +246,59 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
       if (response.success) {
         if (response.token) {
           localStorage.setItem('token', response.token);
-          localStorage.setItem('user', JSON.stringify(response.user)); // حفظ بيانات المستخدم
+          localStorage.setItem('user', JSON.stringify(response.user));
         }
         onLoginSuccess(response);
       }
     } catch (error) {
-      setErrors({ general: error.message });
+      const errorMsg = error.message || 'فشل تسجيل الدخول';
+      // ✅ معالجة خاصة إذا كان الحساب بدون كلمة مرور
+      if (errorMsg.includes('لا يملك كلمة مرور')) {
+        setErrors({ 
+          general: 'هذا الحساب لا يملك كلمة مرور. استخدم "نسيت كلمة المرور" لتعيين كلمة مرور جديدة.' 
+        });
+      } else {
+        setErrors({ general: errorMsg });
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  // ✅ تم تعديل هذه الدالة لاستخدام sendOTP بدلاً من forgotPassword
+  // ✅ الدالة الحرجة — تستخدم api.forgotPassword مباشرة
   const handleForgotPassword = async () => {
-    // هذه الدالة الآن مخصصة فقط لخطوة إدخال البريد الإلكتروني (step 1)
     if (step !== 1) return;
 
     if (!email) {
-      setErrors({ email: lang === 'ar' ? 'البريد الإلكتروني مطلوب' : 'Email is required' });
+      setErrors({ email: 'البريد الإلكتروني مطلوب' });
       return;
     }
     if (!validateEmail(email)) {
-      setErrors({ email: lang === 'ar' ? 'البريد الإلكتروني غير صحيح' : 'Invalid email address' });
+      setErrors({ email: 'البريد الإلكتروني غير صحيح' });
       return;
     }
 
     setLoading(true);
+    setWarning('');
     try {
-      console.log('🔄 Sending forgot password OTP for:', email);
-      // ✅ استخدام sendOTP مع purpose reset-password بدلاً من forgotPassword
-      const response = await api.sendOTP(email, 'reset-password');
+      console.log('🔄 [FORGOT] Requesting password reset for:', email);
+      
+      // ✅ استدعاء api.forgotPassword مباشرة (وليس handleSendOTP)
+      // هذا يستدعي /api/auth/forgot-password وليس /api/auth/send-otp
+      const response = await api.forgotPassword(email);
+      
+      console.log('📥 [FORGOT] response:', response);
       
       if (response.success) {
         setStep(2);
-        setSuccess(lang === 'ar' ? 'تم إرسال رمز التحقق إلى بريدك' : 'Verification code sent');
         
-        setTimer(60);
-        const interval = setInterval(() => {
-          setTimer((prev) => {
-            if (prev <= 1) {
-              clearInterval(interval);
-              return 0;
-            }
-            return prev - 1;
-          });
-        }, 1000);
+        if (response.emailSent === false) {
+          setWarning('⚠️ تعذر إرسال البريد. اطلب الرمز من الدعم (Render Logs).');
+        } else {
+          setSuccess('تم إرسال رمز التحقق إلى بريدك');
+        }
+        
+        startTimer();
       }
     } catch (error) {
       console.error('❌ Forgot password error:', error);
@@ -309,28 +308,23 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
     }
   };
 
-  // دالة منفصلة لإعادة إرسال رمز التحقق (لمنع تعدد الرموز)
   const handleResendOTP = async () => {
     if (timer > 0) return;
 
     setLoading(true);
+    setWarning('');
     try {
       if (mode === 'forgot') {
-        console.log('🔄 Resending forgot password OTP for:', email);
-        // ✅ استخدام sendOTP مع purpose reset-password بدلاً من forgotPassword
-        const response = await api.sendOTP(email, 'reset-password');
+        console.log('🔄 [RESEND FORGOT] for:', email);
+        const response = await api.forgotPassword(email);
+        
         if (response.success) {
-          setSuccess(lang === 'ar' ? 'تم إرسال رمز جديد' : 'New code sent');
-          setTimer(60);
-          const interval = setInterval(() => {
-            setTimer((prev) => {
-              if (prev <= 1) {
-                clearInterval(interval);
-                return 0;
-              }
-              return prev - 1;
-            });
-          }, 1000);
+          if (response.emailSent === false) {
+            setWarning('⚠️ تعذر إرسال البريد. اطلب الرمز من Render Logs.');
+          } else {
+            setSuccess('تم إرسال رمز جديد');
+          }
+          startTimer();
         }
       } else {
         await handleSendOTP();
@@ -354,14 +348,13 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
       className="space-y-5"
     >
       <h2 className="text-2xl font-bold text-gray-800 dark:text-white text-center mb-6">
-        {lang === 'ar' ? 'تسجيل الدخول' : 'Login'}
+        تسجيل الدخول
       </h2>
 
       <div className="space-y-4">
-        {/* Email */}
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            {lang === 'ar' ? 'البريد الإلكتروني' : 'Email'}
+            البريد الإلكتروني
           </label>
           <div className="relative">
             <Mail className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
@@ -378,10 +371,9 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
           {errors.loginEmail && <p className="mt-1 text-xs text-red-500">{errors.loginEmail}</p>}
         </div>
 
-        {/* Password */}
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            {lang === 'ar' ? 'كلمة المرور' : 'Password'}
+            كلمة المرور
           </label>
           <div className="relative">
             <Lock className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
@@ -398,14 +390,12 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
           {errors.loginPassword && <p className="mt-1 text-xs text-red-500">{errors.loginPassword}</p>}
         </div>
 
-        {/* Error Message */}
         {errors.general && (
           <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
             <p className="text-sm text-red-600 dark:text-red-400 text-center">{errors.general}</p>
           </div>
         )}
 
-        {/* Login Button */}
         <button
           onClick={handleEmailLogin}
           disabled={loading}
@@ -414,17 +404,16 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
           {loading ? (
             <>
               <span className="animate-spin">🌀</span>
-              <span>{lang === 'ar' ? 'جاري تسجيل الدخول...' : 'Logging in...'}</span>
+              <span>جاري تسجيل الدخول...</span>
             </>
           ) : (
             <>
               <Key size={20} />
-              <span>{lang === 'ar' ? 'تسجيل الدخول' : 'Login'}</span>
+              <span>تسجيل الدخول</span>
             </>
           )}
         </button>
 
-        {/* Forgot Password Link */}
         <div className="text-center">
           <button
             onClick={() => {
@@ -433,21 +422,21 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
               setEmail('');
               setOtp('');
               setErrors({});
+              setWarning('');
             }}
             className="text-sm text-green-600 hover:text-green-700 dark:text-green-400 font-medium"
           >
-            {lang === 'ar' ? 'نسيت كلمة المرور؟' : 'Forgot password?'}
+            نسيت كلمة المرور؟
           </button>
         </div>
 
-        {/* New User Register Link */}
         <div className="relative my-6">
           <div className="absolute inset-0 flex items-center">
             <div className="w-full border-t border-gray-300 dark:border-gray-600"></div>
           </div>
           <div className="relative flex justify-center text-sm">
             <span className="px-2 bg-white dark:bg-gray-800 text-gray-500">
-              {lang === 'ar' ? 'ليس لديك حساب؟' : 'New user?'}
+              ليس لديك حساب؟
             </span>
           </div>
         </div>
@@ -459,17 +448,17 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
             setEmail('');
             setOtp('');
             setErrors({});
+            setWarning('');
           }}
           className="w-full py-3 border-2 border-green-600 text-green-600 rounded-xl font-bold hover:bg-green-50 dark:border-green-400 dark:text-green-400 dark:hover:bg-green-900/30 transition-all flex items-center justify-center gap-2"
         >
           <User size={20} />
-          <span>{lang === 'ar' ? 'مستخدم جديد' : 'Create account'}</span>
+          <span>مستخدم جديد</span>
         </button>
       </div>
     </motion.div>
   );
 
-  // دالة منفصلة لخطوة إدخال البريد في وضع "نسيت كلمة المرور"
   const renderForgotEmailStep = () => (
     <div className="space-y-5">
       <div className="text-center mb-6">
@@ -477,16 +466,16 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
           <Key className="w-10 h-10 text-blue-600 dark:text-blue-400" />
         </div>
         <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-2">
-          {lang === 'ar' ? 'نسيت كلمة المرور' : 'Forgot Password'}
+          نسيت كلمة المرور
         </h2>
         <p className="text-gray-600 dark:text-gray-400">
-          {lang === 'ar' ? 'أدخل بريدك الإلكتروني لاستعادة كلمة المرور' : 'Enter your email to reset password'}
+          أدخل بريدك الإلكتروني لاستعادة كلمة المرور
         </p>
       </div>
 
       <div>
         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-          {lang === 'ar' ? 'البريد الإلكتروني' : 'Email'}
+          البريد الإلكتروني
         </label>
         <div className="relative">
           <Mail className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
@@ -503,6 +492,12 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
         {errors.email && <p className="mt-1 text-xs text-red-500">{errors.email}</p>}
       </div>
 
+      {errors.general && (
+        <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+          <p className="text-sm text-red-600 dark:text-red-400 text-center">{errors.general}</p>
+        </div>
+      )}
+
       <button
         onClick={handleForgotPassword}
         disabled={loading}
@@ -513,12 +508,11 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
         ) : (
           <ArrowRight size={20} />
         )}
-        <span>{lang === 'ar' ? 'استمرار' : 'Continue'}</span>
+        <span>استمرار</span>
       </button>
     </div>
   );
 
-  // دالة منفصلة لخطوة إدخال كلمة المرور الجديدة في وضع "نسيت كلمة المرور"
   const renderNewPasswordStep = () => (
     <div className="space-y-5">
       <div className="text-center mb-6">
@@ -526,17 +520,16 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
           <Lock className="w-10 h-10 text-purple-600 dark:text-purple-400" />
         </div>
         <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-2">
-          {lang === 'ar' ? 'كلمة مرور جديدة' : 'New Password'}
+          كلمة مرور جديدة
         </h2>
         <p className="text-gray-600 dark:text-gray-400">
-          {lang === 'ar' ? 'أدخل كلمة المرور الجديدة' : 'Enter your new password'}
+          أدخل كلمة المرور الجديدة
         </p>
       </div>
 
-      {/* New Password */}
       <div>
         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-          {lang === 'ar' ? 'كلمة المرور الجديدة' : 'New Password'}
+          كلمة المرور الجديدة
         </label>
         <div className="relative">
           <Lock className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
@@ -553,10 +546,9 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
         {errors.password && <p className="mt-1 text-xs text-red-500">{errors.password}</p>}
       </div>
 
-      {/* Confirm Password */}
       <div>
         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-          {lang === 'ar' ? 'تأكيد كلمة المرور' : 'Confirm Password'}
+          تأكيد كلمة المرور
         </label>
         <div className="relative">
           <Lock className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
@@ -573,6 +565,12 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
         {errors.confirmPassword && <p className="mt-1 text-xs text-red-500">{errors.confirmPassword}</p>}
       </div>
 
+      {errors.general && (
+        <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+          <p className="text-sm text-red-600 dark:text-red-400 text-center">{errors.general}</p>
+        </div>
+      )}
+
       <button
         onClick={handleResetPassword}
         disabled={loading}
@@ -583,7 +581,7 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
         ) : (
           <CheckCircle size={20} />
         )}
-        <span>{lang === 'ar' ? 'تغيير كلمة المرور' : 'Change Password'}</span>
+        <span>تغيير كلمة المرور</span>
       </button>
     </div>
   );
@@ -595,16 +593,16 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
           <Mail className="w-10 h-10 text-green-600 dark:text-green-400" />
         </div>
         <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-2">
-          {lang === 'ar' ? 'أهلاً بك في تطبيق السائح' : 'Welcome to Tourist App'}
+          أهلاً بك في تطبيق السائح
         </h2>
         <p className="text-gray-600 dark:text-gray-400">
-          {lang === 'ar' ? 'أدخل بريدك الإلكتروني للبدء' : 'Enter your email to start'}
+          أدخل بريدك الإلكتروني للبدء
         </p>
       </div>
 
       <div>
         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-          {lang === 'ar' ? 'البريد الإلكتروني' : 'Email'}
+          البريد الإلكتروني
         </label>
         <div className="relative">
           <Mail className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
@@ -621,8 +619,14 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
         {errors.email && <p className="mt-1 text-xs text-red-500">{errors.email}</p>}
       </div>
 
+      {errors.general && (
+        <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+          <p className="text-sm text-red-600 dark:text-red-400 text-center">{errors.general}</p>
+        </div>
+      )}
+
       <button
-        onClick={mode === 'forgot' ? handleForgotPassword : handleSendOTP}
+        onClick={handleSendOTP}
         disabled={loading}
         className="w-full py-3 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl font-bold hover:from-green-700 hover:to-emerald-700 transition-all transform hover:scale-[1.02] disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg"
       >
@@ -631,7 +635,7 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
         ) : (
           <ArrowRight size={20} />
         )}
-        <span>{lang === 'ar' ? 'استمرار' : 'Continue'}</span>
+        <span>استمرار</span>
       </button>
     </div>
   );
@@ -643,18 +647,16 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
           <Key className="w-10 h-10 text-blue-600 dark:text-blue-400" />
         </div>
         <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-2">
-          {lang === 'ar' ? 'رمز التحقق' : 'Verification Code'}
+          رمز التحقق
         </h2>
         <p className="text-gray-600 dark:text-gray-400">
-          {lang === 'ar' 
-            ? `تم إرسال رمز التحقق إلى ${email}`
-            : `Verification code sent to ${email}`}
+          تم إرسال رمز التحقق إلى {email}
         </p>
       </div>
 
       <div>
         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-          {lang === 'ar' ? 'أدخل رمز التحقق' : 'Enter verification code'}
+          أدخل رمز التحقق
         </label>
         <input
           type="text"
@@ -674,16 +676,14 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
           onClick={() => setStep(1)}
           className="text-sm text-gray-600 hover:text-gray-800 dark:text-gray-400"
         >
-          {lang === 'ar' ? 'تغيير البريد' : 'Change email'}
+          تغيير البريد
         </button>
         <button
           onClick={handleResendOTP}
           disabled={timer > 0 || loading}
           className="text-sm text-green-600 hover:text-green-700 dark:text-green-400 disabled:opacity-50"
         >
-          {timer > 0 
-            ? lang === 'ar' ? `إعادة الإرسال بعد ${timer} ثانية` : `Resend in ${timer}s`
-            : lang === 'ar' ? 'إعادة إرسال' : 'Resend'}
+          {timer > 0 ? `إعادة الإرسال بعد ${timer} ثانية` : 'إعادة إرسال'}
         </button>
       </div>
 
@@ -697,7 +697,7 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
         ) : (
           <CheckCircle size={20} />
         )}
-        <span>{lang === 'ar' ? 'تحقق' : 'Verify'}</span>
+        <span>تحقق</span>
       </button>
     </div>
   );
@@ -709,17 +709,16 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
           <User className="w-10 h-10 text-purple-600 dark:text-purple-400" />
         </div>
         <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-2">
-          {lang === 'ar' ? 'أكمل بياناتك' : 'Complete your info'}
+          أكمل بياناتك
         </h2>
         <p className="text-gray-600 dark:text-gray-400">
-          {lang === 'ar' ? 'أدخل اسمك وكلمة المرور' : 'Enter your name and password'}
+          أدخل اسمك وكلمة المرور
         </p>
       </div>
 
-      {/* Full Name */}
       <div>
         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-          {lang === 'ar' ? 'الاسم الكامل' : 'Full Name'}
+          الاسم الكامل
         </label>
         <div className="relative">
           <User className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
@@ -727,7 +726,7 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
             type="text"
             value={userData.fullName}
             onChange={(e) => setUserData({ ...userData, fullName: e.target.value })}
-            placeholder={lang === 'ar' ? 'الاسم الثنائي أو الثلاثي' : 'Your name'}
+            placeholder="الاسم الثنائي أو الثلاثي"
             className={`w-full p-3 pr-10 border-2 rounded-xl dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none transition ${
               errors.fullName ? 'border-red-500' : 'border-gray-200 dark:border-gray-600'
             }`}
@@ -736,10 +735,9 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
         {errors.fullName && <p className="mt-1 text-xs text-red-500">{errors.fullName}</p>}
       </div>
 
-      {/* Password */}
       <div>
         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-          {lang === 'ar' ? 'كلمة المرور' : 'Password'}
+          كلمة المرور
         </label>
         <div className="relative">
           <Lock className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
@@ -756,10 +754,9 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
         {errors.password && <p className="mt-1 text-xs text-red-500">{errors.password}</p>}
       </div>
 
-      {/* Confirm Password */}
       <div>
         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-          {lang === 'ar' ? 'تأكيد كلمة المرور' : 'Confirm Password'}
+          تأكيد كلمة المرور
         </label>
         <div className="relative">
           <Lock className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
@@ -786,7 +783,7 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
         ) : (
           <CheckCircle size={20} />
         )}
-        <span>{lang === 'ar' ? 'تسجيل' : 'Register'}</span>
+        <span>تسجيل</span>
       </button>
     </div>
   );
@@ -806,7 +803,7 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
           <ArrowRight className="w-5 h-5 text-gray-600 dark:text-gray-400" />
         </button>
         <h2 className="text-2xl font-bold text-gray-800 dark:text-white">
-          {lang === 'ar' ? 'نسيت كلمة المرور' : 'Forgot Password'}
+          نسيت كلمة المرور
         </h2>
       </div>
 
@@ -854,6 +851,20 @@ const LoginPage = ({ lang = 'ar', onLoginSuccess }) => {
               <p className="text-sm text-green-600 dark:text-green-400 text-center flex items-center justify-center gap-2">
                 <CheckCircle size={16} />
                 {success}
+              </p>
+            </motion.div>
+          )}
+
+          {/* Warning Message (email failed) */}
+          {warning && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mt-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg"
+            >
+              <p className="text-sm text-amber-700 dark:text-amber-400 text-center flex items-center justify-center gap-2">
+                <AlertCircle size={16} />
+                {warning}
               </p>
             </motion.div>
           )}
