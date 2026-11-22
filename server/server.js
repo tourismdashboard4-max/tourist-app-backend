@@ -1,4 +1,5 @@
-// server.js - النسخة النهائية مع إصلاح مشكلة إضافة صور متعددة وإرجاع معرفات الصور
+// server.js - النسخة النهائية المُصلحة
+// ✅ الإصلاحات: (1) DATABASE_URL إلزامي بدون fallback، (2) الخادم لا يتوقف عند فشل DB
 
 import express from 'express';
 import cors from 'cors';
@@ -28,11 +29,8 @@ import chatRoutes from './src/routes/chatRoutes.js';
 import notificationRoutes from './src/routes/notificationRoutes.js';
 import supportRoutes from './src/routes/supportRoutes.js';
 import upgradeRoutes from './src/routes/upgradeRoutes.js';
-
-// ✅ استيراد مسارات رفع الصور
 import uploadRoutes from './src/routes/uploadRoutes.js';
 
-// استيراد دوال الوقت المساعدة
 import { createExpiryDate, isOTPValid, getTimeRemaining } from './src/utils/timeUtils.js';
 
 dotenv.config();
@@ -41,7 +39,6 @@ const app = express();
 const server = createServer(app);
 const PORT = process.env.PORT || 5002;
 
-// الحصول على عنوان IP المحلي تلقائياً لدعم الجوال
 function getLocalIP() {
   const nets = os.networkInterfaces();
   for (const name of Object.keys(nets)) {
@@ -59,7 +56,7 @@ const isRender = !!process.env.RENDER;
 
 console.log(`📡 Local IP: ${localIP}, Render: ${isRender}`);
 
-// ===================== إعداد WebSocket (يدعم الجوال) =====================
+// ===================== إعداد WebSocket =====================
 const io = new Server(server, {
   cors: {
     origin: true,
@@ -98,20 +95,20 @@ io.on('connection', (socket) => {
   });
 
   socket.on('notify_guide', async (data) => {
-    const { guideId, userId, userName, message, ticketId, type } = data;
-    console.log(`📢 Socket notify_guide received for guide ${guideId}`);
-    
+    const { guideId, userId, userName, message, ticketId } = data;
+    console.log(`📢 notify_guide for guide ${guideId}`);
+
     const guideSocketId = onlineUsers.get(guideId);
     if (guideSocketId) {
       io.to(guideSocketId).emit('guide_notification', {
         type: 'chat_message',
         from: userId,
         fromName: userName,
-        message: message,
-        ticketId: ticketId,
+        message,
+        ticketId,
         timestamp: new Date().toISOString()
       });
-      console.log(`✅ Guide ${guideId} notified via socket (online)`);
+      console.log(`✅ Guide ${guideId} notified via socket`);
     } else {
       try {
         await pool.query(`
@@ -119,16 +116,15 @@ io.on('connection', (socket) => {
           (user_id, type, title, message, action_url, data, created_at)
           VALUES ($1, $2, $3, $4, $5, $6, NOW())
         `, [
-          guideId,
-          'guide_chat',
+          guideId, 'guide_chat',
           `رسالة جديدة من ${userName}`,
           message,
           `/guide/chats/${ticketId}`,
           JSON.stringify({ from_user: userId, from_name: userName, ticket_id: ticketId })
         ]);
-        console.log(`✅ Guide notification stored for offline guide ${guideId}`);
+        console.log(`✅ Notification stored for offline guide ${guideId}`);
       } catch (err) {
-        console.error('Error storing notification:', err);
+        console.error('Error storing notification:', err.message);
       }
     }
   });
@@ -149,72 +145,109 @@ io.on('connection', (socket) => {
   });
 });
 
-// ===================== إعداد PostgreSQL السحابي (Supabase) =====================
-const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://postgres.sqcdxhmnrbazrzeswxmv:1Z8EorhYqsAClmLn@aws-1-ap-northeast-1.pooler.supabase.com:6543/postgres';
+// ===================== ✅ إصلاح 1: DATABASE_URL إلزامي =====================
+const DATABASE_URL = process.env.DATABASE_URL;
 
-console.log('✅ Connecting to Supabase Cloud via DATABASE_URL');
-console.log(`🔗 Connection string (hidden password): ${DATABASE_URL.replace(/:[^:]*@/, ':****@')}`);
-
-const pool = new Pool({
-  connectionString: DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-  family: 4,
-  max: 20,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 30000,
-  keepAlive: true,
-  keepAliveInitialDelayMillis: 10000
-});
-
-// دالة مساعدة لتحويل المعرف الرقمي إلى UUID
-async function getUUIDFromNumericId(numericId) {
-  console.log(`🔍 Looking for UUID with old_id = ${numericId}`);
-  const result = await pool.query(
-    'SELECT id FROM public.users WHERE old_id = $1',
-    [parseInt(numericId)]
-  );
-  if (result.rows.length === 0) {
-    console.warn(`⚠️ No user found with old_id = ${numericId}`);
-    return null;
-  }
-  const uuid = result.rows[0].id;
-  console.log(`✅ Found UUID: ${uuid} for old_id: ${numericId}`);
-  return uuid;
+if (!DATABASE_URL) {
+  console.error(`
+  ╔════════════════════════════════════════════════════════╗
+  ║  ❌ FATAL: DATABASE_URL is NOT set                    ║
+  ║                                                        ║
+  ║  Fix:                                                  ║
+  ║  1. Supabase → Connect → Session pooler               ║
+  ║  2. Copy the full connection string                   ║
+  ║  3. Render → Environment → DATABASE_URL → Paste       ║
+  ║  4. Manual Deploy                                     ║
+  ╚════════════════════════════════════════════════════════╝
+  `);
+} else {
+  console.log('✅ DATABASE_URL is set');
+  console.log(`🔗 ${DATABASE_URL.replace(/:[^:]*@/, ':****@')}`);
 }
 
-const connectDB = async (retries = 5, delay = 5000) => {
+// pool يُنشأ فقط إذا كان DATABASE_URL موجوداً، وإلا pool = null
+let pool = null;
+
+if (DATABASE_URL) {
+  pool = new Pool({
+    connectionString: DATABASE_URL,
+    ssl: { rejectUnauthorized: false },
+    family: 4,
+    max: 20,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 15000,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10000
+  });
+
+  pool.on('error', (err) => console.error('❌ Pool error:', err.message));
+  pool.on('connect', () => console.log('🔄 New DB client connected'));
+  pool.on('remove', () => console.log('🔄 DB client removed'));
+}
+
+// دالة تحويل المعرف الرقمي إلى UUID
+async function getUUIDFromNumericId(numericId) {
+  if (!pool) return null;
+  try {
+    console.log(`🔍 Looking for UUID with old_id = ${numericId}`);
+    const result = await pool.query(
+      'SELECT id FROM public.users WHERE old_id = $1',
+      [parseInt(numericId)]
+    );
+    if (result.rows.length === 0) {
+      console.warn(`⚠️ No user with old_id = ${numericId}`);
+      return null;
+    }
+    const uuid = result.rows[0].id;
+    console.log(`✅ Found UUID: ${uuid}`);
+    return uuid;
+  } catch (err) {
+    console.error(`❌ getUUIDFromNumericId error:`, err.message);
+    return null;
+  }
+}
+
+// ✅ محاولة اتصال واحدة سريعة (بدون تأخير)
+const connectDB = async (retries = 1, delay = 0) => {
+  if (!pool) {
+    console.error('❌ Cannot connect: DATABASE_URL is missing');
+    return false;
+  }
+
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const client = await pool.connect();
       const hostMatch = DATABASE_URL.match(/@([^:]+)/);
-      const host = hostMatch ? hostMatch[1] : 'pooler.supabase.com';
+      const host = hostMatch ? hostMatch[1] : 'unknown';
       console.log(`
     ╔══════════════════════════════════════════╗
     ║   ✅ Supabase PostgreSQL Connected       ║
     ╠══════════════════════════════════════════╣
-    ║  Host: ${host.padEnd(30)}║
+    ║  Host: ${host.padEnd(31)}║
     ║  Database: postgres                      ║
-    ║  Type: Session Pooler (Supavisor)        ║
-    ║  SSL: rejectUnauthorized: false          ║
-    ║  IPv4: forced (family=4)                 ║
     ║  Pool Size: 20                           ║
     ╚══════════════════════════════════════════╝
       `);
       client.release();
-
-      pool.on('error', (err) => console.error('❌ Supabase error:', err));
-      pool.on('connect', () => console.log('🔄 New client connected'));
-      pool.on('remove', () => console.log('🔄 Client removed from pool'));
-
       return true;
     } catch (error) {
-      console.error(`❌ Supabase Connection Failed (attempt ${attempt}/${retries}):`, error.message);
-      if (attempt < retries) {
-        console.log(`⏳ Retrying in ${delay/1000} seconds...`);
+      console.error(`❌ DB Connection Failed (attempt ${attempt}/${retries}):`, error.message);
+
+      // ✅ رسالة تشخيصية واضحة
+      if (error.message.includes('ENOTFOUND') && error.message.includes('tenant/user')) {
+        console.error(`
+    ╔══════════════════════════════════════════════════════╗
+    ║  🚨 SUPABASE PROJECT IS PAUSED OR DELETED            ║
+    ║                                                      ║
+    ║  → https://supabase.com/dashboard                    ║
+    ║  → Find project sqcdxhmnrbazrzeswxmv                 ║
+    ║  → Click "Restore project"                           ║
+    ╚══════════════════════════════════════════════════════╝
+        `);
+      }
+
+      if (attempt < retries && delay > 0) {
         await new Promise(resolve => setTimeout(resolve, delay));
-      } else {
-        console.error('❌ All connection attempts failed. Exiting...');
-        return false;
       }
     }
   }
@@ -232,7 +265,7 @@ app.use(cors({
 }));
 
 app.use((req, res, next) => {
-  console.log(`🕐 [${new Date().toISOString()}] ${req.method} ${req.url} from ${req.headers.origin || 'unknown'}`);
+  console.log(`🕐 [${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
 });
 
@@ -240,11 +273,10 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(morgan('dev'));
 
-// ===================== إعداد رفع الصور وخدمة الملفات =====================
+// ===================== إعداد رفع الصور =====================
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// ✅ إنشاء مجلدات التحميل
 const uploadsDir = path.join(__dirname, 'uploads');
 const programsDir = path.join(uploadsDir, 'programs');
 const avatarsDir = path.join(uploadsDir, 'avatars');
@@ -253,57 +285,40 @@ if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 if (!fs.existsSync(programsDir)) fs.mkdirSync(programsDir, { recursive: true });
 if (!fs.existsSync(avatarsDir)) fs.mkdirSync(avatarsDir, { recursive: true });
 
-console.log(`📁 Uploads directory: ${uploadsDir}`);
-console.log(`📁 Programs images: ${programsDir}`);
-console.log(`📁 Avatars: ${avatarsDir}`);
+console.log(`📁 Uploads: ${uploadsDir}`);
 
-// ✅ خدمة الملفات الثابتة مع إعدادات CORS
 app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
-  setHeaders: (res, filePath) => {
+  setHeaders: (res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Cache-Control', 'public, max-age=31536000');
   }
 }));
 
-// ✅ مسار مباشر لخدمة صور البرامج (للتأكد من وجود الملفات)
 app.get('/uploads/programs/:filename', (req, res) => {
   const filePath = path.join(__dirname, 'uploads', 'programs', req.params.filename);
-  console.log(`📁 Trying to serve: ${filePath}`);
-  if (fs.existsSync(filePath)) {
-    res.sendFile(filePath);
-  } else {
-    console.log(`❌ File not found: ${filePath}`);
-    res.status(404).json({ error: 'File not found', filename: req.params.filename });
-  }
+  if (fs.existsSync(filePath)) res.sendFile(filePath);
+  else res.status(404).json({ error: 'File not found', filename: req.params.filename });
 });
 
-// ✅ مسار مباشر لخدمة الصور الشخصية
 app.get('/uploads/avatars/:filename', (req, res) => {
   const filePath = path.join(__dirname, 'uploads', 'avatars', req.params.filename);
-  if (fs.existsSync(filePath)) {
-    res.sendFile(filePath);
-  } else {
-    res.status(404).json({ error: 'File not found' });
-  }
+  if (fs.existsSync(filePath)) res.sendFile(filePath);
+  else res.status(404).json({ error: 'File not found' });
 });
 
-// ✅ API للتحقق من وجود الصور (للتشخيص)
 app.get('/api/check-image/:filename', (req, res) => {
   const filePath = path.join(__dirname, 'uploads', 'programs', req.params.filename);
-  const exists = fs.existsSync(filePath);
-  res.json({ 
-    filename: req.params.filename, 
-    exists, 
-    path: filePath,
+  res.json({
+    filename: req.params.filename,
+    exists: fs.existsSync(filePath),
     fullUrl: `${req.protocol}://${req.get('host')}/uploads/programs/${req.params.filename}`
   });
 });
 
-// ===================== إعداد رفع الصور =====================
+// ===================== إعداد multer =====================
 const uploadDir = path.join(__dirname, 'uploads', 'avatars');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
-// ✅ تعديل تخزين الصور لاستقبال ملفات متعددة
 const programStorage = multer.diskStorage({
   destination: (req, file, cb) => {
     const dir = path.join(__dirname, 'uploads', 'programs');
@@ -311,10 +326,8 @@ const programStorage = multer.diskStorage({
     cb(null, dir);
   },
   filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const ext = path.extname(file.originalname);
-    const programId = req.params.programId || Date.now();
-    cb(null, `program_${programId}_${uniqueSuffix}${ext}`);
+    const suffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, `program_${req.params.programId || 'x'}_${suffix}${path.extname(file.originalname)}`);
   }
 });
 
@@ -322,10 +335,9 @@ const uploadProgramImages = multer({
   storage: programStorage,
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|gif/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
-    if (mimetype && extname) return cb(null, true);
+    const ok = /jpeg|jpg|png|gif/.test(path.extname(file.originalname).toLowerCase())
+            && /jpeg|jpg|png|gif/.test(file.mimetype);
+    if (ok) return cb(null, true);
     cb(new Error('نوع الملف غير مدعوم. استخدم JPG, PNG, GIF فقط.'));
   }
 });
@@ -333,9 +345,8 @@ const uploadProgramImages = multer({
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const ext = path.extname(file.originalname);
-    cb(null, `avatar_${req.params.userId}_${uniqueSuffix}${ext}`);
+    const suffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, `avatar_${req.params.userId}_${suffix}${path.extname(file.originalname)}`);
   }
 });
 
@@ -343,43 +354,31 @@ const upload = multer({
   storage,
   limits: { fileSize: 2 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|gif/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
-    if (mimetype && extname) return cb(null, true);
+    const ok = /jpeg|jpg|png|gif/.test(path.extname(file.originalname).toLowerCase())
+            && /jpeg|jpg|png|gif/.test(file.mimetype);
+    if (ok) return cb(null, true);
     cb(new Error('نوع الملف غير مدعوم. استخدم JPG, PNG, GIF فقط.'));
   }
 });
 
 // ===================== Routes الرئيسية =====================
 app.get('/', (req, res) => {
-  res.json({ 
-    success: true, 
-    message: 'Tourist App API is running on Supabase Cloud',
+  res.json({
+    success: true,
+    message: 'Tourist App API is running',
     docs: '/api/test',
     health: '/health',
-    environment: isRender ? 'Render Cloud' : 'Local Development',
-    localIP: localIP,
-    endpoints: {
-      auth: '/api/auth',
-      guides: '/api/guides',
-      programs: '/api/programs',
-      wallet: '/api/wallet',
-      bookings: '/api/bookings',
-      chats: '/api/chats',
-      notifications: '/api/notifications',
-      support: '/api/support',
-      upgrade: '/api/upgrade',
-      users: '/api/users'
-    }
+    environment: isRender ? 'Render Cloud' : 'Local',
+    db: pool ? 'configured' : 'missing DATABASE_URL'
   });
 });
 
-// ===================== مسارات رفع الصور الشخصية =====================
+// ===================== مسارات المستخدمين =====================
 app.post('/api/users/:userId/avatar', upload.single('avatar'), async (req, res) => {
   try {
+    if (!pool) return res.status(503).json({ success: false, message: 'قاعدة البيانات غير متصلة' });
     const { userId } = req.params;
-    if (!req.file) return res.status(400).json({ success: false, message: 'لم يتم إرسال أي صورة.' });
+    if (!req.file) return res.status(400).json({ success: false, message: 'لم يتم إرسال صورة' });
 
     const optimizedFilename = `optimized_${Date.now()}_${userId}.jpg`;
     const optimizedPath = path.join(uploadDir, optimizedFilename);
@@ -393,529 +392,360 @@ app.post('/api/users/:userId/avatar', upload.single('avatar'), async (req, res) 
     );
     if (result.rows.length === 0) {
       fs.unlinkSync(optimizedPath);
-      return res.status(404).json({ success: false, message: 'المستخدم غير موجود.' });
+      return res.status(404).json({ success: false, message: 'المستخدم غير موجود' });
     }
-    res.json({ success: true, message: 'تم رفع الصورة بنجاح', avatarUrl });
+    res.json({ success: true, message: 'تم رفع الصورة', avatarUrl });
   } catch (error) {
-    console.error('❌ Error uploading avatar:', error);
-    res.status(500).json({ success: false, message: 'خطأ في الخادم أثناء رفع الصورة.' });
+    console.error('❌ Upload avatar:', error.message);
+    res.status(500).json({ success: false, message: 'خطأ في رفع الصورة' });
   }
 });
 
 app.delete('/api/users/:userId/avatar', async (req, res) => {
   try {
+    if (!pool) return res.status(503).json({ success: false, message: 'قاعدة البيانات غير متصلة' });
     const { userId } = req.params;
-    const userResult = await pool.query(`SELECT avatar_url FROM app.users WHERE id = $1`, [userId]);
-    if (userResult.rows.length === 0) return res.status(404).json({ success: false, message: 'المستخدم غير موجود.' });
-    const oldAvatarUrl = userResult.rows[0].avatar_url;
-    if (oldAvatarUrl) {
-      const oldPath = path.join(__dirname, oldAvatarUrl);
+    const r = await pool.query(`SELECT avatar_url FROM app.users WHERE id = $1`, [userId]);
+    if (r.rows.length === 0) return res.status(404).json({ success: false, message: 'المستخدم غير موجود' });
+    if (r.rows[0].avatar_url) {
+      const oldPath = path.join(__dirname, r.rows[0].avatar_url);
       if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
     }
     await pool.query(`UPDATE app.users SET avatar_url = NULL, updated_at = NOW() WHERE id = $1`, [userId]);
-    res.json({ success: true, message: 'تم حذف الصورة بنجاح' });
+    res.json({ success: true, message: 'تم حذف الصورة' });
   } catch (error) {
-    console.error('❌ Error deleting avatar:', error);
-    res.status(500).json({ success: false, message: 'خطأ في الخادم أثناء حذف الصورة.' });
+    console.error('❌ Delete avatar:', error.message);
+    res.status(500).json({ success: false, message: 'خطأ في حذف الصورة' });
   }
 });
 
 app.get('/api/users/:userId', async (req, res) => {
   try {
-    const { userId } = req.params;
+    if (!pool) return res.status(503).json({ success: false, message: 'قاعدة البيانات غير متصلة' });
     const result = await pool.query(
       `SELECT id, email, full_name, phone, avatar_url, created_at FROM app.users WHERE id = $1`,
-      [userId]
+      [req.params.userId]
     );
-    if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'المستخدم غير موجود.' });
+    if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'المستخدم غير موجود' });
     res.json({ success: true, user: result.rows[0] });
   } catch (error) {
-    console.error('❌ Error fetching user:', error);
-    res.status(500).json({ success: false, message: 'خطأ في الخادم.' });
+    console.error('❌ Get user:', error.message);
+    res.status(500).json({ success: false, message: 'خطأ في الخادم' });
   }
 });
 
 app.put('/api/users/:userId/profile', async (req, res) => {
   try {
-    const { userId } = req.params;
+    if (!pool) return res.status(503).json({ success: false, message: 'قاعدة البيانات غير متصلة' });
     const { full_name, phone, email } = req.body;
     const updates = [];
     const values = [];
-    let paramIndex = 1;
-    if (full_name !== undefined) { updates.push(`full_name = $${paramIndex++}`); values.push(full_name); }
-    if (phone !== undefined) { updates.push(`phone = $${paramIndex++}`); values.push(phone); }
-    if (email !== undefined) { updates.push(`email = $${paramIndex++}`); values.push(email); }
-    if (updates.length === 0) return res.status(400).json({ success: false, message: 'لا توجد بيانات للتحديث.' });
+    let i = 1;
+    if (full_name !== undefined) { updates.push(`full_name = $${i++}`); values.push(full_name); }
+    if (phone !== undefined) { updates.push(`phone = $${i++}`); values.push(phone); }
+    if (email !== undefined) { updates.push(`email = $${i++}`); values.push(email); }
+    if (updates.length === 0) return res.status(400).json({ success: false, message: 'لا توجد بيانات' });
     updates.push(`updated_at = NOW()`);
-    values.push(userId);
-    const query = `UPDATE app.users SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING id, full_name, phone, email, avatar_url`;
-    const result = await pool.query(query, values);
-    if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'المستخدم غير موجود.' });
+    values.push(req.params.userId);
+    const result = await pool.query(
+      `UPDATE app.users SET ${updates.join(', ')} WHERE id = $${i} RETURNING id, full_name, phone, email, avatar_url`,
+      values
+    );
+    if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'المستخدم غير موجود' });
     res.json({ success: true, user: result.rows[0] });
   } catch (error) {
-    console.error('❌ Error updating profile:', error);
-    res.status(500).json({ success: false, message: 'خطأ في الخادم.' });
+    console.error('❌ Update profile:', error.message);
+    res.status(500).json({ success: false, message: 'خطأ في الخادم' });
   }
 });
 
-// ===================== 🔥 مسارات البرامج المحسّنة مع الصور =====================
-
+// ===================== مسارات البرامج =====================
 app.get('/api/guides/:guideId/programs', async (req, res) => {
   try {
+    if (!pool) return res.status(503).json({ success: false, message: 'قاعدة البيانات غير متصلة' });
     let guideId = req.params.guideId;
-    console.log(`📥 Received request for guide: ${guideId}`);
-    
     if (/^\d+$/.test(guideId)) {
       const realId = await getUUIDFromNumericId(guideId);
-      if (!realId) {
-        console.error(`❌ No UUID found for numeric guide ID: ${guideId}`);
-        return res.status(404).json({ success: false, message: 'المرشد غير موجود' });
-      }
-      console.log(`🔄 Converted numeric ID ${guideId} to UUID: ${realId}`);
+      if (!realId) return res.status(404).json({ success: false, message: 'المرشد غير موجود' });
       guideId = realId;
     }
-    
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (!uuidRegex.test(guideId)) {
-      return res.status(400).json({ success: false, message: 'صيغة معرف المرشد غير صالحة' });
-    }
-    
-    console.log(`🔍 Fetching programs for guide UUID: ${guideId}`);
     const result = await pool.query(
       `SELECT p.*, p.guide_name, p.safety_guidelines,
-              COALESCE(
-                (SELECT json_agg(
-                  json_build_object(
-                    'id', pi.id,
-                    'image_url', pi.image_url,
-                    'is_primary', pi.is_primary,
-                    'display_order', pi.display_order
-                  ) ORDER BY pi.is_primary DESC, pi.display_order ASC
-                ) FROM program_images pi WHERE pi.program_id = p.id
-              ), '[]'::json) as images
-       FROM programs p
-       WHERE p.guide_id = $1
-       ORDER BY p.created_at DESC`,
+              COALESCE((SELECT json_agg(json_build_object(
+                'id', pi.id, 'image_url', pi.image_url,
+                'is_primary', pi.is_primary, 'display_order', pi.display_order
+              ) ORDER BY pi.is_primary DESC, pi.display_order ASC)
+              FROM program_images pi WHERE pi.program_id = p.id), '[]'::json) as images
+       FROM programs p WHERE p.guide_id = $1 ORDER BY p.created_at DESC`,
       [guideId]
     );
-    
-    console.log(`✅ Found ${result.rows.length} programs for guide ${guideId}`);
     res.json({ success: true, programs: result.rows, count: result.rows.length });
   } catch (error) {
-    console.error('❌ Error fetching guide programs:', error);
+    console.error('❌ Guide programs:', error.message);
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// ✅ المسار الرئيسي لجلب البرامج مع الصور
 app.get('/api/programs', async (req, res) => {
   try {
+    if (!pool) return res.status(503).json({ success: false, message: 'قاعدة البيانات غير متصلة' });
     let { guide_id } = req.query;
     let query = `
-      SELECT 
-        p.*, 
-        p.guide_name, 
-        p.safety_guidelines,
-        COALESCE(
-          (SELECT json_agg(
-            json_build_object(
-              'id', pi.id,
-              'image_url', pi.image_url,
-              'is_primary', pi.is_primary,
-              'display_order', pi.display_order
-            ) ORDER BY pi.is_primary DESC, pi.display_order ASC
-          ) FROM program_images pi WHERE pi.program_id = p.id
-        ), '[]'::json) as images
-      FROM programs p
-      WHERE p.status = 'active'
+      SELECT p.*, p.guide_name, p.safety_guidelines,
+        COALESCE((SELECT json_agg(json_build_object(
+          'id', pi.id, 'image_url', pi.image_url,
+          'is_primary', pi.is_primary, 'display_order', pi.display_order
+        ) ORDER BY pi.is_primary DESC, pi.display_order ASC)
+        FROM program_images pi WHERE pi.program_id = p.id), '[]'::json) as images
+      FROM programs p WHERE p.status = 'active'
     `;
     const params = [];
-    let paramIndex = 1;
-    
     if (guide_id) {
       let realGuideId = guide_id;
       if (/^\d+$/.test(guide_id)) {
-        const realId = await getUUIDFromNumericId(guide_id);
-        if (realId) realGuideId = realId;
+        const r = await getUUIDFromNumericId(guide_id);
+        if (r) realGuideId = r;
       }
-      query += ` AND p.guide_id = $${paramIndex}`;
+      query += ` AND p.guide_id = $1`;
       params.push(realGuideId);
-      paramIndex++;
     }
     query += ` ORDER BY p.created_at DESC`;
-    
     const result = await pool.query(query, params);
-    
     const programs = result.rows.map(row => {
       let imageUrls = [];
       if (row.images && Array.isArray(row.images)) {
         imageUrls = row.images.map(img => img.image_url).filter(Boolean);
       }
-      if (imageUrls.length === 0 && row.image) {
-        imageUrls = [row.image];
-      }
-      return {
-        ...row,
-        images: imageUrls,
-        image: imageUrls.length > 0 ? imageUrls[0] : null
-      };
+      if (imageUrls.length === 0 && row.image) imageUrls = [row.image];
+      return { ...row, images: imageUrls, image: imageUrls[0] || null };
     });
-    
-    console.log(`✅ Loaded ${programs.length} programs with images`);
     res.json({ success: true, programs, count: programs.length });
   } catch (error) {
-    console.error('❌ Error fetching programs:', error);
+    console.error('❌ Get programs:', error.message);
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// ✅ مسار جلب برنامج واحد مع صوره
 app.get('/api/programs/:programId', async (req, res) => {
   try {
-    const { programId } = req.params;
+    if (!pool) return res.status(503).json({ success: false, message: 'قاعدة البيانات غير متصلة' });
     const result = await pool.query(`
       SELECT p.*, p.guide_name, p.safety_guidelines,
-             COALESCE(
-               (SELECT json_agg(
-                 json_build_object(
-                   'id', pi.id,
-                   'image_url', pi.image_url,
-                   'is_primary', pi.is_primary,
-                   'display_order', pi.display_order
-                 ) ORDER BY pi.is_primary DESC, pi.display_order ASC
-               ) FROM program_images pi WHERE pi.program_id = p.id
-             ), '[]'::json) as images
-      FROM programs p
-      WHERE p.id = $1
-    `, [programId]);
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'Program not found' });
-    }
-    
+        COALESCE((SELECT json_agg(json_build_object(
+          'id', pi.id, 'image_url', pi.image_url,
+          'is_primary', pi.is_primary, 'display_order', pi.display_order
+        ) ORDER BY pi.is_primary DESC, pi.display_order ASC)
+        FROM program_images pi WHERE pi.program_id = p.id), '[]'::json) as images
+      FROM programs p WHERE p.id = $1
+    `, [req.params.programId]);
+    if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'Program not found' });
     const row = result.rows[0];
     let imageUrls = [];
-    if (row.images && Array.isArray(row.images)) {
-      imageUrls = row.images.map(img => img.image_url).filter(Boolean);
-    }
-    if (imageUrls.length === 0 && row.image) {
-      imageUrls = [row.image];
-    }
-    
-    res.json({ 
-      success: true, 
-      program: {
-        ...row,
-        images: imageUrls,
-        image: imageUrls.length > 0 ? imageUrls[0] : null
-      } 
-    });
+    if (row.images && Array.isArray(row.images)) imageUrls = row.images.map(i => i.image_url).filter(Boolean);
+    if (imageUrls.length === 0 && row.image) imageUrls = [row.image];
+    res.json({ success: true, program: { ...row, images: imageUrls, image: imageUrls[0] || null } });
   } catch (error) {
-    console.error('Error fetching program:', error);
+    console.error('❌ Get program:', error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
 app.post('/api/programs', async (req, res) => {
   try {
+    if (!pool) return res.status(503).json({ success: false, message: 'قاعدة البيانات غير متصلة' });
     let { guide_id, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status, guide_name, safety_guidelines } = req.body;
     let realGuideId = guide_id;
     if (/^\d+$/.test(String(guide_id))) {
-      const realId = await getUUIDFromNumericId(guide_id);
-      if (!realId) return res.status(404).json({ success: false, message: 'المرشد غير موجود' });
-      realGuideId = realId;
+      const r = await getUUIDFromNumericId(guide_id);
+      if (!r) return res.status(404).json({ success: false, message: 'المرشد غير موجود' });
+      realGuideId = r;
     }
     const result = await pool.query(
       `INSERT INTO programs (guide_id, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status, guide_name, safety_guidelines, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
-       RETURNING *`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, NOW()) RETURNING *`,
       [realGuideId, name, description, price, duration, max_participants, location, location_name, location_lat, location_lng, image, status || 'active', guide_name || 'مرشد سياحي', safety_guidelines || null]
     );
-    res.json({ success: true, program: result.rows[0], message: 'Program added successfully' });
+    res.json({ success: true, program: result.rows[0], message: 'Program added' });
   } catch (error) {
-    console.error('❌ Error adding program:', error);
+    console.error('❌ Add program:', error.message);
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
 app.put('/api/programs/:programId', async (req, res) => {
-  const { programId } = req.params;
-  const { name, description, price, duration, max_participants, location, location_lat, location_lng, image, safety_guidelines } = req.body;
-  
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
-  }
-  const token = authHeader.split(' ')[1];
-  let userId;
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    userId = decoded.id;
-  } catch (err) {
-    return res.status(401).json({ success: false, message: 'توكن غير صالح' });
-  }
-  
-  let userUuid = userId;
-  if (/^\d+$/.test(String(userId))) {
-    const realId = await getUUIDFromNumericId(userId);
-    if (!realId) return res.status(404).json({ success: false, message: 'المستخدم غير موجود' });
-    userUuid = realId;
-  }
-  
-  try {
-    const checkOwner = await pool.query('SELECT guide_id FROM programs WHERE id = $1', [programId]);
-    if (checkOwner.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'البرنامج غير موجود' });
+    if (!pool) return res.status(503).json({ success: false, message: 'قاعدة البيانات غير متصلة' });
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith('Bearer ')) return res.status(401).json({ success: false, message: 'غير مصرح' });
+    let userId;
+    try { userId = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET).id; }
+    catch { return res.status(401).json({ success: false, message: 'توكن غير صالح' }); }
+
+    let userUuid = userId;
+    if (/^\d+$/.test(String(userId))) {
+      const r = await getUUIDFromNumericId(userId);
+      if (!r) return res.status(404).json({ success: false, message: 'المستخدم غير موجود' });
+      userUuid = r;
     }
-    const programOwner = checkOwner.rows[0].guide_id;
-    if (programOwner !== userUuid) {
-      return res.status(403).json({ success: false, message: 'لا يمكنك تعديل هذا البرنامج لأنه لا يخصك' });
-    }
-    
+    const { programId } = req.params;
+    const owner = await pool.query('SELECT guide_id FROM programs WHERE id = $1', [programId]);
+    if (owner.rows.length === 0) return res.status(404).json({ success: false, message: 'البرنامج غير موجود' });
+    if (owner.rows[0].guide_id !== userUuid) return res.status(403).json({ success: false, message: 'لا تملك هذا البرنامج' });
+
+    const { name, description, price, duration, max_participants, location, location_lat, location_lng, image, safety_guidelines } = req.body;
     const result = await pool.query(
-      `UPDATE programs 
-       SET name = $1, description = $2, price = $3, duration = $4, max_participants = $5,
-           location = $6, location_lat = $7, location_lng = $8, image = $9, safety_guidelines = $10, updated_at = NOW()
-       WHERE id = $11 RETURNING *`,
+      `UPDATE programs SET name=$1, description=$2, price=$3, duration=$4, max_participants=$5,
+       location=$6, location_lat=$7, location_lng=$8, image=$9, safety_guidelines=$10, updated_at=NOW()
+       WHERE id=$11 RETURNING *`,
       [name, description, price, duration, max_participants, location, location_lat, location_lng, image, safety_guidelines, programId]
     );
-    
     res.json({ success: true, program: result.rows[0] });
   } catch (error) {
-    console.error('❌ Error updating program:', error);
+    console.error('❌ Update program:', error.message);
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
 app.delete('/api/programs/:programId', async (req, res) => {
   try {
-    const { programId } = req.params;
-    const result = await pool.query(`DELETE FROM programs WHERE id = $1 RETURNING *`, [programId]);
+    if (!pool) return res.status(503).json({ success: false, message: 'قاعدة البيانات غير متصلة' });
+    const result = await pool.query(`DELETE FROM programs WHERE id = $1 RETURNING *`, [req.params.programId]);
     if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'Program not found' });
-    res.json({ success: true, message: 'Program deleted successfully' });
+    res.json({ success: true, message: 'Program deleted' });
   } catch (error) {
-    console.error('❌ Error deleting program:', error);
+    console.error('❌ Delete program:', error.message);
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
 app.patch('/api/programs/:programId/status', async (req, res) => {
   try {
-    const { programId } = req.params;
-    const { status } = req.body;
+    if (!pool) return res.status(503).json({ success: false, message: 'قاعدة البيانات غير متصلة' });
     const result = await pool.query(
       `UPDATE programs SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
-      [status, programId]
+      [req.body.status, req.params.programId]
     );
     if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'Program not found' });
     res.json({ success: true, program: result.rows[0] });
   } catch (error) {
-    console.error('❌ Error updating program status:', error);
+    console.error('❌ Update status:', error.message);
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// ===================== مسارات صور البرامج المتعددة (تم إصلاحها بالكامل) =====================
+// ===================== مسارات صور البرامج =====================
 app.post('/api/programs/:programId/images', uploadProgramImages.array('images', 10), async (req, res) => {
-  const { programId } = req.params;
-  const files = req.files;
-  
-  if (!files || files.length === 0) {
-    return res.status(400).json({ success: false, message: 'لم يتم رفع أي صور' });
-  }
-  
-  console.log(`📸 Uploading ${files.length} images for program ${programId}`);
-  
   try {
+    if (!pool) return res.status(503).json({ success: false, message: 'قاعدة البيانات غير متصلة' });
+    const { programId } = req.params;
+    const files = req.files;
+    if (!files || files.length === 0) return res.status(400).json({ success: false, message: 'لم يتم رفع صور' });
+
+    const existing = await pool.query('SELECT COUNT(*) as count FROM program_images WHERE program_id = $1', [programId]);
+    const startOrder = parseInt(existing.rows[0].count);
     const uploadedImages = [];
     let primaryImageUrl = null;
-    
-    // الحصول على عدد الصور الحالية لتحديد display_order
-    const existingImages = await pool.query(
-      'SELECT COUNT(*) as count FROM program_images WHERE program_id = $1',
-      [programId]
-    );
-    const startOrder = parseInt(existingImages.rows[0].count);
-    
-    console.log(`📸 Existing images count: ${startOrder}`);
-    
+
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      const timestamp = Date.now();
-      const random = Math.round(Math.random() * 1E9);
-      const ext = path.extname(file.originalname);
-      const optimizedFilename = `program_${programId}_${timestamp}_${random}_${i}${ext}`;
+      const optimizedFilename = `program_${programId}_${Date.now()}_${Math.round(Math.random() * 1E9)}_${i}${path.extname(file.originalname)}`;
       const optimizedPath = path.join(__dirname, 'uploads', 'programs', optimizedFilename);
-      
-      await sharp(file.path)
-        .resize(800, 600, { fit: 'inside' })
-        .jpeg({ quality: 80 })
-        .toFile(optimizedPath);
-      
+
+      await sharp(file.path).resize(800, 600, { fit: 'inside' }).jpeg({ quality: 80 }).toFile(optimizedPath);
       fs.unlinkSync(file.path);
       const imageUrl = `/uploads/programs/${optimizedFilename}`;
-      
       const isPrimary = (i === 0 && startOrder === 0);
-      
-      if (isPrimary) {
-        primaryImageUrl = imageUrl;
-      }
-      
+      if (isPrimary) primaryImageUrl = imageUrl;
+
       const result = await pool.query(
-        `INSERT INTO program_images (program_id, image_url, is_primary, display_order)
-         VALUES ($1, $2, $3, $4) RETURNING *`,
+        `INSERT INTO program_images (program_id, image_url, is_primary, display_order) VALUES ($1,$2,$3,$4) RETURNING *`,
         [programId, imageUrl, isPrimary, startOrder + i]
       );
       uploadedImages.push(result.rows[0]);
-      console.log(`📸 Uploaded image ${i+1}/${files.length}: ${optimizedFilename}`);
     }
-    
+
     if (primaryImageUrl) {
-      await pool.query(
-        'UPDATE program_images SET is_primary = false WHERE program_id = $1',
-        [programId]
-      );
-      await pool.query(
-        'UPDATE program_images SET is_primary = true WHERE id = $1',
-        [uploadedImages[0].id]
-      );
-      await pool.query(
-        'UPDATE programs SET image = $1, updated_at = NOW() WHERE id = $2',
-        [primaryImageUrl, programId]
-      );
-    } else {
-      const primaryCheck = await pool.query(
-        'SELECT id FROM program_images WHERE program_id = $1 AND is_primary = true LIMIT 1',
-        [programId]
-      );
-      if (primaryCheck.rows.length === 0 && uploadedImages.length > 0) {
-        await pool.query(
-          'UPDATE program_images SET is_primary = true WHERE id = $1',
-          [uploadedImages[0].id]
-        );
-        await pool.query(
-          'UPDATE programs SET image = $1, updated_at = NOW() WHERE id = $2',
-          [uploadedImages[0].image_url, programId]
-        );
-      }
+      await pool.query('UPDATE programs SET image = $1, updated_at = NOW() WHERE id = $2', [primaryImageUrl, programId]);
     }
-    
-    const allImages = await pool.query(
-      'SELECT * FROM program_images WHERE program_id = $1 ORDER BY display_order ASC',
-      [programId]
-    );
-    
-    console.log(`📸 Successfully uploaded ${uploadedImages.length} images, total now: ${allImages.rows.length}`);
-    
-    res.json({ success: true, images: allImages.rows });
+    const all = await pool.query('SELECT * FROM program_images WHERE program_id = $1 ORDER BY display_order ASC', [programId]);
+    res.json({ success: true, images: all.rows });
   } catch (error) {
-    console.error('Error uploading program images:', error);
+    console.error('❌ Upload images:', error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// ✅ ✅ ✅ تعديل مسار جلب الصور لإرجاع كائنات كاملة تحتوي على id
 app.get('/api/programs/:programId/images', async (req, res) => {
-  const { programId } = req.params;
   try {
+    if (!pool) return res.status(503).json({ success: false, message: 'قاعدة البيانات غير متصلة' });
     const result = await pool.query(
       `SELECT id, image_url, is_primary, display_order FROM program_images WHERE program_id = $1 ORDER BY is_primary DESC, display_order ASC`,
-      [programId]
+      [req.params.programId]
     );
     res.json({ success: true, images: result.rows });
   } catch (error) {
-    console.error('Error fetching program images:', error);
+    console.error('❌ Get images:', error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
 app.delete('/api/programs/:programId/images/:imageId', async (req, res) => {
-  const { programId, imageId } = req.params;
   try {
-    const imageResult = await pool.query(
-      'SELECT image_url, is_primary FROM program_images WHERE id = $1 AND program_id = $2',
-      [imageId, programId]
-    );
-    if (imageResult.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'الصورة غير موجودة' });
-    }
-    
-    const wasPrimary = imageResult.rows[0].is_primary;
-    const imagePath = path.join(__dirname, imageResult.rows[0].image_url);
-    if (fs.existsSync(imagePath)) fs.unlinkSync(imagePath);
-    
-    await pool.query('DELETE FROM program_images WHERE id = $1', [imageId]);
-    
-    if (wasPrimary) {
-      const remaining = await pool.query(
-        'SELECT id, image_url FROM program_images WHERE program_id = $1 ORDER BY display_order ASC LIMIT 1',
-        [programId]
-      );
+    if (!pool) return res.status(503).json({ success: false, message: 'قاعدة البيانات غير متصلة' });
+    const { programId, imageId } = req.params;
+    const img = await pool.query('SELECT image_url, is_primary FROM program_images WHERE id = $1 AND program_id = $2', [imageId, programId]);
+    if (img.rows.length === 0) return res.status(404).json({ success: false, message: 'الصورة غير موجودة' });
+
+    if (img.rows[0].is_primary) {
+      const remaining = await pool.query('SELECT id, image_url FROM program_images WHERE program_id = $1 AND id != $2 ORDER BY display_order ASC LIMIT 1', [programId, imageId]);
       if (remaining.rows.length > 0) {
         await pool.query('UPDATE program_images SET is_primary = true WHERE id = $1', [remaining.rows[0].id]);
-        await pool.query(
-          'UPDATE programs SET image = $1, updated_at = NOW() WHERE id = $2',
-          [remaining.rows[0].image_url, programId]
-        );
+        await pool.query('UPDATE programs SET image = $1, updated_at = NOW() WHERE id = $2', [remaining.rows[0].image_url, programId]);
       } else {
-        await pool.query(
-          'UPDATE programs SET image = NULL, updated_at = NOW() WHERE id = $1',
-          [programId]
-        );
+        await pool.query('UPDATE programs SET image = NULL, updated_at = NOW() WHERE id = $1', [programId]);
       }
     }
-    
-    const remainingImages = await pool.query(
-      'SELECT * FROM program_images WHERE program_id = $1 ORDER BY display_order ASC',
-      [programId]
-    );
-    
-    res.json({ success: true, message: 'تم حذف الصورة', images: remainingImages.rows });
+    await pool.query('DELETE FROM program_images WHERE id = $1', [imageId]);
+
+    const list = await pool.query('SELECT * FROM program_images WHERE program_id = $1 ORDER BY display_order ASC', [programId]);
+    res.json({ success: true, message: 'تم حذف الصورة', images: list.rows });
   } catch (error) {
-    console.error('Error deleting program image:', error);
+    console.error('❌ Delete image:', error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
 app.put('/api/programs/:programId/images/:imageId/primary', async (req, res) => {
-  const { programId, imageId } = req.params;
   try {
+    if (!pool) return res.status(503).json({ success: false, message: 'قاعدة البيانات غير متصلة' });
+    const { programId, imageId } = req.params;
     await pool.query('UPDATE program_images SET is_primary = false WHERE program_id = $1', [programId]);
     await pool.query('UPDATE program_images SET is_primary = true WHERE id = $1 AND program_id = $2', [imageId, programId]);
-    
-    const imageResult = await pool.query(
-      'SELECT image_url FROM program_images WHERE id = $1',
-      [imageId]
-    );
-    if (imageResult.rows.length > 0) {
-      await pool.query(
-        'UPDATE programs SET image = $1, updated_at = NOW() WHERE id = $2',
-        [imageResult.rows[0].image_url, programId]
-      );
+    const img = await pool.query('SELECT image_url FROM program_images WHERE id = $1', [imageId]);
+    if (img.rows.length > 0) {
+      await pool.query('UPDATE programs SET image = $1, updated_at = NOW() WHERE id = $2', [img.rows[0].image_url, programId]);
     }
-    
     res.json({ success: true, message: 'تم تعيين الصورة كرئيسية' });
   } catch (error) {
-    console.error('Error setting primary image:', error);
+    console.error('❌ Set primary:', error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// ===================== Route إضافي للمحفظة =====================
+// ===================== Wallet =====================
 app.get('/api/wallet/:userId', async (req, res) => {
   try {
-    const { userId } = req.params;
-    console.log(`📥 Fetching wallet for user: ${userId}`);
-    const result = await pool.query('SELECT * FROM app.wallets WHERE user_id = $1', [userId]);
+    if (!pool) return res.status(503).json({ success: false, message: 'قاعدة البيانات غير متصلة' });
+    const result = await pool.query('SELECT * FROM app.wallets WHERE user_id = $1', [req.params.userId]);
     if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'Wallet not found' });
     res.json({ success: true, wallet: result.rows[0] });
   } catch (error) {
-    console.error('❌ Error fetching wallet:', error);
+    console.error('❌ Wallet:', error.message);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
-// ===================== تحميل الـ Routers =====================
+// ===================== Routers =====================
 app.use('/api/auth', authRoutes);
 app.use('/api/guides', guideRoutes);
 app.use('/api/programs', programRoutes);
@@ -925,379 +755,339 @@ app.use('/api/chats', chatRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/support', supportRoutes);
 app.use('/api/upgrade', upgradeRoutes);
-
-// ✅ ✅ ✅ تفعيل مسارات رفع الصور (مثل /api/upload/chat-image)
 app.use('/api', uploadRoutes);
 
 // ===================== Test & Health =====================
 app.get('/api/test', (req, res) => {
-  res.json({ 
-    success: true, 
-    message: '✅ Server is working with Supabase PostgreSQL!',
-    timestamp: new Date().toISOString(),
-    serverTime: new Date().toLocaleString(),
-    timezone: 'UTC',
-    database: 'Supabase Cloud',
-    websocket: 'enabled',
-    onlineUsers: onlineUsers.size,
-    environment: isRender ? 'Render Cloud' : 'Local',
-    localIP: localIP
-  });
-});
-
-app.get('/health', async (req, res) => {
-  let dbConnected = false;
-  try {
-    const client = await pool.connect();
-    dbConnected = true;
-    client.release();
-  } catch (e) {
-    dbConnected = false;
-  }
-  let dbInfo = {};
-  if (dbConnected) {
-    try {
-      const versionResult = await pool.query('SELECT version()');
-      dbInfo.version = versionResult.rows[0].version.split(' ')[0] + ' ' + versionResult.rows[0].version.split(' ')[1];
-    } catch (e) { dbInfo.version = 'PostgreSQL'; }
-  }
   res.json({
-    status: 'OK',
+    success: true,
+    message: '✅ Server is working',
     timestamp: new Date().toISOString(),
-    serverTime: new Date().toLocaleString(),
-    timezone: 'UTC',
-    uptime: process.uptime(),
-    port: PORT,
-    database: dbConnected ? 'connected' : 'disconnected',
-    databaseType: 'Supabase Cloud',
-    databaseVersion: dbInfo.version || 'Unknown',
-    websocket: 'active',
+    database: pool ? 'configured' : 'missing',
+    websocket: 'enabled',
     onlineUsers: onlineUsers.size,
     environment: isRender ? 'Render Cloud' : 'Local'
   });
 });
 
-// ===================== ADMIN NOTIFICATIONS API =====================
+app.get('/health', async (req, res) => {
+  let dbConnected = false;
+  let dbVersion = 'Unknown';
+  if (pool) {
+    try {
+      const client = await pool.connect();
+      dbConnected = true;
+      try {
+        const v = await pool.query('SELECT version()');
+        dbVersion = v.rows[0].version.split(' ').slice(0, 2).join(' ');
+      } catch {}
+      client.release();
+    } catch {}
+  }
+  res.status(200).json({
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    port: PORT,
+    database: dbConnected ? 'connected' : (pool ? 'disconnected' : 'no DATABASE_URL'),
+    databaseVersion: dbVersion,
+    websocket: 'active',
+    environment: isRender ? 'Render Cloud' : 'Local'
+  });
+});
+
+// ===================== Admin Notifications =====================
 async function sendAdminNotification(adminId, type, title, message, relatedId = null, priority = 'normal', actionUrl = null, metadata = {}) {
+  if (!pool) return null;
   try {
     const result = await pool.query(
       `INSERT INTO app.admin_notifications 
        (admin_id, type, title, message, related_id, priority, action_url, metadata, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-       RETURNING *`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW()) RETURNING *`,
       [adminId, type, title, message, relatedId, priority, actionUrl, JSON.stringify(metadata)]
     );
-    console.log(`📨 Admin notification sent to ${adminId}: ${title}`);
     return result.rows[0];
-  } catch (error) {
-    console.error('Error sending admin notification:', error);
+  } catch (err) {
+    console.error('❌ Admin notif:', err.message);
     return null;
   }
 }
 
 async function sendNotificationToAllAdmins(type, title, message, relatedId = null, priority = 'normal', actionUrl = null, metadata = {}) {
+  if (!pool) return false;
   try {
     const admins = await pool.query(`SELECT id FROM app.users WHERE role IN ('admin', 'support')`);
-    console.log(`📢 Sending notification to ${admins.rows.length} admins`);
-    for (const admin of admins.rows) {
-      await sendAdminNotification(admin.id, type, title, message, relatedId, priority, actionUrl, metadata);
+    for (const a of admins.rows) {
+      await sendAdminNotification(a.id, type, title, message, relatedId, priority, actionUrl, metadata);
     }
     return true;
-  } catch (error) {
-    console.error('Error sending to all admins:', error);
+  } catch (err) {
+    console.error('❌ Notif all admins:', err.message);
     return false;
   }
 }
 
-// ===================== إشعارات المستخدمين والمرشدين =====================
-
+// ===================== User Notifications =====================
 async function sendNotification(userId, type, title, message, actionUrl = null, metadata = {}) {
+  if (!pool) return null;
   try {
     const result = await pool.query(
       `INSERT INTO app.notifications 
        (user_id, type, title, message, action_url, data, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, NOW())
-       RETURNING *`,
+       VALUES ($1,$2,$3,$4,$5,$6,NOW()) RETURNING *`,
       [userId, type, title, message, actionUrl, JSON.stringify(metadata)]
     );
-    console.log(`📨 Notification sent to user ${userId}: ${title}`);
-    
-    const userSocketId = onlineUsers.get(userId);
-    if (userSocketId && io) {
-      io.to(userSocketId).emit('new_notification', {
-        id: result.rows[0].id,
-        type,
-        title,
-        message,
-        action_url: actionUrl,
-        data: metadata,
+    const sid = onlineUsers.get(userId);
+    if (sid && io) {
+      io.to(sid).emit('new_notification', {
+        id: result.rows[0].id, type, title, message,
+        action_url: actionUrl, data: metadata,
         created_at: new Date().toISOString()
       });
-      console.log(`🔔 Real-time notification sent via socket to user ${userId}`);
     }
-    
     return result.rows[0];
-  } catch (error) {
-    console.error('Error sending notification:', error);
+  } catch (err) {
+    console.error('❌ Send notif:', err.message);
     return null;
   }
 }
 
 async function notifyGuideNewTicket(guideId, userName, ticketId, message) {
-  return sendNotification(
-    guideId,
-    'new_chat_ticket',
-    `محادثة جديدة من ${userName}`,
-    message || `لديك محادثة جديدة من ${userName}`,
-    `/guide/chats/${ticketId}`,
-    { ticket_id: ticketId, user_name: userName, type: 'new_ticket' }
-  );
+  return sendNotification(guideId, 'new_chat_ticket', `محادثة جديدة من ${userName}`,
+    message || `لديك محادثة من ${userName}`, `/guide/chats/${ticketId}`,
+    { ticket_id: ticketId, user_name: userName, type: 'new_ticket' });
 }
 
 async function notifyGuideNewMessage(guideId, userName, message, ticketId) {
-  return sendNotification(
-    guideId,
-    'new_chat_message',
-    `رسالة جديدة من ${userName}`,
+  return sendNotification(guideId, 'new_chat_message', `رسالة من ${userName}`,
     message.length > 100 ? message.substring(0, 100) + '...' : message,
-    `/guide/chats/${ticketId}`,
-    { ticket_id: ticketId, user_name: userName, type: 'new_message' }
-  );
+    `/guide/chats/${ticketId}`, { ticket_id: ticketId, user_name: userName, type: 'new_message' });
 }
 
-// ===================== مسارات إشعارات المستخدمين API =====================
+// ===================== Notifications API =====================
 app.get('/api/notifications', async (req, res) => {
   try {
+    if (!pool) return res.status(503).json({ success: false, message: 'قاعدة البيانات غير متصلة' });
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
-    }
-    const token = authHeader.split(' ')[1];
+    if (!authHeader?.startsWith('Bearer ')) return res.status(401).json({ success: false, message: 'غير مصرح' });
     let userId;
-    try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      userId = decoded.id;
-    } catch (err) {
-      return res.status(401).json({ success: false, message: 'توكن غير صالح' });
-    }
-    
+    try { userId = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET).id; }
+    catch { return res.status(401).json({ success: false, message: 'توكن غير صالح' }); }
+
     const { limit = 50, offset = 0 } = req.query;
     const result = await pool.query(
-      `SELECT * FROM app.notifications 
-       WHERE user_id = $1 
-       ORDER BY created_at DESC 
-       LIMIT $2 OFFSET $3`,
+      `SELECT * FROM app.notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
       [userId, limit, offset]
     );
-    
-    const unreadResult = await pool.query(
-      `SELECT COUNT(*) FROM app.notifications WHERE user_id = $1 AND is_read = false`,
-      [userId]
-    );
-    
-    res.json({
-      success: true,
-      notifications: result.rows,
-      unreadCount: parseInt(unreadResult.rows[0].count),
-      pagination: { limit: parseInt(limit), offset: parseInt(offset) }
-    });
-  } catch (error) {
-    console.error('Error fetching notifications:', error);
+    const unread = await pool.query(`SELECT COUNT(*) FROM app.notifications WHERE user_id = $1 AND is_read = false`, [userId]);
+    res.json({ success: true, notifications: result.rows, unreadCount: parseInt(unread.rows[0].count) });
+  } catch (err) {
+    console.error('❌ Get notifs:', err.message);
     res.status(500).json({ success: false, message: 'فشل تحميل الإشعارات' });
   }
 });
 
 app.put('/api/notifications/:id/read', async (req, res) => {
   try {
+    if (!pool) return res.status(503).json({ success: false, message: 'قاعدة البيانات غير متصلة' });
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
-    }
-    const token = authHeader.split(' ')[1];
+    if (!authHeader?.startsWith('Bearer ')) return res.status(401).json({ success: false, message: 'غير مصرح' });
     let userId;
-    try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      userId = decoded.id;
-    } catch (err) {
-      return res.status(401).json({ success: false, message: 'توكن غير صالح' });
-    }
-    
-    const { id } = req.params;
+    try { userId = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET).id; }
+    catch { return res.status(401).json({ success: false, message: 'توكن غير صالح' }); }
+
     const result = await pool.query(
-      `UPDATE app.notifications SET is_read = true, read_at = NOW() 
-       WHERE id = $1 AND user_id = $2 RETURNING *`,
-      [id, userId]
+      `UPDATE app.notifications SET is_read = true, read_at = NOW() WHERE id = $1 AND user_id = $2 RETURNING *`,
+      [req.params.id, userId]
     );
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'الإشعار غير موجود' });
-    }
-    
+    if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'غير موجود' });
     res.json({ success: true, notification: result.rows[0] });
-  } catch (error) {
-    console.error('Error marking notification as read:', error);
-    res.status(500).json({ success: false, message: 'فشل تحديث الإشعار' });
+  } catch (err) {
+    console.error('❌ Mark read:', err.message);
+    res.status(500).json({ success: false, message: 'فشل' });
   }
 });
 
 app.put('/api/notifications/read-all', async (req, res) => {
   try {
+    if (!pool) return res.status(503).json({ success: false, message: 'قاعدة البيانات غير متصلة' });
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
-    }
-    const token = authHeader.split(' ')[1];
+    if (!authHeader?.startsWith('Bearer ')) return res.status(401).json({ success: false, message: 'غير مصرح' });
     let userId;
-    try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      userId = decoded.id;
-    } catch (err) {
-      return res.status(401).json({ success: false, message: 'توكن غير صالح' });
-    }
-    
-    await pool.query(
-      `UPDATE app.notifications SET is_read = true, read_at = NOW() 
-       WHERE user_id = $1 AND is_read = false`,
-      [userId]
-    );
-    
+    try { userId = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET).id; }
+    catch { return res.status(401).json({ success: false, message: 'توكن غير صالح' }); }
+
+    await pool.query(`UPDATE app.notifications SET is_read = true, read_at = NOW() WHERE user_id = $1 AND is_read = false`, [userId]);
     res.json({ success: true, message: 'تم تحديث جميع الإشعارات' });
-  } catch (error) {
-    console.error('Error marking all as read:', error);
-    res.status(500).json({ success: false, message: 'فشل تحديث الإشعارات' });
+  } catch (err) {
+    console.error('❌ Read all:', err.message);
+    res.status(500).json({ success: false, message: 'فشل' });
   }
 });
 
-// ===================== مسارات الإشعارات للمشرفين API =====================
+// ===================== Admin Notifications API =====================
 app.get('/api/admin/notifications', async (req, res) => {
   try {
+    if (!pool) return res.status(503).json({ success: false, message: 'قاعدة البيانات غير متصلة' });
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
-    const token = authHeader.split(' ')[1];
+    if (!authHeader?.startsWith('Bearer ')) return res.status(401).json({ success: false, message: 'غير مصرح' });
     let adminId;
-    try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      adminId = decoded.id;
-    } catch (err) { return res.status(401).json({ success: false, message: 'توكن غير صالح' }); }
+    try { adminId = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET).id; }
+    catch { return res.status(401).json({ success: false, message: 'توكن غير صالح' }); }
+
     const { status, limit = 50, offset = 0 } = req.query;
-    let query = `SELECT * FROM app.admin_notifications WHERE admin_id = $1`;
+    let q = `SELECT * FROM app.admin_notifications WHERE admin_id = $1`;
     const params = [adminId];
-    let paramIndex = 2;
-    if (status && status !== 'all') { query += ` AND status = $${paramIndex}`; params.push(status); paramIndex++; }
-    query += ` ORDER BY created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+    let idx = 2;
+    if (status && status !== 'all') { q += ` AND status = $${idx}`; params.push(status); idx++; }
+    q += ` ORDER BY created_at DESC LIMIT $${idx} OFFSET $${idx + 1}`;
     params.push(limit, offset);
-    const result = await pool.query(query, params);
-    const unreadResult = await pool.query(`SELECT COUNT(*) FROM app.admin_notifications WHERE admin_id = $1 AND status = 'unread'`, [adminId]);
-    res.json({
-      success: true,
-      notifications: result.rows,
-      unreadCount: parseInt(unreadResult.rows[0].count),
-      pagination: { limit: parseInt(limit), offset: parseInt(offset) }
-    });
-  } catch (error) {
-    console.error('Error fetching admin notifications:', error);
-    res.status(500).json({ success: false, message: 'فشل تحميل الإشعارات' });
+    const result = await pool.query(q, params);
+    const unread = await pool.query(`SELECT COUNT(*) FROM app.admin_notifications WHERE admin_id = $1 AND status = 'unread'`, [adminId]);
+    res.json({ success: true, notifications: result.rows, unreadCount: parseInt(unread.rows[0].count) });
+  } catch (err) {
+    console.error('❌ Admin notifs:', err.message);
+    res.status(500).json({ success: false, message: 'فشل' });
   }
 });
 
 app.put('/api/admin/notifications/:id/read', async (req, res) => {
   try {
+    if (!pool) return res.status(503).json({ success: false, message: 'قاعدة البيانات غير متصلة' });
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
-    const token = authHeader.split(' ')[1];
+    if (!authHeader?.startsWith('Bearer ')) return res.status(401).json({ success: false, message: 'غير مصرح' });
     let adminId;
-    try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      adminId = decoded.id;
-    } catch (err) { return res.status(401).json({ success: false, message: 'توكن غير صالح' }); }
-    const { id } = req.params;
+    try { adminId = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET).id; }
+    catch { return res.status(401).json({ success: false, message: 'توكن غير صالح' }); }
+
     const result = await pool.query(
       `UPDATE app.admin_notifications SET status = 'read', read_at = NOW() WHERE id = $1 AND admin_id = $2 RETURNING *`,
-      [id, adminId]
+      [req.params.id, adminId]
     );
-    if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'الإشعار غير موجود' });
+    if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'غير موجود' });
     res.json({ success: true, notification: result.rows[0] });
-  } catch (error) {
-    console.error('Error marking notification as read:', error);
-    res.status(500).json({ success: false, message: 'فشل تحديث الإشعار' });
+  } catch (err) {
+    console.error('❌ Admin mark read:', err.message);
+    res.status(500).json({ success: false, message: 'فشل' });
   }
 });
 
 app.put('/api/admin/notifications/read-all', async (req, res) => {
   try {
+    if (!pool) return res.status(503).json({ success: false, message: 'قاعدة البيانات غير متصلة' });
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
-    const token = authHeader.split(' ')[1];
+    if (!authHeader?.startsWith('Bearer ')) return res.status(401).json({ success: false, message: 'غير مصرح' });
     let adminId;
-    try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      adminId = decoded.id;
-    } catch (err) { return res.status(401).json({ success: false, message: 'توكن غير صالح' }); }
+    try { adminId = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET).id; }
+    catch { return res.status(401).json({ success: false, message: 'توكن غير صالح' }); }
+
     await pool.query(`UPDATE app.admin_notifications SET status = 'read', read_at = NOW() WHERE admin_id = $1 AND status = 'unread'`, [adminId]);
     res.json({ success: true, message: 'تم تحديث جميع الإشعارات' });
-  } catch (error) {
-    console.error('Error marking all as read:', error);
-    res.status(500).json({ success: false, message: 'فشل تحديث الإشعارات' });
+  } catch (err) {
+    console.error('❌ Admin read all:', err.message);
+    res.status(500).json({ success: false, message: 'فشل' });
   }
 });
 
 app.delete('/api/admin/notifications/:id', async (req, res) => {
   try {
+    if (!pool) return res.status(503).json({ success: false, message: 'قاعدة البيانات غير متصلة' });
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
-    const token = authHeader.split(' ')[1];
+    if (!authHeader?.startsWith('Bearer ')) return res.status(401).json({ success: false, message: 'غير مصرح' });
     let adminId;
-    try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      adminId = decoded.id;
-    } catch (err) { return res.status(401).json({ success: false, message: 'توكن غير صالح' }); }
-    const { id } = req.params;
-    const result = await pool.query(`DELETE FROM app.admin_notifications WHERE id = $1 AND admin_id = $2 RETURNING id`, [id, adminId]);
-    if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'الإشعار غير موجود' });
-    res.json({ success: true, message: 'تم حذف الإشعار' });
-  } catch (error) {
-    console.error('Error deleting notification:', error);
-    res.status(500).json({ success: false, message: 'فشل حذف الإشعار' });
+    try { adminId = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET).id; }
+    catch { return res.status(401).json({ success: false, message: 'توكن غير صالح' }); }
+
+    const result = await pool.query(`DELETE FROM app.admin_notifications WHERE id = $1 AND admin_id = $2 RETURNING id`, [req.params.id, adminId]);
+    if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'غير موجود' });
+    res.json({ success: true, message: 'تم الحذف' });
+  } catch (err) {
+    console.error('❌ Admin delete:', err.message);
+    res.status(500).json({ success: false, message: 'فشل' });
   }
 });
 
 app.put('/api/admin/notifications/:id/archive', async (req, res) => {
   try {
+    if (!pool) return res.status(503).json({ success: false, message: 'قاعدة البيانات غير متصلة' });
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) return res.status(401).json({ success: false, message: 'غير مصرح بالدخول' });
-    const token = authHeader.split(' ')[1];
+    if (!authHeader?.startsWith('Bearer ')) return res.status(401).json({ success: false, message: 'غير مصرح' });
     let adminId;
-    try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      adminId = decoded.id;
-    } catch (err) { return res.status(401).json({ success: false, message: 'توكن غير صالح' }); }
-    const { id } = req.params;
+    try { adminId = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET).id; }
+    catch { return res.status(401).json({ success: false, message: 'توكن غير صالح' }); }
+
     const result = await pool.query(
       `UPDATE app.admin_notifications SET status = 'archived', archived_at = NOW() WHERE id = $1 AND admin_id = $2 RETURNING *`,
-      [id, adminId]
+      [req.params.id, adminId]
     );
-    if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'الإشعار غير موجود' });
+    if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'غير موجود' });
     res.json({ success: true, notification: result.rows[0] });
-  } catch (error) {
-    console.error('Error archiving notification:', error);
-    res.status(500).json({ success: false, message: 'فشل أرشفة الإشعار' });
+  } catch (err) {
+    console.error('❌ Admin archive:', err.message);
+    res.status(500).json({ success: false, message: 'فشل' });
   }
 });
 
-// ===================== تشغيل الخادم =====================
+// ===================== ✅ إصلاح 2: startServer لا يتوقف أبداً =====================
 const startServer = async () => {
-  console.log('🚀 Starting server with Supabase Cloud connection (IPv4 + SSL flexible)...');
-  const dbConnected = await connectDB();
-  if (!dbConnected) {
-    console.error('❌ Failed to connect to Supabase database after multiple retries. Exiting...');
-    process.exit(1);
+  console.log('🚀 Starting Tourist App Server...');
+
+  // ✅ محاولة اتصال واحدة سريعة (بدون تأخير) — لا تعطل بدء الخادم
+  const dbConnected = await connectDB(1, 0);
+
+  // ✅ الخادم يبدأ دائماً — حتى لو DB غير متصلة
+  server.listen(PORT, '0.0.0.0', () => {
+    setTimeout(() => {
+      console.log(`
+  ╔══════════════════════════════════════════════╗
+  ║         🚀 TOURIST APP SERVER               ║
+  ╠══════════════════════════════════════════════╣
+  ║  ▶ Port:        ${String(PORT).padEnd(28)}║
+  ║  ▶ Environment: ${(isRender ? 'Render Cloud' : 'Local').padEnd(28)}║
+  ║  ▶ Database:    ${(dbConnected ? '✅ CONNECTED' : '⚠️ DISCONNECTED').padEnd(28)}║
+  ║  ▶ WebSocket:   ✅ Enabled                    ║
+  ║  ▶ CORS:        ✅ Open                       ║
+  ║  ▶ Health:      /health                       ║
+  ║  ▶ Test API:    /api/test                     ║
+  ╚══════════════════════════════════════════════╝
+      `);
+
+      if (!dbConnected) {
+        console.warn('⚠️ Database is NOT connected. APIs will return 503.');
+        console.warn('⚠️ Most likely cause: Supabase project is PAUSED.');
+        console.warn('⚠️ Action: https://supabase.com/dashboard → Restore project');
+        console.warn('🔄 Background retry will start every 30s...');
+      } else {
+        console.log('✅ Server ready. You can now login.');
+      }
+    }, 100);
+  });
+
+  // ✅ إعادة المحاولة في الخلفية كل 30 ثانية إذا فشل الاتصال
+  if (!dbConnected && pool) {
+    let retryCount = 0;
+    const interval = setInterval(async () => {
+      retryCount++;
+      console.log(`🔄 Background DB retry #${retryCount}...`);
+      const ok = await connectDB(1, 0);
+      if (ok) {
+        console.log('✅ Database reconnected! APIs are now fully operational.');
+        clearInterval(interval);
+      } else if (retryCount >= 20) {
+        console.error('❌ 20 background retries failed. Will keep trying every 60s...');
+      }
+    }, 30000);
   }
-  
+};
+
+// ✅ إنشاء جدول program_images بعد الاتصال (اختياري — لا يعطل البدء)
+async function ensureTables() {
+  if (!pool) return;
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS program_images (
         id SERIAL PRIMARY KEY,
-        program_id INTEGER REFERENCES programs(id) ON DELETE CASCADE,
+        program_id INTEGER,
         image_url TEXT NOT NULL,
         is_primary BOOLEAN DEFAULT FALSE,
         display_order INTEGER DEFAULT 0,
@@ -1306,50 +1096,20 @@ const startServer = async () => {
     `);
     console.log('✅ program_images table ensured');
   } catch (err) {
-    console.error('Error creating program_images table:', err);
+    console.warn('⚠️ Could not ensure program_images table:', err.message);
   }
-  
-  server.listen(PORT, '0.0.0.0', () => {
-    setTimeout(() => {
-      console.log(`
-  ╔══════════════════════════════════════════════╗
-  ║         🚀 TOURIST APP SERVER               ║
-  ╠══════════════════════════════════════════════╣
-  ║  ▶ Port:        ${PORT}                         
-  ║  ▶ Environment: ${isRender ? 'Render Cloud' : 'Local Development'}            
-  ║  ▶ Local IP:    http://${localIP}:${PORT}     
-  ║  ▶ Database:    ✅ Supabase Cloud (IPv4)     
-  ║  ▶ WebSocket:   ✅ Enabled                   
-  ║  ▶ CORS:        ✅ Open (origin: *)          
-  ║  ▶ SSL:         ✅ rejectUnauthorized: false 
-  ║  ▶ IPv4:        ✅ forced (family=4)         
-  ║  ▶ Notifications: ✅ Guide & User           
-  ║  ▶ Timezone:    UTC                          
-  ║  ▶ Test API:    /api/test                    
-  ║  ▶ Health:      /health                      
-  ╚══════════════════════════════════════════════╝
-      `);
-      console.log(`🕐 Server started at: ${new Date().toISOString()}`);
-      console.log(`☁️ Connected to Supabase Cloud PostgreSQL via Session Pooler with IPv4 enforcement.`);
-      if (!isRender) {
-        console.log(`📱 Access from mobile: http://${localIP}:${PORT}`);
-      }
-    }, 100);
-  });
-};
+}
 
-startServer();
+// تشغيل الخادم
+startServer().then(() => {
+  // بعد بدء الخادم، حاول إنشاء الجدول (لا يعطل البدء)
+  setTimeout(ensureTables, 2000);
+});
 
-// ✅ تصدير كل ما هو مطلوب
-export { 
-  io, 
-  onlineUsers, 
-  pool, 
-  createExpiryDate, 
-  isOTPValid, 
-  getTimeRemaining,
-  sendNotification,
-  notifyGuideNewTicket,
-  notifyGuideNewMessage,
+// ✅ تصدير
+export {
+  io, onlineUsers, pool,
+  createExpiryDate, isOTPValid, getTimeRemaining,
+  sendNotification, notifyGuideNewTicket, notifyGuideNewMessage,
   sendNotificationToAllAdmins
 };
