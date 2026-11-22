@@ -1,5 +1,5 @@
 // server.js - النسخة النهائية المُصلحة
-// ✅ الإصلاحات: (1) DATABASE_URL إلزامي بدون fallback، (2) الخادم لا يتوقف عند فشل DB
+// ✅ الإصلاحات: (1) DATABASE_URL إلزامي بدون fallback مكشوف، (2) الخادم لا يتوقف عند فشل DB
 
 import express from 'express';
 import cors from 'cors';
@@ -19,7 +19,6 @@ import os from 'os';
 
 const { Pool } = pkg;
 
-// استيراد المسارات
 import authRoutes from './src/routes/authRoutes.js';
 import guideRoutes from './src/routes/guideRoutes.js';
 import programRoutes from './src/routes/programRoutes.js';
@@ -43,9 +42,7 @@ function getLocalIP() {
   const nets = os.networkInterfaces();
   for (const name of Object.keys(nets)) {
     for (const net of nets[name]) {
-      if (net.family === 'IPv4' && !net.internal) {
-        return net.address;
-      }
+      if (net.family === 'IPv4' && !net.internal) return net.address;
     }
   }
   return 'localhost';
@@ -53,10 +50,9 @@ function getLocalIP() {
 
 const localIP = getLocalIP();
 const isRender = !!process.env.RENDER;
-
 console.log(`📡 Local IP: ${localIP}, Render: ${isRender}`);
 
-// ===================== إعداد WebSocket =====================
+// ===================== WebSocket =====================
 const io = new Server(server, {
   cors: {
     origin: true,
@@ -82,9 +78,7 @@ io.on('connection', (socket) => {
     console.log(`📢 User joined chat: ${chatId}`);
   });
 
-  socket.on('leave-chat', (chatId) => {
-    socket.leave(`chat:${chatId}`);
-  });
+  socket.on('leave-chat', (chatId) => socket.leave(`chat:${chatId}`));
 
   socket.on('send-message', (message) => {
     socket.to(`chat:${message.chatId}`).emit('new-message', message);
@@ -109,7 +103,7 @@ io.on('connection', (socket) => {
         timestamp: new Date().toISOString()
       });
       console.log(`✅ Guide ${guideId} notified via socket`);
-    } else {
+    } else if (pool) {
       try {
         await pool.query(`
           INSERT INTO app.notifications 
@@ -153,9 +147,8 @@ if (!DATABASE_URL) {
   ╔════════════════════════════════════════════════════════╗
   ║  ❌ FATAL: DATABASE_URL is NOT set                    ║
   ║                                                        ║
-  ║  Fix:                                                  ║
   ║  1. Supabase → Connect → Session pooler               ║
-  ║  2. Copy the full connection string                   ║
+  ║  2. Copy full connection string                       ║
   ║  3. Render → Environment → DATABASE_URL → Paste       ║
   ║  4. Manual Deploy                                     ║
   ╚════════════════════════════════════════════════════════╝
@@ -165,7 +158,6 @@ if (!DATABASE_URL) {
   console.log(`🔗 ${DATABASE_URL.replace(/:[^:]*@/, ':****@')}`);
 }
 
-// pool يُنشأ فقط إذا كان DATABASE_URL موجوداً، وإلا pool = null
 let pool = null;
 
 if (DATABASE_URL) {
@@ -179,17 +171,14 @@ if (DATABASE_URL) {
     keepAlive: true,
     keepAliveInitialDelayMillis: 10000
   });
-
   pool.on('error', (err) => console.error('❌ Pool error:', err.message));
   pool.on('connect', () => console.log('🔄 New DB client connected'));
   pool.on('remove', () => console.log('🔄 DB client removed'));
 }
 
-// دالة تحويل المعرف الرقمي إلى UUID
 async function getUUIDFromNumericId(numericId) {
   if (!pool) return null;
   try {
-    console.log(`🔍 Looking for UUID with old_id = ${numericId}`);
     const result = await pool.query(
       'SELECT id FROM public.users WHERE old_id = $1',
       [parseInt(numericId)]
@@ -198,22 +187,18 @@ async function getUUIDFromNumericId(numericId) {
       console.warn(`⚠️ No user with old_id = ${numericId}`);
       return null;
     }
-    const uuid = result.rows[0].id;
-    console.log(`✅ Found UUID: ${uuid}`);
-    return uuid;
+    return result.rows[0].id;
   } catch (err) {
-    console.error(`❌ getUUIDFromNumericId error:`, err.message);
+    console.error(`❌ getUUIDFromNumericId:`, err.message);
     return null;
   }
 }
 
-// ✅ محاولة اتصال واحدة سريعة (بدون تأخير)
 const connectDB = async (retries = 1, delay = 0) => {
   if (!pool) {
     console.error('❌ Cannot connect: DATABASE_URL is missing');
     return false;
   }
-
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const client = await pool.connect();
@@ -224,7 +209,6 @@ const connectDB = async (retries = 1, delay = 0) => {
     ║   ✅ Supabase PostgreSQL Connected       ║
     ╠══════════════════════════════════════════╣
     ║  Host: ${host.padEnd(31)}║
-    ║  Database: postgres                      ║
     ║  Pool Size: 20                           ║
     ╚══════════════════════════════════════════╝
       `);
@@ -232,8 +216,6 @@ const connectDB = async (retries = 1, delay = 0) => {
       return true;
     } catch (error) {
       console.error(`❌ DB Connection Failed (attempt ${attempt}/${retries}):`, error.message);
-
-      // ✅ رسالة تشخيصية واضحة
       if (error.message.includes('ENOTFOUND') && error.message.includes('tenant/user')) {
         console.error(`
     ╔══════════════════════════════════════════════════════╗
@@ -245,9 +227,8 @@ const connectDB = async (retries = 1, delay = 0) => {
     ╚══════════════════════════════════════════════════════╝
         `);
       }
-
       if (attempt < retries && delay > 0) {
-        await new Promise(resolve => setTimeout(resolve, delay));
+        await new Promise(r => setTimeout(r, delay));
       }
     }
   }
@@ -273,7 +254,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(morgan('dev'));
 
-// ===================== إعداد رفع الصور =====================
+// ===================== Uploads =====================
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -315,7 +296,7 @@ app.get('/api/check-image/:filename', (req, res) => {
   });
 });
 
-// ===================== إعداد multer =====================
+// ===================== Multer =====================
 const uploadDir = path.join(__dirname, 'uploads', 'avatars');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
@@ -373,7 +354,7 @@ app.get('/', (req, res) => {
   });
 });
 
-// ===================== مسارات المستخدمين =====================
+// ===================== Users =====================
 app.post('/api/users/:userId/avatar', upload.single('avatar'), async (req, res) => {
   try {
     if (!pool) return res.status(503).json({ success: false, message: 'قاعدة البيانات غير متصلة' });
@@ -459,7 +440,7 @@ app.put('/api/users/:userId/profile', async (req, res) => {
   }
 });
 
-// ===================== مسارات البرامج =====================
+// ===================== Programs =====================
 app.get('/api/guides/:guideId/programs', async (req, res) => {
   try {
     if (!pool) return res.status(503).json({ success: false, message: 'قاعدة البيانات غير متصلة' });
@@ -489,7 +470,7 @@ app.get('/api/guides/:guideId/programs', async (req, res) => {
 app.get('/api/programs', async (req, res) => {
   try {
     if (!pool) return res.status(503).json({ success: false, message: 'قاعدة البيانات غير متصلة' });
-    let { guide_id } = req.query;
+    const { guide_id } = req.query;
     let query = `
       SELECT p.*, p.guide_name, p.safety_guidelines,
         COALESCE((SELECT json_agg(json_build_object(
@@ -513,9 +494,7 @@ app.get('/api/programs', async (req, res) => {
     const result = await pool.query(query, params);
     const programs = result.rows.map(row => {
       let imageUrls = [];
-      if (row.images && Array.isArray(row.images)) {
-        imageUrls = row.images.map(img => img.image_url).filter(Boolean);
-      }
+      if (row.images && Array.isArray(row.images)) imageUrls = row.images.map(i => i.image_url).filter(Boolean);
       if (imageUrls.length === 0 && row.image) imageUrls = [row.image];
       return { ...row, images: imageUrls, image: imageUrls[0] || null };
     });
@@ -633,7 +612,7 @@ app.patch('/api/programs/:programId/status', async (req, res) => {
   }
 });
 
-// ===================== مسارات صور البرامج =====================
+// ===================== Program Images =====================
 app.post('/api/programs/:programId/images', uploadProgramImages.array('images', 10), async (req, res) => {
   try {
     if (!pool) return res.status(503).json({ success: false, message: 'قاعدة البيانات غير متصلة' });
@@ -827,7 +806,6 @@ async function sendNotificationToAllAdmins(type, title, message, relatedId = nul
   }
 }
 
-// ===================== User Notifications =====================
 async function sendNotification(userId, type, title, message, actionUrl = null, metadata = {}) {
   if (!pool) return null;
   try {
@@ -1028,14 +1006,11 @@ app.put('/api/admin/notifications/:id/archive', async (req, res) => {
   }
 });
 
-// ===================== ✅ إصلاح 2: startServer لا يتوقف أبداً =====================
+// ===================== ✅ إصلاح 2: الخادم لا يتوقف أبداً =====================
 const startServer = async () => {
   console.log('🚀 Starting Tourist App Server...');
-
-  // ✅ محاولة اتصال واحدة سريعة (بدون تأخير) — لا تعطل بدء الخادم
   const dbConnected = await connectDB(1, 0);
 
-  // ✅ الخادم يبدأ دائماً — حتى لو DB غير متصلة
   server.listen(PORT, '0.0.0.0', () => {
     setTimeout(() => {
       console.log(`
@@ -1063,7 +1038,7 @@ const startServer = async () => {
     }, 100);
   });
 
-  // ✅ إعادة المحاولة في الخلفية كل 30 ثانية إذا فشل الاتصال
+  // إعادة المحاولة في الخلفية كل 30 ثانية
   if (!dbConnected && pool) {
     let retryCount = 0;
     const interval = setInterval(async () => {
@@ -1080,7 +1055,7 @@ const startServer = async () => {
   }
 };
 
-// ✅ إنشاء جدول program_images بعد الاتصال (اختياري — لا يعطل البدء)
+// إنشاء جدول program_images بعد الاتصال (لا يعطل البدء)
 async function ensureTables() {
   if (!pool) return;
   try {
@@ -1100,13 +1075,10 @@ async function ensureTables() {
   }
 }
 
-// تشغيل الخادم
 startServer().then(() => {
-  // بعد بدء الخادم، حاول إنشاء الجدول (لا يعطل البدء)
   setTimeout(ensureTables, 2000);
 });
 
-// ✅ تصدير
 export {
   io, onlineUsers, pool,
   createExpiryDate, isOTPValid, getTimeRemaining,
