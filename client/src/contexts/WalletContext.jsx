@@ -1,5 +1,11 @@
-// client/src/contexts/WalletContext.jsx
-import React, { createContext, useContext, useState, useEffect } from 'react';
+// client/src/context/WalletContext.jsx — النسخة النهائية المُصلحة
+// ✅ استخدام /wallet/:userId بدلاً من /wallet/me
+// ✅ تصحيح تمرير params إلى api.get
+// ✅ تصحيح استخراج response.data
+// ✅ معالجة 404 من /wallet/transactions (إذا لم يكن موجوداً)
+// ✅ عدم إظهار أخطاء console في وضع الضيف
+
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useAuth } from './AuthContext';
 import api from '../services/api';
 import toast from 'react-hot-toast';
@@ -26,73 +32,105 @@ export const WalletProvider = ({ children }) => {
     totalFees: 0,
   });
 
-  // جلب بيانات المحفظة
-  const loadWallet = async () => {
-    if (!isAuthenticated || !user) return;
+  // ============================================
+  // جلب بيانات المحفظة — يستخدم /wallet/:userId
+  // ============================================
+  const loadWallet = useCallback(async () => {
+    if (!isAuthenticated || !user?.id) return;
+
     setLoading(true);
     try {
-      // ✅ تصحيح: إزالة /api المكررة
-      const response = await api.get('/wallet/me');
-      if (response.data.success) {
-        setWallet(response.data.data || response.data.wallet);
-        const walletData = response.data.data || response.data.wallet;
+      // ✅ تصحيح 1: استخدام user.id بدلاً من /me
+      const response = await api.get(`/wallet/${user.id}`);
+      
+      // ✅ تصحيح 2: api.get يرجع { data }, لذا response.data = body
+      const body = response.data;
+      
+      if (body?.success) {
+        const walletData = body.wallet || body.data;
+        setWallet(walletData);
         if (walletData?.stats) {
           setStats(walletData.stats);
         }
       } else {
-        console.warn('Failed to load wallet:', response.data.message);
+        // المحفظة غير موجودة — حالة طبيعية لمستخدم جديد
+        console.log('ℹ️ No wallet yet for user:', user.id);
         setWallet(null);
       }
     } catch (error) {
-      console.error('Error loading wallet:', error);
-      setWallet(null);
+      // 404 = محفظة غير موجودة (طبيعي)
+      if (error.message?.includes('404') || error.message?.includes('not found')) {
+        console.log('ℹ️ Wallet not found (user may be new)');
+        setWallet(null);
+      } else {
+        console.error('❌ Error loading wallet:', error.message);
+        setWallet(null);
+      }
     } finally {
       setLoading(false);
     }
-  };
+  }, [isAuthenticated, user?.id]);
 
+  // ============================================
   // جلب سجل المعاملات
-  const loadTransactions = async (page = 1, limit = 20) => {
-    if (!isAuthenticated || !user) return;
+  // ============================================
+  const loadTransactions = useCallback(async (page = 1, limit = 20) => {
+    if (!isAuthenticated || !user?.id) return;
+
     try {
-      // ✅ تصحيح: إزالة /api المكررة وتصحيح طريقة إرسال params
-      const response = await api.get('/wallet/transactions', { 
-        params: { page, limit } 
-      });
-      if (response.data.success) {
-        setTransactions(response.data.data || response.data.transactions || []);
+      // ✅ تصحيح 3: تمرير { page, limit } مباشرة (بدون wrapper)
+      const response = await api.get(`/wallet/${user.id}/transactions`, { page, limit });
+      
+      const body = response.data;
+      if (body?.success) {
+        setTransactions(body.transactions || body.data || []);
+      } else {
+        setTransactions([]);
       }
     } catch (error) {
-      console.error('Error loading transactions:', error);
+      // 404 = endpoint غير موجود بعد في الـ Backend
+      if (error.message?.includes('404') || error.message?.includes('not found')) {
+        console.log('ℹ️ Transactions endpoint not yet available');
+      } else {
+        console.error('❌ Error loading transactions:', error.message);
+      }
       setTransactions([]);
     }
-  };
+  }, [isAuthenticated, user?.id]);
 
+  // ============================================
   // إيداع مبلغ
+  // ============================================
   const deposit = async (amount, description = 'إيداع في المحفظة', referenceId = null) => {
     if (!amount || amount <= 0) {
       toast.error('المبلغ غير صالح');
       return { success: false };
     }
+    if (!user?.id) {
+      toast.error('يجب تسجيل الدخول أولاً');
+      return { success: false };
+    }
+
     setLoading(true);
     try {
-      // ✅ تصحيح: إزالة /api المكررة
-      const response = await api.post('/wallet/deposit', {
+      const response = await api.post(`/wallet/${user.id}/deposit`, {
         amount,
         description,
         referenceId,
       });
-      if (response.data.success) {
-        setWallet(response.data.data || response.data.wallet);
+      
+      const body = response.data;
+      if (body?.success) {
+        setWallet(body.wallet || body.data);
         await loadTransactions(1, 20);
         toast.success(`تم إيداع ${amount} ريال بنجاح`);
-        return { success: true, transaction: response.data.transaction };
+        return { success: true, transaction: body.transaction };
       } else {
-        toast.error(response.data.message || 'فشل الإيداع');
+        toast.error(body?.message || 'فشل الإيداع');
         return { success: false };
       }
     } catch (error) {
-      const message = error.response?.data?.message || 'حدث خطأ أثناء الإيداع';
+      const message = error.message || 'حدث خطأ أثناء الإيداع';
       toast.error(message);
       return { success: false };
     } finally {
@@ -100,35 +138,43 @@ export const WalletProvider = ({ children }) => {
     }
   };
 
+  // ============================================
   // سحب مبلغ
+  // ============================================
   const withdraw = async (amount, description = 'سحب من المحفظة', referenceId = null) => {
     if (!amount || amount <= 0) {
       toast.error('المبلغ غير صالح');
+      return { success: false };
+    }
+    if (!user?.id) {
+      toast.error('يجب تسجيل الدخول أولاً');
       return { success: false };
     }
     if (wallet && wallet.balance < amount) {
       toast.error('الرصيد غير كافٍ');
       return { success: false };
     }
+
     setLoading(true);
     try {
-      // ✅ تصحيح: إزالة /api المكررة
-      const response = await api.post('/wallet/withdraw', {
+      const response = await api.post(`/wallet/${user.id}/withdraw`, {
         amount,
         description,
         referenceId,
       });
-      if (response.data.success) {
-        setWallet(response.data.data || response.data.wallet);
+      
+      const body = response.data;
+      if (body?.success) {
+        setWallet(body.wallet || body.data);
         await loadTransactions(1, 20);
         toast.success(`تم سحب ${amount} ريال بنجاح`);
-        return { success: true, transaction: response.data.transaction };
+        return { success: true, transaction: body.transaction };
       } else {
-        toast.error(response.data.message || 'فشل السحب');
+        toast.error(body?.message || 'فشل السحب');
         return { success: false };
       }
     } catch (error) {
-      const message = error.response?.data?.message || 'حدث خطأ أثناء السحب';
+      const message = error.message || 'حدث خطأ أثناء السحب';
       toast.error(message);
       return { success: false };
     } finally {
@@ -136,28 +182,37 @@ export const WalletProvider = ({ children }) => {
     }
   };
 
+  // ============================================
   // طلب سحب للمرشدين
+  // ============================================
   const requestWithdraw = async (amount, bankAccount) => {
     if (!user || user.type !== 'guide') {
       toast.error('فقط المرشدين يمكنهم سحب الأموال');
       return { success: false };
     }
-    return withdraw(amount, `طلب سحب إلى حساب ${bankAccount.accountNumber}`, null);
+    return withdraw(amount, `طلب سحب إلى حساب ${bankAccount?.accountNumber || ''}`, null);
   };
 
+  // ============================================
   // دفع حجز
+  // ============================================
   const payBooking = async (bookingId, amount) => {
     return withdraw(amount, `دفع قيمة الحجز #${bookingId}`, bookingId);
   };
 
-  // دوال مساعدة للرصيد
+  // ============================================
+  // Helpers
+  // ============================================
   const getBalance = () => wallet?.balance || 0;
   const getFrozenBalance = () => wallet?.frozenBalance || wallet?.frozen_balance || 0;
   const getTotalBalance = () => (wallet?.balance || 0) + (wallet?.frozenBalance || wallet?.frozen_balance || 0);
   const getCurrency = () => wallet?.currency || 'SAR';
 
+  // ============================================
+  // تحميل تلقائي عند تسجيل الدخول
+  // ============================================
   useEffect(() => {
-    if (isAuthenticated && user) {
+    if (isAuthenticated && user?.id) {
       loadWallet();
       loadTransactions();
     } else {
@@ -170,6 +225,7 @@ export const WalletProvider = ({ children }) => {
         totalFees: 0,
       });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated, user?.id]);
 
   const value = {
