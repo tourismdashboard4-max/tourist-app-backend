@@ -1,21 +1,32 @@
 // client/src/services/api.js
-// ✅ النسخة المعدلة – مع دعم الصورة الافتراضية وتحسين معالجة الصور
-// ✅ إضافة دالة changePassword لتغيير كلمة المرور بشكل منفصل
-// ✅ إصلاح دالة sendOTP: إزالة fallback purposes وإرجاع الخطأ كما هو (لا تحويل إلى جوال)
+// ✅ v3 — إصلاحات حرجة:
+//   1) تطبيع API_BASE_URL (إزالة /api المكرر الذي كان يكسر الطلبات)
+//   2) verifyOTP / sendOTP / forgotPassword / resetPassword تحتفظ بـ error_code
+//   3) resetPassword يدعم reset_token (اختياري)
+//   4) buildImageUrl مُبسّط وأكثر أماناً
+//   5) loadGuidesMap محصّن ضد JSON غير صالح
+// ✅ النسخة السابقة: دعم الصورة الافتراضية + changePassword + sendOTP بدون fallback
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://tourist-app-api.onrender.com/api';
+const RAW_API_URL =
+  import.meta.env.VITE_API_URL || 'https://tourist-app-api.onrender.com/api';
+
+// ✅ تطبيع: لا شرطة مائلة في النهاية، ولا /api في النهاية
+//    (كل المسارات في هذا الملف تضيف /api/... بنفسها)
+const API_BASE_URL = RAW_API_URL
+  .replace(/\/+$/, '')      // إزالة / في النهاية
+  .replace(/\/api$/, '');   // إزالة /api في النهاية
 
 // ===== صورة افتراضية (SVG مشفر) =====
-const DEFAULT_IMAGE = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"%3E%3Crect width="400" height="300" fill="%2310b981"/%3E%3Ctext x="50%25" y="50%25" font-family="Arial" font-size="24" fill="white" text-anchor="middle" dy=".3em"%3ENo Image%3C/text%3E%3C/svg%3E';
+const DEFAULT_IMAGE =
+  'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"%3E%3Crect width="400" height="300" fill="%2310b981"/%3E%3Ctext x="50%25" y="50%25" font-family="Arial" font-size="24" fill="white" text-anchor="middle" dy=".3em"%3ENo Image%3C/text%3E%3C/svg%3E';
 
 // ===== دوال مساعدة للصور =====
 const buildImageUrl = (url) => {
   if (!url || typeof url !== 'string') return null;
   if (url.startsWith('blob:') || url.startsWith('data:')) return url;
   if (url.startsWith('http://') || url.startsWith('https://')) return url;
-  if (url.startsWith('/uploads')) return `${API_BASE_URL.replace('/api', '')}${url}`;
-  if (url.startsWith('/')) return `${API_BASE_URL.replace('/api', '')}${url}`;
-  return `${API_BASE_URL.replace('/api', '')}/${url}`;
+  if (url.startsWith('/')) return `${API_BASE_URL}${url}`;
+  return `${API_BASE_URL}/${url}`;
 };
 
 const getImageUrl = (img) => {
@@ -27,6 +38,16 @@ const getImageUrl = (img) => {
   return null;
 };
 
+// ✅ دالة مساعدة لتوحيد رمي الأخطاء مع error_code
+const buildApiError = (data, status, fallbackMessage) => {
+  const err = new Error(data?.message || fallbackMessage || 'فشل الطلب');
+  if (data?.error_code) err.error_code = data.error_code;
+  if (data?.code) err.code = data.code;
+  err.status = status;
+  err.payload = data;
+  return err;
+};
+
 // ===== خريطة UUID -> old_id (للمرشدين) =====
 let guidesIdMap = null;
 let guidesMapPromise = null;
@@ -34,16 +55,25 @@ let guidesMapPromise = null;
 const loadGuidesMap = async () => {
   if (guidesIdMap) return guidesIdMap;
   if (guidesMapPromise) return guidesMapPromise;
+
   guidesMapPromise = (async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/guides`);
-      const data = await response.json();
+      let data = null;
+      try {
+        data = await response.json();
+      } catch (jsonErr) {
+        console.error('❌ Invalid JSON in guides response:', jsonErr);
+        return {};
+      }
+
       let guidesList = [];
-      if (data.success && Array.isArray(data.guides)) guidesList = data.guides;
+      if (data?.success && Array.isArray(data.guides)) guidesList = data.guides;
       else if (Array.isArray(data)) guidesList = data;
-      else if (data.data && Array.isArray(data.data)) guidesList = data.data;
+      else if (data?.data && Array.isArray(data.data)) guidesList = data.data;
+
       const map = {};
-      guidesList.forEach(guide => {
+      guidesList.forEach((guide) => {
         const uuid = guide.id || guide.uuid;
         const numericId = guide.old_id;
         if (uuid && numericId && !isNaN(Number(numericId))) {
@@ -60,6 +90,7 @@ const loadGuidesMap = async () => {
       guidesMapPromise = null;
     }
   })();
+
   return guidesMapPromise;
 };
 
@@ -70,13 +101,11 @@ export const api = {
   // ============================================
   // 📧 OTP SERVICES - رموز التحقق
   // ============================================
-  
+
   /**
    * إرسال رمز التحقق (OTP) عبر البريد الإلكتروني.
-   * @param {string} email - البريد الإلكتروني المستهدف
-   * @param {string} purpose - الغرض من الإرسال (register, profile_update, reset-password, update-email, verify-email)
-   * @returns {Promise} - يعيد استجابة الخادم، أو يرمي استثناء في حال فشل.
-   * ملاحظة: تم إزالة آلية fallback، سنرمي الخطأ كما هو لإبلاغ المستخدم.
+   * @param {string} email
+   * @param {string} purpose - register | profile_update | reset-password | update-email | verify-email
    */
   async sendOTP(email, purpose = 'register') {
     try {
@@ -84,12 +113,10 @@ export const api = {
       const response = await fetch(`${API_BASE_URL}/api/auth/send-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, purpose })
+        body: JSON.stringify({ email, purpose }),
       });
       const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.message || 'فشل إرسال رمز التحقق');
-      }
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل إرسال رمز التحقق');
       return data;
     } catch (error) {
       console.error('❌ Send OTP error:', error);
@@ -103,10 +130,15 @@ export const api = {
       const response = await fetch(`${API_BASE_URL}/api/auth/verify-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, code, purpose })
+        body: JSON.stringify({ email, code, purpose }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل التحقق');
+      if (!response.ok) {
+        const err = buildApiError(data, response.status, 'فشل التحقق');
+        // ✅ نُرفق error_code بشكل صريح (لتمكين LoginPage من عرض رسالة دقيقة)
+        err.error_code = data.error_code || null;
+        throw err;
+      }
       return data;
     } catch (error) {
       console.error('❌ Verify OTP error:', error);
@@ -119,10 +151,10 @@ export const api = {
       const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, fullName, password })
+        body: JSON.stringify({ email, fullName, password }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل إنشاء الحساب');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل إنشاء الحساب');
       return data;
     } catch (error) {
       console.error('❌ Register error:', error);
@@ -135,10 +167,10 @@ export const api = {
       const response = await fetch(`${API_BASE_URL}/api/auth/resend-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email })
+        body: JSON.stringify({ email }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل إعادة الإرسال');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل إعادة الإرسال');
       return data;
     } catch (error) {
       console.error('❌ Resend OTP error:', error);
@@ -149,19 +181,19 @@ export const api = {
   // ============================================
   // 👤 USER SERVICES
   // ============================================
-  
+
   async login(email, password) {
     try {
       const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({ email, password }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تسجيل الدخول');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل تسجيل الدخول');
       if (data.token) {
         localStorage.setItem('token', data.token);
-        localStorage.setItem('user', JSON.stringify(data.user));
+        if (data.user) localStorage.setItem('user', JSON.stringify(data.user));
         localStorage.setItem('userType', 'user');
       }
       return data;
@@ -176,26 +208,41 @@ export const api = {
       const response = await fetch(`${API_BASE_URL}/api/auth/forgot-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email })
+        body: JSON.stringify({ email }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل إرسال رابط الاستعادة');
-      return data;
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل إرسال رابط الاستعادة');
+      return data; // قد يحتوي على purpose (إن أرجعه الخادم)
     } catch (error) {
       console.error('❌ Forgot password error:', error);
       throw error;
     }
   },
 
-  async resetPassword(email, code, newPassword) {
+  /**
+   * إعادة تعيين كلمة المرور.
+   * @param {string} email
+   * @param {string} code - رمز التحقق
+   * @param {string} newPassword
+   * @param {string} [resetToken] - اختياري، يعود من verify-otp (يدعمه الباك اند إن كان محدّثاً)
+   */
+  async resetPassword(email, code, newPassword, resetToken) {
     try {
+      const body = {
+        email,
+        code,
+        newPassword,
+        purpose: 'reset-password',
+      };
+      if (resetToken) body.reset_token = resetToken;
+
       const response = await fetch(`${API_BASE_URL}/api/auth/reset-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, code, newPassword, purpose: 'reset-password' })
+        body: JSON.stringify(body),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل إعادة تعيين كلمة المرور');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل إعادة تعيين كلمة المرور');
       return data;
     } catch (error) {
       console.error('❌ Reset password error:', error);
@@ -234,10 +281,13 @@ export const api = {
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_BASE_URL}/api/users/${userId}`, {
         method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحميل الملف الشخصي');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل تحميل الملف الشخصي');
       return data;
     } catch (error) {
       console.error('❌ Get user profile error:', error);
@@ -250,11 +300,14 @@ export const api = {
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_BASE_URL}/api/users/${userId}/profile`, {
         method: 'PUT',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify(updates)
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(updates),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحديث الملف الشخصي');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل تحديث الملف الشخصي');
       return data;
     } catch (error) {
       console.error('❌ Update profile error:', error);
@@ -267,11 +320,11 @@ export const api = {
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_BASE_URL}/api/users/${userId}/avatar`, {
         method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-        body: formData
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+        body: formData,
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل رفع الصورة');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل رفع الصورة');
       return data;
     } catch (error) {
       console.error('❌ Upload avatar error:', error);
@@ -284,10 +337,13 @@ export const api = {
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_BASE_URL}/api/users/${userId}/avatar`, {
         method: 'DELETE',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل حذف الصورة');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل حذف الصورة');
       return data;
     } catch (error) {
       console.error('❌ Delete avatar error:', error);
@@ -296,21 +352,23 @@ export const api = {
   },
 
   // ============================================
-  // 📱 PHONE VERIFICATION (تم الإصلاح)
+  // 📱 PHONE VERIFICATION
   // ============================================
 
-  // ✅ إرسال OTP عبر الجوال مع إرسال userId و phone
   async sendPhoneVerification(userId, phone) {
     try {
       const token = localStorage.getItem('token');
       console.log('📤 Sending phone OTP for user:', userId, 'phone:', phone);
       const response = await fetch(`${API_BASE_URL}/api/auth/send-phone-otp`, {
         method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, phone })
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ userId, phone }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل إرسال رمز التحقق');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل إرسال رمز التحقق');
       return data;
     } catch (error) {
       console.error('❌ Send phone verification error:', error);
@@ -318,18 +376,20 @@ export const api = {
     }
   },
 
-  // ✅ التحقق من OTP الجوال مع إرسال userId و phone و code
   async verifyPhoneCode(userId, phone, code) {
     try {
       const token = localStorage.getItem('token');
       console.log('📤 Verifying phone OTP for user:', userId, 'phone:', phone);
       const response = await fetch(`${API_BASE_URL}/api/auth/verify-phone-otp`, {
         method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, phone, code })
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ userId, phone, code }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل التحقق');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل التحقق');
       return data;
     } catch (error) {
       console.error('❌ Verify phone code error:', error);
@@ -342,11 +402,14 @@ export const api = {
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_BASE_URL}/api/auth/update-phone`, {
         method: 'PUT',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone })
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ phone }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحديث رقم الجوال');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل تحديث رقم الجوال');
       return data;
     } catch (error) {
       console.error('❌ Update phone error:', error);
@@ -355,18 +418,21 @@ export const api = {
   },
 
   // ============================================
-  // 🔐 CHANGE PASSWORD (تمت الإضافة)
+  // 🔐 CHANGE PASSWORD
   // ============================================
   async changePassword(userId, currentPassword, newPassword) {
     try {
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_BASE_URL}/api/auth/change-password`, {
         method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, currentPassword, newPassword })
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ userId, currentPassword, newPassword }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تغيير كلمة المرور');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل تغيير كلمة المرور');
       return data;
     } catch (error) {
       console.error('❌ Change password error:', error);
@@ -377,7 +443,7 @@ export const api = {
   // ============================================
   // 🧑‍🏫 GUIDE SERVICES
   // ============================================
-  
+
   async guideRegister(formData) {
     try {
       const response = await fetch(`${API_BASE_URL}/api/guides/register`, {
@@ -394,11 +460,11 @@ export const api = {
           programLocation: formData.programLocation || null,
           programLocationName: formData.programLocationName || '',
           timestamp: new Date().toISOString(),
-          status: 'pending'
-        })
+          status: 'pending',
+        }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل إرسال طلب التسجيل');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل إرسال طلب التسجيل');
       return data;
     } catch (error) {
       console.error('❌ Guide registration error:', error);
@@ -411,13 +477,13 @@ export const api = {
       const response = await fetch(`${API_BASE_URL}/api/guides/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ licenseNumber, email, password })
+        body: JSON.stringify({ licenseNumber, email, password }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تسجيل الدخول');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل تسجيل الدخول');
       if (data.token) {
         localStorage.setItem('token', data.token);
-        localStorage.setItem('user', JSON.stringify(data.user));
+        if (data.user) localStorage.setItem('user', JSON.stringify(data.user));
         localStorage.setItem('userType', 'guide');
       }
       return data;
@@ -431,10 +497,13 @@ export const api = {
     try {
       const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}`, {
         method: 'GET',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحميل بيانات المرشد');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل تحميل بيانات المرشد');
       return data;
     } catch (error) {
       console.error('❌ Get guide profile error:', error);
@@ -446,11 +515,14 @@ export const api = {
     try {
       const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}`, {
         method: 'PUT',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(updates)
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(updates),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحديث البيانات');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل تحديث البيانات');
       return data;
     } catch (error) {
       console.error('❌ Update guide profile error:', error);
@@ -463,10 +535,13 @@ export const api = {
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_BASE_URL}/api/guides/status/${userId}`, {
         method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحميل الحالة');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل تحميل الحالة');
       return data;
     } catch (error) {
       console.error('❌ Get upgrade status error:', error);
@@ -475,34 +550,29 @@ export const api = {
   },
 
   // ============================================
-  // 🎯 PROGRAM SERVICES (مع دعم الصورة الافتراضية)
+  // 🎯 PROGRAM SERVICES
   // ============================================
 
-  // دالة مساعدة لتجهيز البرامج المسترجعة مع صور افتراضية
   _processPrograms(programs) {
     if (!Array.isArray(programs)) return [];
-    return programs.map(p => {
-      // معالجة الصور
+    return programs.map((p) => {
       let images = [];
       if (p.images && Array.isArray(p.images) && p.images.length > 0) {
         images = p.images
-          .map(img => {
+          .map((img) => {
             const url = getImageUrl(img);
             return url ? buildImageUrl(url) : null;
           })
           .filter(Boolean);
       }
-      // إذا كانت الصور فارغة، نضيف الصورة الافتراضية
       if (images.length === 0) {
         images = [DEFAULT_IMAGE];
       }
-      // التأكد من وجود حقل image (أول صورة)
       const image = images[0] || DEFAULT_IMAGE;
       return { ...p, images, image };
     });
   },
 
-  // حفظ البرامج في localStorage (نادراً ما يُستخدم)
   saveProgramsToLocal(programs) {
     try {
       const dataStr = JSON.stringify(programs);
@@ -545,23 +615,24 @@ export const api = {
     return [];
   },
 
-  // جلب برامج مرشد معين (مع إضافة الصور الافتراضية)
   async getGuidePrograms(guideId, token, skipLocalSave = true) {
     try {
       console.log('📤 Fetching programs for guide:', guideId);
       const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}/programs`, {
         method: 'GET',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحميل البرامج');
-      
-      // معالجة البرامج وإضافة الصور الافتراضية
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل تحميل البرامج');
+
       const processedPrograms = this._processPrograms(data.programs || data.data || []);
-      
+
       if (!skipLocalSave && processedPrograms.length > 0 && processedPrograms.length < 50) {
         const allPrograms = this.getProgramsFromLocal();
-        const otherPrograms = allPrograms.filter(p => p.guide_id !== guideId);
+        const otherPrograms = allPrograms.filter((p) => p.guide_id !== guideId);
         this.saveProgramsToLocal([...otherPrograms, ...processedPrograms]);
       }
       return { success: true, programs: processedPrograms, count: processedPrograms.length };
@@ -571,17 +642,19 @@ export const api = {
     }
   },
 
-  // إضافة برنامج سياحي جديد (مع تخزين محلي محدود)
   async addTourProgram(guideId, token, programData) {
     try {
       console.log('📤 Adding program for guide:', guideId, programData);
       const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}/programs`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(programData)
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(programData),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل إضافة البرنامج');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل إضافة البرنامج');
       return data;
     } catch (error) {
       console.error('❌ Add program error:', error);
@@ -589,17 +662,22 @@ export const api = {
     }
   },
 
-  // تحديث حالة البرنامج (تفعيل/تعطيل)
   async toggleProgramStatus(guideId, programId, token, status) {
     try {
       console.log('📤 Toggling program status:', { programId, status });
-      const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}/programs/${programId}`, {
-        method: 'PATCH',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status })
-      });
+      const response = await fetch(
+        `${API_BASE_URL}/api/guides/${guideId}/programs/${programId}`,
+        {
+          method: 'PATCH',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ status }),
+        }
+      );
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحديث حالة البرنامج');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل تحديث حالة البرنامج');
       return data;
     } catch (error) {
       console.error('❌ Toggle program error:', error);
@@ -607,17 +685,16 @@ export const api = {
     }
   },
 
-  // جلب جميع البرامج للعرض العام (مع إضافة الصور الافتراضية)
   async getAllPrograms(skipLocalSave = true) {
     try {
       console.log('📤 Fetching all programs');
       const response = await fetch(`${API_BASE_URL}/api/programs`, {
         method: 'GET',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json' },
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحميل البرامج');
-      
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل تحميل البرامج');
+
       const processedPrograms = this._processPrograms(data.programs || data.data || []);
       return { success: true, programs: processedPrograms, count: processedPrograms.length };
     } catch (error) {
@@ -626,16 +703,21 @@ export const api = {
     }
   },
 
-  // حذف برنامج سياحي
   async deleteProgram(guideId, programId, token) {
     try {
       console.log('📤 Deleting program:', programId);
-      const response = await fetch(`${API_BASE_URL}/api/guides/${guideId}/programs/${programId}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
-      });
+      const response = await fetch(
+        `${API_BASE_URL}/api/guides/${guideId}/programs/${programId}`,
+        {
+          method: 'DELETE',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل حذف البرنامج');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل حذف البرنامج');
       return data;
     } catch (error) {
       console.error('❌ Delete program error:', error);
@@ -687,7 +769,7 @@ export const api = {
       const key = this._getFavoritesKey();
       const stored = localStorage.getItem(key);
       let favorites = stored ? JSON.parse(stored) : [];
-      favorites = favorites.filter(id => id !== programId);
+      favorites = favorites.filter((id) => id !== programId);
       localStorage.setItem(key, JSON.stringify(favorites));
       return { success: true, favorites };
     } catch (error) {
@@ -705,11 +787,11 @@ export const api = {
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_BASE_URL}/api/programs/${programId}/images`, {
         method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-        body: formData
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+        body: formData,
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل رفع الصور');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل رفع الصور');
       return data;
     } catch (error) {
       console.error('❌ Upload program images error:', error);
@@ -722,11 +804,13 @@ export const api = {
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_BASE_URL}/api/programs/${programId}/images`, {
         method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحميل الصور');
-      // ضمان وجود صورة افتراضية إذا كانت القائمة فارغة
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل تحميل الصور');
       if (!data.images || data.images.length === 0) {
         data.images = [{ image_url: DEFAULT_IMAGE, is_primary: true }];
       }
@@ -740,12 +824,18 @@ export const api = {
   async deleteProgramImage(programId, imageId) {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/programs/${programId}/images/${imageId}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
-      });
+      const response = await fetch(
+        `${API_BASE_URL}/api/programs/${programId}/images/${imageId}`,
+        {
+          method: 'DELETE',
+          headers: {
+            Authorization: token ? `Bearer ${token}` : '',
+            'Content-Type': 'application/json',
+          },
+        }
+      );
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل حذف الصورة');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل حذف الصورة');
       return data;
     } catch (error) {
       console.error('❌ Delete program image error:', error);
@@ -756,12 +846,18 @@ export const api = {
   async setPrimaryProgramImage(programId, imageId) {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/programs/${programId}/images/${imageId}/primary`, {
-        method: 'PUT',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
-      });
+      const response = await fetch(
+        `${API_BASE_URL}/api/programs/${programId}/images/${imageId}/primary`,
+        {
+          method: 'PUT',
+          headers: {
+            Authorization: token ? `Bearer ${token}` : '',
+            'Content-Type': 'application/json',
+          },
+        }
+      );
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تعيين الصورة الرئيسية');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل تعيين الصورة الرئيسية');
       return data;
     } catch (error) {
       console.error('❌ Set primary image error:', error);
@@ -781,10 +877,13 @@ export const api = {
       console.log('📤 GET request to:', fullUrl);
       const response = await fetch(fullUrl, {
         method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || `فشل الطلب (${response.status})`);
+      if (!response.ok) throw buildApiError(data, response.status, `فشل الطلب (${response.status})`);
       return { data };
     } catch (error) {
       console.error('❌ GET request error:', error);
@@ -799,11 +898,15 @@ export const api = {
       console.log('📤 POST request to:', fullUrl);
       const response = await fetch(fullUrl, {
         method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data),
       });
       const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || `فشل الطلب (${response.status})`);
+      if (!response.ok)
+        throw buildApiError(responseData, response.status, `فشل الطلب (${response.status})`);
       return { data: responseData };
     } catch (error) {
       console.error('❌ POST request error:', error);
@@ -817,11 +920,15 @@ export const api = {
       const fullUrl = `${API_BASE_URL}${url}`;
       const response = await fetch(fullUrl, {
         method: 'PUT',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data),
       });
       const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || `فشل الطلب (${response.status})`);
+      if (!response.ok)
+        throw buildApiError(responseData, response.status, `فشل الطلب (${response.status})`);
       return { data: responseData };
     } catch (error) {
       console.error('❌ PUT request error:', error);
@@ -835,10 +942,14 @@ export const api = {
       const fullUrl = `${API_BASE_URL}${url}`;
       const response = await fetch(fullUrl, {
         method: 'DELETE',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
       });
       const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || `فشل الطلب (${response.status})`);
+      if (!response.ok)
+        throw buildApiError(responseData, response.status, `فشل الطلب (${response.status})`);
       return { data: responseData };
     } catch (error) {
       console.error('❌ DELETE request error:', error);
@@ -865,10 +976,14 @@ export const api = {
       console.log('🔍 [getUserNotifications] URL:', url);
       const response = await fetch(url, {
         method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || `فشل تحميل الإشعارات (${response.status})`);
+      if (!response.ok)
+        throw buildApiError(data, response.status, `فشل تحميل الإشعارات (${response.status})`);
       return data;
     } catch (error) {
       console.error('❌ Get notifications error:', error);
@@ -876,7 +991,7 @@ export const api = {
       return {
         success: true,
         notifications: localNotifications ? JSON.parse(localNotifications) : [],
-        fromLocal: true
+        fromLocal: true,
       };
     }
   },
@@ -886,10 +1001,13 @@ export const api = {
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_BASE_URL}/api/notifications/stats`, {
         method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحميل الإحصائيات');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل تحميل الإحصائيات');
       return data;
     } catch (error) {
       console.error('❌ Get stats error:', error);
@@ -900,12 +1018,18 @@ export const api = {
   async markNotificationAsRead(notificationId) {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/notifications/${notificationId}/read`, {
-        method: 'PUT',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
-      });
+      const response = await fetch(
+        `${API_BASE_URL}/api/notifications/${notificationId}/read`,
+        {
+          method: 'PUT',
+          headers: {
+            Authorization: token ? `Bearer ${token}` : '',
+            'Content-Type': 'application/json',
+          },
+        }
+      );
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحديث الإشعار');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل تحديث الإشعار');
       return data;
     } catch (error) {
       console.error('❌ Mark as read error:', error);
@@ -918,10 +1042,13 @@ export const api = {
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_BASE_URL}/api/notifications/read-all`, {
         method: 'PUT',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحديث الإشعارات');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل تحديث الإشعارات');
       return data;
     } catch (error) {
       console.error('❌ Mark all as read error:', error);
@@ -934,10 +1061,13 @@ export const api = {
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_BASE_URL}/api/notifications/${notificationId}`, {
         method: 'DELETE',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل حذف الإشعار');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل حذف الإشعار');
       return data;
     } catch (error) {
       console.error('❌ Delete notification error:', error);
@@ -950,11 +1080,14 @@ export const api = {
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_BASE_URL}/api/notifications/delete-multiple`, {
         method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notificationIds })
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ notificationIds }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل حذف الإشعارات');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل حذف الإشعارات');
       return data;
     } catch (error) {
       console.error('❌ Delete multiple error:', error);
@@ -967,11 +1100,14 @@ export const api = {
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_BASE_URL}/api/notifications/reply`, {
         method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notificationId, message })
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ notificationId, message }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل إرسال الرد');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل إرسال الرد');
       return data;
     } catch (error) {
       console.error('❌ Reply error:', error);
@@ -984,11 +1120,14 @@ export const api = {
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_BASE_URL}/api/notifications/send`, {
         method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data),
       });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.message || 'فشل إرسال الإشعار');
+      if (!response.ok) throw buildApiError(result, response.status, 'فشل إرسال الإشعار');
       return result;
     } catch (error) {
       console.error('❌ Send notification error:', error);
@@ -1001,11 +1140,14 @@ export const api = {
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_BASE_URL}/api/notifications/send`, {
         method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, title, message, type })
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ userId, title, message, type }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل إرسال الإشعار');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل إرسال الإشعار');
       return data;
     } catch (error) {
       console.error('❌ Send user notification error:', error);
@@ -1027,7 +1169,10 @@ export const api = {
       console.log('📤 Fetching user conversations...');
       const response = await fetch(`${API_BASE_URL}/api/chats`, {
         method: 'GET',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
       });
       const data = await response.json();
       if (!response.ok) {
@@ -1036,7 +1181,7 @@ export const api = {
       }
       return {
         success: true,
-        conversations: data.conversations || data.data?.conversations || []
+        conversations: data.conversations || data.data?.conversations || [],
       };
     } catch (error) {
       console.error('❌ Get conversations error:', error);
@@ -1052,8 +1197,11 @@ export const api = {
       console.log('📤 Starting support chat with data:', data);
       const response = await fetch(`${API_BASE_URL}/api/chats/support`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data),
       });
       const responseData = await response.json();
       if (!response.ok) {
@@ -1075,11 +1223,11 @@ export const api = {
       const token = localStorage.getItem('token');
       if (!token) throw new Error('No authentication token found');
       if (!participantId) throw new Error('معرف المستخدم غير صالح');
-      
+
       const userStr = localStorage.getItem('touristAppUser') || localStorage.getItem('user');
       const currentUser = userStr ? JSON.parse(userStr) : null;
       let finalParticipantId = participantId;
-      
+
       if (typeof participantId === 'string' && isNaN(Number(participantId))) {
         try {
           const guidesMap = await loadGuidesMap();
@@ -1088,7 +1236,9 @@ export const api = {
             finalParticipantId = numericId;
             console.log(`✅ Converted UUID ${participantId} to numeric ID ${numericId}`);
           } else {
-            console.warn(`⚠️ Could not find numeric ID for UUID ${participantId}, will use as is (may fail)`);
+            console.warn(
+              `⚠️ Could not find numeric ID for UUID ${participantId}, will use as is (may fail)`
+            );
           }
         } catch (err) {
           console.error('Error converting participant ID:', err);
@@ -1097,7 +1247,7 @@ export const api = {
         finalParticipantId = Number(participantId);
         if (isNaN(finalParticipantId)) throw new Error('معرف المستخدم غير صالح (ليس رقماً)');
       }
-      
+
       let validBookingId = null;
       if (bookingId !== null && bookingId !== undefined) {
         const numericBookingId = parseInt(bookingId, 10);
@@ -1112,17 +1262,20 @@ export const api = {
         participantId: finalParticipantId,
         type,
         userId: currentUser?.id,
-        ...(validBookingId !== null && { bookingId: validBookingId })
+        ...(validBookingId !== null && { bookingId: validBookingId }),
       };
 
       console.log('📤 Creating conversation with payload:', payload);
       const response = await fetch(`${API_BASE_URL}/api/chats`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل إنشاء المحادثة');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل إنشاء المحادثة');
       return data;
     } catch (error) {
       console.error('❌ Create conversation error:', error);
@@ -1138,11 +1291,14 @@ export const api = {
         `${API_BASE_URL}/api/chats/${conversationId}/messages?page=${page}&limit=${limit}`,
         {
           method: 'GET',
-          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
         }
       );
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحميل الرسائل');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل تحميل الرسائل');
       return data;
     } catch (error) {
       console.error('❌ Get messages error:', error);
@@ -1156,11 +1312,14 @@ export const api = {
       if (!token) throw new Error('No authentication token found');
       const response = await fetch(`${API_BASE_URL}/api/chats/message/text`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chatId, content })
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ chatId, content }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل إرسال الرسالة');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل إرسال الرسالة');
       return data;
     } catch (error) {
       console.error('❌ Send message error:', error);
@@ -1168,17 +1327,17 @@ export const api = {
     }
   },
 
-  async sendImageMessage(formData, onProgress) {
+  async sendImageMessage(formData) {
     try {
       const token = localStorage.getItem('token');
       if (!token) throw new Error('No authentication token found');
       const response = await fetch(`${API_BASE_URL}/api/chats/message/image`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
-        body: formData
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل إرسال الصورة');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل إرسال الصورة');
       return data;
     } catch (error) {
       console.error('❌ Send image error:', error);
@@ -1192,11 +1351,11 @@ export const api = {
       if (!token) throw new Error('No authentication token found');
       const response = await fetch(`${API_BASE_URL}/api/chats/message/file`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
-        body: formData
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل إرسال الملف');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل إرسال الملف');
       return data;
     } catch (error) {
       console.error('❌ Send file error:', error);
@@ -1210,11 +1369,14 @@ export const api = {
       if (!token) throw new Error('No authentication token found');
       const response = await fetch(`${API_BASE_URL}/api/chats/${conversationId}/rate`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rating })
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ rating }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل إرسال التقييم');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل إرسال التقييم');
       return data;
     } catch (error) {
       console.error('❌ Rate conversation error:', error);
@@ -1228,10 +1390,13 @@ export const api = {
       if (!token) throw new Error('No authentication token found');
       const response = await fetch(`${API_BASE_URL}/api/chats/message/${messageId}/read`, {
         method: 'PUT',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحديث حالة القراءة');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل تحديث حالة القراءة');
       return data;
     } catch (error) {
       console.error('❌ Mark as read error:', error);
@@ -1249,11 +1414,15 @@ export const api = {
       console.log('📤 Creating support ticket with data:', data);
       const response = await fetch(`${API_BASE_URL}/api/support/tickets`, {
         method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data),
       });
       const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || 'فشل إنشاء تذكرة الدعم');
+      if (!response.ok)
+        throw buildApiError(responseData, response.status, 'فشل إنشاء تذكرة الدعم');
       return responseData;
     } catch (error) {
       console.error('❌ Create support ticket error:', error);
@@ -1268,10 +1437,13 @@ export const api = {
       const url = `${API_BASE_URL}/api/support/tickets${queryParams ? `?${queryParams}` : ''}`;
       const response = await fetch(url, {
         method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
       });
       const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || 'فشل تحميل التذاكر');
+      if (!response.ok) throw buildApiError(responseData, response.status, 'فشل تحميل التذاكر');
       return responseData;
     } catch (error) {
       console.error('❌ Get support tickets error:', error);
@@ -1284,10 +1456,13 @@ export const api = {
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_BASE_URL}/api/support/tickets/${ticketId}`, {
         method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
       });
       const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || 'فشل تحميل التذكرة');
+      if (!response.ok) throw buildApiError(responseData, response.status, 'فشل تحميل التذكرة');
       return responseData;
     } catch (error) {
       console.error('❌ Get support ticket error:', error);
@@ -1299,13 +1474,19 @@ export const api = {
     try {
       const token = localStorage.getItem('token');
       console.log('📤 Sending support message to ticket:', ticketId);
-      const response = await fetch(`${API_BASE_URL}/api/support/tickets/${ticketId}/messages`, {
-        method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, attachments })
-      });
+      const response = await fetch(
+        `${API_BASE_URL}/api/support/tickets/${ticketId}/messages`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: token ? `Bearer ${token}` : '',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ message, attachments }),
+        }
+      );
       const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || 'فشل إرسال الرسالة');
+      if (!response.ok) throw buildApiError(responseData, response.status, 'فشل إرسال الرسالة');
       return responseData;
     } catch (error) {
       console.error('❌ Send message error:', error);
@@ -1316,12 +1497,18 @@ export const api = {
   async getSupportMessages(ticketId) {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/support/tickets/${ticketId}/messages`, {
-        method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
-      });
+      const response = await fetch(
+        `${API_BASE_URL}/api/support/tickets/${ticketId}/messages`,
+        {
+          method: 'GET',
+          headers: {
+            Authorization: token ? `Bearer ${token}` : '',
+            'Content-Type': 'application/json',
+          },
+        }
+      );
       const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || 'فشل تحميل الرسائل');
+      if (!response.ok) throw buildApiError(responseData, response.status, 'فشل تحميل الرسائل');
       return responseData;
     } catch (error) {
       console.error('❌ Get messages error:', error);
@@ -1332,13 +1519,20 @@ export const api = {
   async updateTicketStatus(ticketId, status) {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/support/tickets/${ticketId}/status`, {
-        method: 'PATCH',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status })
-      });
+      const response = await fetch(
+        `${API_BASE_URL}/api/support/tickets/${ticketId}/status`,
+        {
+          method: 'PATCH',
+          headers: {
+            Authorization: token ? `Bearer ${token}` : '',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ status }),
+        }
+      );
       const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || 'فشل تحديث حالة التذكرة');
+      if (!response.ok)
+        throw buildApiError(responseData, response.status, 'فشل تحديث حالة التذكرة');
       return responseData;
     } catch (error) {
       console.error('❌ Update ticket status error:', error);
@@ -1347,7 +1541,7 @@ export const api = {
   },
 
   // ============================================
-  // 💾 LOCAL STORAGE FUNCTIONS (Fallback)
+  // 💾 LOCAL STORAGE FALLBACKS
   // ============================================
 
   createLocalTicket(data) {
@@ -1363,7 +1557,7 @@ export const api = {
       status: 'open',
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-      fromLocal: true
+      fromLocal: true,
     };
     const ticketsKey = 'support_tickets_local';
     const existingTickets = localStorage.getItem(ticketsKey);
@@ -1378,8 +1572,8 @@ export const api = {
     const ticketsKey = 'support_tickets_local';
     const tickets = localStorage.getItem(ticketsKey);
     let allTickets = tickets ? JSON.parse(tickets) : [];
-    if (params.user_id) allTickets = allTickets.filter(t => t.user_id == params.user_id);
-    if (params.status) allTickets = allTickets.filter(t => t.status === params.status);
+    if (params.user_id) allTickets = allTickets.filter((t) => t.user_id == params.user_id);
+    if (params.status) allTickets = allTickets.filter((t) => t.status === params.status);
     return { success: true, tickets: allTickets, fromLocal: true };
   },
 
@@ -1387,7 +1581,7 @@ export const api = {
     const ticketsKey = 'support_tickets_local';
     const tickets = localStorage.getItem(ticketsKey);
     let allTickets = tickets ? JSON.parse(tickets) : [];
-    const ticket = allTickets.find(t => t.id == ticketId);
+    const ticket = allTickets.find((t) => t.id == ticketId);
     return { success: true, ticket: ticket || null, fromLocal: true };
   },
 
@@ -1404,23 +1598,24 @@ export const api = {
     const newMessage = {
       id: Date.now(),
       ticket_id: ticketId,
-      message: message,
+      message,
       is_from_user: true,
       sender_name: user?.fullName || user?.name || 'أنت',
       created_at: new Date().toISOString(),
       status: 'sent',
-      fromLocal: true
+      fromLocal: true,
     };
     const messagesKey = `support_messages_${ticketId}`;
     const existingMessages = localStorage.getItem(messagesKey);
     let allMessages = existingMessages ? JSON.parse(existingMessages) : [];
     allMessages.push(newMessage);
     localStorage.setItem(messagesKey, JSON.stringify(allMessages));
+
     const ticketsKey = 'support_tickets_local';
     const existingTickets = localStorage.getItem(ticketsKey);
     if (existingTickets) {
       let allTickets = JSON.parse(existingTickets);
-      const ticketIndex = allTickets.findIndex(t => t.id == ticketId);
+      const ticketIndex = allTickets.findIndex((t) => t.id == ticketId);
       if (ticketIndex !== -1) {
         allTickets[ticketIndex].updated_at = new Date().toISOString();
         allTickets[ticketIndex].last_message = message;
@@ -1436,7 +1631,7 @@ export const api = {
         user_id: userId,
         subject: 'طلب دعم جديد',
         type: 'general',
-        priority: 'normal'
+        priority: 'normal',
       });
       if (ticketResponse.success) {
         const ticketId = ticketResponse.ticket.id;
@@ -1449,7 +1644,7 @@ export const api = {
         user_id: userId,
         subject: 'طلب دعم جديد',
         type: 'general',
-        priority: 'normal'
+        priority: 'normal',
       });
       if (newTicket.success) {
         this.saveLocalMessage(newTicket.ticket.id, message);
@@ -1462,10 +1657,10 @@ export const api = {
             action_url: `/support/chats/${newTicket.ticket.id}`,
             data: {
               ticketId: newTicket.ticket.id,
-              userId: userId,
-              userName: userName,
-              message: message
-            }
+              userId,
+              userName,
+              message,
+            },
           });
         } catch (notifError) {
           console.log('Could not send notification to admin');
@@ -1487,10 +1682,14 @@ export const api = {
       console.log('🔍 [getAdminNotifications] URL:', url);
       const response = await fetch(url, {
         method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحميل إشعارات المسؤول');
+      if (!response.ok)
+        throw buildApiError(data, response.status, 'فشل تحميل إشعارات المسؤول');
       return data;
     } catch (error) {
       console.error('❌ Get admin notifications error:', error);
@@ -1501,12 +1700,18 @@ export const api = {
   async markAdminNotificationAsRead(notificationId) {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/admin/notifications/${notificationId}/read`, {
-        method: 'PUT',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
-      });
+      const response = await fetch(
+        `${API_BASE_URL}/api/admin/notifications/${notificationId}/read`,
+        {
+          method: 'PUT',
+          headers: {
+            Authorization: token ? `Bearer ${token}` : '',
+            'Content-Type': 'application/json',
+          },
+        }
+      );
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل تحديث الإشعار');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل تحديث الإشعار');
       return data;
     } catch (error) {
       console.error('❌ Mark admin notification as read error:', error);
@@ -1519,10 +1724,13 @@ export const api = {
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_BASE_URL}/api/admin/notifications/${notificationId}`, {
         method: 'DELETE',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل حذف الإشعار');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل حذف الإشعار');
       return data;
     } catch (error) {
       console.error('❌ Delete admin notification error:', error);
@@ -1533,12 +1741,18 @@ export const api = {
   async archiveAdminNotification(notificationId) {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/admin/notifications/${notificationId}/archive`, {
-        method: 'PUT',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
-      });
+      const response = await fetch(
+        `${API_BASE_URL}/api/admin/notifications/${notificationId}/archive`,
+        {
+          method: 'PUT',
+          headers: {
+            Authorization: token ? `Bearer ${token}` : '',
+            'Content-Type': 'application/json',
+          },
+        }
+      );
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'فشل أرشفة الإشعار');
+      if (!response.ok) throw buildApiError(data, response.status, 'فشل أرشفة الإشعار');
       return data;
     } catch (error) {
       console.error('❌ Archive admin notification error:', error);
@@ -1556,11 +1770,15 @@ export const api = {
       console.log('📤 Creating upgrade request with data:', data);
       const response = await fetch(`${API_BASE_URL}/api/upgrade-requests`, {
         method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data),
       });
       const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || 'فشل إنشاء طلب الترقية');
+      if (!response.ok)
+        throw buildApiError(responseData, response.status, 'فشل إنشاء طلب الترقية');
       return responseData;
     } catch (error) {
       console.error('❌ Create upgrade request error:', error);
@@ -1575,10 +1793,14 @@ export const api = {
       const url = `${API_BASE_URL}/api/upgrade-requests${queryParams ? `?${queryParams}` : ''}`;
       const response = await fetch(url, {
         method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
       });
       const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || 'فشل تحميل طلبات الترقية');
+      if (!response.ok)
+        throw buildApiError(responseData, response.status, 'فشل تحميل طلبات الترقية');
       return responseData;
     } catch (error) {
       console.error('❌ Get upgrade requests error:', error);
@@ -1589,13 +1811,20 @@ export const api = {
   async approveUpgradeRequest(requestId, adminNotes = '') {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/upgrade-requests/${requestId}/approve`, {
-        method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ adminNotes })
-      });
+      const response = await fetch(
+        `${API_BASE_URL}/api/upgrade-requests/${requestId}/approve`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: token ? `Bearer ${token}` : '',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ adminNotes }),
+        }
+      );
       const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || 'فشل الموافقة على الطلب');
+      if (!response.ok)
+        throw buildApiError(responseData, response.status, 'فشل الموافقة على الطلب');
       return responseData;
     } catch (error) {
       console.error('❌ Approve upgrade request error:', error);
@@ -1606,13 +1835,19 @@ export const api = {
   async rejectUpgradeRequest(requestId, reason) {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/api/upgrade-requests/${requestId}/reject`, {
-        method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason })
-      });
+      const response = await fetch(
+        `${API_BASE_URL}/api/upgrade-requests/${requestId}/reject`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: token ? `Bearer ${token}` : '',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ reason }),
+        }
+      );
       const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || 'فشل رفض الطلب');
+      if (!response.ok) throw buildApiError(responseData, response.status, 'فشل رفض الطلب');
       return responseData;
     } catch (error) {
       console.error('❌ Reject upgrade request error:', error);
@@ -1625,10 +1860,14 @@ export const api = {
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_BASE_URL}/api/upgrade-requests/my-status`, {
         method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' }
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
       });
       const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || 'فشل تحميل حالة الطلب');
+      if (!response.ok)
+        throw buildApiError(responseData, response.status, 'فشل تحميل حالة الطلب');
       return responseData;
     } catch (error) {
       console.error('❌ Get upgrade request status error:', error);
@@ -1642,17 +1881,18 @@ export const api = {
       console.log('📤 Sending upgrade request to /api/upgrade/upgrade-requests');
       const response = await fetch(`${API_BASE_URL}/api/upgrade/upgrade-requests`, {
         method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-        body: formData
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+        body: formData,
       });
       const responseData = await response.json();
-      if (!response.ok) throw new Error(responseData.message || 'فشل إرسال طلب الترقية');
+      if (!response.ok)
+        throw buildApiError(responseData, response.status, 'فشل إرسال طلب الترقية');
       return responseData;
     } catch (error) {
       console.error('❌ Upgrade request error:', error);
       throw error;
     }
-  }
+  },
 };
 
 export default api;
