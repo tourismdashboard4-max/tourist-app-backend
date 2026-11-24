@@ -2,6 +2,7 @@
 // ✅ النسخة النهائية – تحسين منطق المسار والأزرار
 // ✅ زر "المسار" يظهر دائماً، وعند الضغط عليه يتم تفعيل المسار أو تحديثه
 // ✅ زر "إلغاء المسار" يظهر فقط للمسار النشط الحالي
+// ✅ تحسين مفتاح تبديل نوع الخريطة (خريطة/أقمار صناعية) بشكل انسيابي
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { MapContainer, TileLayer, Marker, Popup, useMap, Polyline } from "react-leaflet";
@@ -1175,7 +1176,7 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
             <Search className="absolute right-2 top-1.5 text-white/70" size={12} />
             <input type="text" placeholder={t('search')} className="w-full p-1.5 pr-7 rounded-lg bg-white/20 text-white placeholder-white/60 focus:outline-none focus:bg-white/30 transition text-xs" />
           </div>
-          <div className="flex gap-1 flex-wrap">
+          <div className="flex gap-1 flex-wrap items-center">
             {isGuide && (
               <button onClick={() => setShowMyProgramsOnly(!showMyProgramsOnly)} className={`px-2 py-1 rounded-lg text-[10px] ${showMyProgramsOnly ? 'bg-yellow-500' : 'bg-white/20'}`}>
                 {showMyProgramsOnly ? '📌' : '🌍'}
@@ -1187,30 +1188,48 @@ function ExplorePage({ lang = "ar", mapContainerRef, setPage, user, unreadCount,
             >
               {showAllMode ? '📍 ' + t('showNearby') : '🗺️ ' + t('showAll')}
             </button>
+
+            {/* ✅ مفتاح تبديل نوع الخريطة (خريطة / أقمار صناعية) – انسيابي مثل الوضع الليلي/النهاري */}
+            <button
+              onClick={() => setMapType(mapType === 'map' ? 'satellite' : 'map')}
+              className={`relative flex items-center gap-1.5 px-1.5 py-1 rounded-full transition-all duration-300 ease-in-out ${
+                mapType === 'satellite' 
+                  ? 'bg-blue-500/50 shadow-inner' 
+                  : 'bg-white/20 hover:bg-white/30'
+              }`}
+              title={mapType === 'map' ? t('satellite') : t('map')}
+              aria-label="Toggle map type"
+            >
+              {/* أيقونة الخريطة (يسار) */}
+              <span className={`text-[11px] transition-all duration-300 ${mapType === 'map' ? 'opacity-100 scale-110' : 'opacity-40 scale-100'}`}>
+                🗺️
+              </span>
+              
+              {/* شريط التبديل */}
+              <div 
+                className={`relative w-7 h-3.5 rounded-full transition-all duration-300 ease-in-out ${
+                  mapType === 'satellite' ? 'bg-blue-600 shadow-inner' : 'bg-white/40'
+                }`}
+              >
+                {/* المؤشر الدائري المنزلق */}
+                <div 
+                  className={`absolute top-0.5 w-2.5 h-2.5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out ${
+                    mapType === 'satellite' ? 'left-3.5' : 'left-0.5'
+                  }`}
+                />
+              </div>
+              
+              {/* أيقونة الأقمار الصناعية (يمين) */}
+              <span className={`text-[11px] transition-all duration-300 ${mapType === 'satellite' ? 'opacity-100 scale-110' : 'opacity-40 scale-100'}`}>
+                🛰️
+              </span>
+            </button>
           </div>
-        </div>
-        <div className="flex gap-1 mt-1 flex-wrap">
-          <button
-            onClick={() => setMapType('map')}
-            className={`px-2 py-0.5 rounded text-[10px] transition ${
-              mapType === 'map' ? 'bg-white/40 text-white' : 'bg-white/20 text-white/70 hover:bg-white/30'
-            }`}
-            title={t('map')}
-          >
-            🗺️ {t('map')}
-          </button>
-          <button
-            onClick={() => setMapType('satellite')}
-            className={`px-2 py-0.5 rounded text-[10px] transition ${
-              mapType === 'satellite' ? 'bg-white/40 text-white' : 'bg-white/20 text-white/70 hover:bg-white/30'
-            }`}
-            title={t('satellite')}
-          >
-            🛰️ {t('satellite')}
-          </button>
         </div>
         <div className="text-[10px] text-white/80 mt-1 text-center">
           {displayedPrograms.length} {t('programsNearby')}
+          {' • '}
+          {mapType === 'satellite' ? '🛰️ ' + t('satellite') : '🗺️ ' + t('map')}
         </div>
       </div>
 
